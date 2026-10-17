@@ -316,7 +316,7 @@ body.zen-mode .dashboard-widget {
   box-shadow: 0 0 15px rgba(6, 182, 212, 0.45);
 }
 
-/* Typography Studio Font Classes */
+/* Typography Studio Font Classes (26 Total) */
 .font-inter { font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif !important; }
 .font-roboto { font-family: 'Roboto', sans-serif !important; }
 .font-poppins { font-family: 'Poppins', sans-serif !important; }
@@ -324,15 +324,31 @@ body.zen-mode .dashboard-widget {
 .font-outfit { font-family: 'Outfit', sans-serif !important; }
 .font-space { font-family: 'Space Grotesk', sans-serif !important; }
 .font-orbitron { font-family: 'Orbitron', sans-serif !important; }
+.font-rajdhani { font-family: 'Rajdhani', sans-serif !important; }
+.font-oxanium { font-family: 'Oxanium', sans-serif !important; }
+.font-exo-2 { font-family: 'Exo 2', sans-serif !important; }
+.font-sora { font-family: 'Sora', sans-serif !important; }
+.font-manrope { font-family: 'Manrope', sans-serif !important; }
+.font-dm-sans { font-family: 'DM Sans', sans-serif !important; }
+.font-plus-jakarta { font-family: 'Plus Jakarta Sans', sans-serif !important; }
+.font-ibm-plex-sans { font-family: 'IBM Plex Sans', sans-serif !important; }
 .font-mono-jb { font-family: 'JetBrains Mono', monospace !important; }
 .font-mono-ibm { font-family: 'IBM Plex Mono', monospace !important; }
+.font-space-mono { font-family: 'Space Mono', monospace !important; }
+.font-fira-code { font-family: 'Fira Code', monospace !important; }
+.font-source-code { font-family: 'Source Code Pro', monospace !important; }
+.font-bebas-neue { font-family: 'Bebas Neue', sans-serif !important; }
+.font-oswald { font-family: 'Oswald', sans-serif !important; }
+.font-archivo { font-family: 'Archivo', sans-serif !important; }
+.font-lato { font-family: 'Lato', sans-serif !important; }
 .font-system { font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif !important; }
+.font-mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace !important; }
 .font-anton { font-family: 'Anton', sans-serif !important; }
 .font-audiowide { font-family: 'Audiowide', cursive !important; }
 .font-vt323 { font-family: 'VT323', monospace !important; }
 .font-doto { font-family: 'Doto', sans-serif !important; }
 
-/* 7 Distinct Widget Appearance Styles */
+/* 30 Distinct Widget Appearance Styles */
 .widget-style-transparent {
   background: transparent !important;
   backdrop-filter: none !important;
@@ -341,12 +357,19 @@ body.zen-mode .dashboard-widget {
   box-shadow: none !important;
 }
 
-.widget-style-minimal-flat {
-  background: rgba(12, 16, 24, 0.72) !important;
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
+.widget-style-semi-black {
+  background: rgba(0, 0, 0, 0.52) !important;
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
   border: 1px solid rgba(255, 255, 255, 0.08) !important;
-  box-shadow: none !important;
+}
+
+.widget-style-semi-white {
+  background: rgba(255, 255, 255, 0.22) !important;
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  border: 1px solid rgba(255, 255, 255, 0.35) !important;
+  color: #ffffff;
 }
 
 .widget-style-subtle-dark-glass {
@@ -363,6 +386,29 @@ body.zen-mode .dashboard-widget {
   -webkit-backdrop-filter: blur(28px) saturate(180%);
   border: 1px solid rgba(255, 255, 255, 0.22) !important;
   box-shadow: 0 20px 45px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.2) !important;
+}
+
+.widget-style-clear-glass {
+  background: rgba(255, 255, 255, 0.04) !important;
+  backdrop-filter: blur(8px) saturate(110%);
+  -webkit-backdrop-filter: blur(8px) saturate(110%);
+  border: 1px solid rgba(255, 255, 255, 0.28) !important;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3) !important;
+}
+
+.widget-style-minimal-flat {
+  background: rgba(12, 16, 24, 0.72) !important;
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border: 1px solid rgba(255, 255, 255, 0.08) !important;
+  box-shadow: none !important;
+}
+
+.widget-style-floating-text {
+  background: transparent !important;
+  backdrop-filter: none !important;
+  border: 1px solid transparent !important;
+  text-shadow: 0 2px 10px rgba(0, 0, 0, 0.85);
 }
 
 .widget-style-thin-outlined {
@@ -388,4 +434,263 @@ body.zen-mode .dashboard-widget {
   border: 1px solid rgba(6, 182, 212, 0.35) !important;
   box-shadow: 0 10px 30px rgba(6, 182, 212, 0.12), inset 0 1px 0 rgba(6, 182, 212, 0.25) !important;
 }
+
+.widget-style-neon-outline {
+  background: rgba(10, 10, 16, 0.82) !important;
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1.5px solid rgba(168, 85, 247, 0.65) !important;
+  box-shadow: 0 0 20px rgba(168, 85, 247, 0.3), inset 0 0 15px rgba(168, 85, 247, 0.15) !important;
+}
+
+.widget-style-metallic-panel {
+  background: linear-gradient(135deg, rgba(35, 40, 50, 0.9) 0%, rgba(20, 24, 30, 0.9) 100%) !important;
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  border: 1px solid rgba(203, 213, 225, 0.35) !important;
+  box-shadow: 0 15px 35px rgba(0, 0, 0, 0.6), inset 0 1px 0 rgba(255, 255, 255, 0.3) !important;
+}
+
+.widget-style-hud-technical {
+  background: rgba(8, 14, 24, 0.8) !important;
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  border: 1px solid rgba(56, 189, 248, 0.45) !important;
+  box-shadow: 0 0 25px rgba(56, 189, 248, 0.2), inset 0 0 20px rgba(56, 189, 248, 0.08) !important;
+  position: relative;
+}
+.widget-style-hud-technical::before {
+  content: '';
+  position: absolute;
+  top: -1px;
+  left: -1px;
+  width: 8px;
+  height: 8px;
+  border-top: 2px solid #00f0ff;
+  border-left: 2px solid #00f0ff;
+  pointer-events: none;
+}
+.widget-style-hud-technical::after {
+  content: '';
+  position: absolute;
+  bottom: -1px;
+  right: -1px;
+  width: 8px;
+  height: 8px;
+  border-bottom: 2px solid #00f0ff;
+  border-right: 2px solid #00f0ff;
+  pointer-events: none;
+}
+
+.widget-style-monochrome-panel {
+  background: #000000 !important;
+  border: 1px solid #ffffff !important;
+  box-shadow: none !important;
+}
+
+.widget-style-gradient-panel {
+  background: linear-gradient(135deg, rgba(88, 28, 135, 0.45) 0%, rgba(14, 165, 233, 0.35) 100%) !important;
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+  border: 1px solid rgba(255, 255, 255, 0.2) !important;
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.5) !important;
+}
+
+.widget-style-rounded-glass {
+  background: rgba(255, 255, 255, 0.08) !important;
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+  border: 1px solid rgba(255, 255, 255, 0.18) !important;
+  border-radius: 28px !important;
+  box-shadow: 0 20px 40px rgba(0, 0, 0, 0.4) !important;
+}
+
+.widget-style-square-card {
+  border-radius: 0px !important;
+  background: rgba(15, 17, 23, 0.92) !important;
+  border: 1px solid rgba(255, 255, 255, 0.15) !important;
+}
+
+.widget-style-pill-widget {
+  border-radius: 9999px !important;
+  background: rgba(255, 255, 255, 0.1) !important;
+  backdrop-filter: blur(16px);
+  border: 1px solid rgba(255, 255, 255, 0.25) !important;
+}
+
+.widget-style-terminal-panel {
+  background: #051007 !important;
+  border: 1px solid rgba(34, 197, 94, 0.45) !important;
+  box-shadow: 0 0 20px rgba(34, 197, 94, 0.15) !important;
+  color: #4ade80 !important;
+}
+
+.widget-style-editorial-panel {
+  background: rgba(18, 18, 22, 0.88) !important;
+  backdrop-filter: blur(16px);
+  border: 1px solid rgba(255, 255, 255, 0.12) !important;
+  box-shadow: 0 15px 35px rgba(0, 0, 0, 0.5) !important;
+}
+
+.widget-style-minimal-calendar {
+  background: rgba(15, 23, 42, 0.75) !important;
+  backdrop-filter: blur(16px);
+  border: 1px solid rgba(56, 189, 248, 0.3) !important;
+}
+
+.widget-style-floating-countdown {
+  background: rgba(0, 0, 0, 0.45) !important;
+  backdrop-filter: blur(12px);
+  border: 1px solid rgba(251, 191, 36, 0.35) !important;
+}
+
+.widget-style-transparent-timetable {
+  background: rgba(10, 14, 24, 0.5) !important;
+  backdrop-filter: blur(10px);
+  border: 1px solid rgba(255, 255, 255, 0.12) !important;
+}
+
+.widget-style-compact-task-list {
+  background: rgba(8, 22, 14, 0.8) !important;
+  backdrop-filter: blur(12px);
+  border: 1px solid rgba(16, 185, 129, 0.35) !important;
+}
+
+.widget-style-custom-bg {
+  background: rgba(20, 24, 36, 0.85) !important;
+  backdrop-filter: blur(14px);
+  border: 1px solid rgba(255, 255, 255, 0.15) !important;
+}
+
+.widget-style-custom-border {
+  background: rgba(12, 16, 26, 0.8) !important;
+  backdrop-filter: blur(14px);
+  border: 1.5px solid rgba(6, 182, 212, 0.55) !important;
+}
+
+.widget-style-soft-glow {
+  background: rgba(18, 22, 34, 0.88) !important;
+  backdrop-filter: blur(20px);
+  border: 1px solid rgba(129, 140, 248, 0.35) !important;
+  box-shadow: 0 10px 40px rgba(129, 140, 248, 0.25) !important;
+}
+
+.widget-style-no-shadow {
+  background: rgba(16, 20, 28, 0.92) !important;
+  border: 1px solid rgba(255, 255, 255, 0.12) !important;
+  box-shadow: none !important;
+}
+
+.widget-style-user-defined {
+  background: rgba(15, 20, 30, 0.82) !important;
+  backdrop-filter: blur(16px);
+  border: 1px solid rgba(255, 255, 255, 0.2) !important;
+}
+
+/* Task Priority Indicators */
+.priority-dot-high {
+  background-color: #f43f5e;
+  box-shadow: 0 0 8px rgba(244, 63, 94, 0.6);
+}
+.priority-dot-medium {
+  background-color: #f59e0b;
+  box-shadow: 0 0 8px rgba(245, 158, 11, 0.6);
+}
+.priority-dot-low {
+  background-color: #10b981;
+  box-shadow: 0 0 8px rgba(16, 185, 129, 0.6);
+}
+
+.priority-badge-high {
+  background-color: rgba(244, 63, 94, 0.2);
+  color: #fda4af;
+  border: 1px solid rgba(244, 63, 94, 0.4);
+}
+.priority-badge-medium {
+  background-color: rgba(245, 158, 11, 0.2);
+  color: #fde68a;
+  border: 1px solid rgba(245, 158, 11, 0.4);
+}
+.priority-badge-low {
+  background-color: rgba(16, 185, 129, 0.2);
+  color: #a7f3d0;
+  border: 1px solid rgba(16, 185, 129, 0.4);
+}
+
+/* Task Completion Micro-Interactions */
+.task-item-animated {
+  transition: transform 0.35s cubic-bezier(0.16, 1, 0.3, 1),
+              opacity 0.3s ease,
+              background-color 0.25s ease,
+              border-color 0.25s ease,
+              box-shadow 0.35s ease;
+}
+
+@keyframes taskPopSuccess {
+  0% {
+    transform: scale(1);
+  }
+  25% {
+    transform: scale(1.035) translateX(3px);
+    background-color: rgba(16, 185, 129, 0.18) !important;
+    border-color: rgba(16, 185, 129, 0.5) !important;
+    box-shadow: 0 0 18px rgba(16, 185, 129, 0.35);
+  }
+  60% {
+    transform: scale(0.99);
+  }
+  100% {
+    transform: scale(1) translateX(0);
+  }
+}
+
+.task-just-completed {
+  animation: taskPopSuccess 0.65s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+@keyframes checkmarkSpring {
+  0% {
+    transform: scale(0.65);
+    opacity: 0;
+  }
+  65% {
+    transform: scale(1.3);
+  }
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+.task-check-spring {
+  animation: checkmarkSpring 0.35s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards;
+}
+
+/* Pomodoro Pulse & Glows */
+@keyframes pomoPulseGlow {
+  0%, 100% {
+    filter: drop-shadow(0 0 10px rgba(244, 63, 94, 0.35));
+  }
+  50% {
+    filter: drop-shadow(0 0 24px rgba(244, 63, 94, 0.7));
+  }
+}
+
+.pomo-glow-active {
+  animation: pomoPulseGlow 3s infinite alternate ease-in-out;
+}
+
+@keyframes pomoBreakGlow {
+  0%, 100% {
+    filter: drop-shadow(0 0 10px rgba(16, 185, 129, 0.35));
+  }
+  50% {
+    filter: drop-shadow(0 0 24px rgba(16, 185, 129, 0.7));
+  }
+}
+
+.pomo-break-active {
+  animation: pomoBreakGlow 3s infinite alternate ease-in-out;
+}
+
 

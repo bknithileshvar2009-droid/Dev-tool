@@ -45,6 +45,12 @@ import {
   LogIn,
   Shield,
   AlertTriangle,
+  Timer,
+  Play,
+  Pause,
+  Volume2,
+  VolumeX,
+  Minimize,
 } from 'lucide-react';
 import { MOTIVATION_QUOTES, MotivationQuote } from './utils/quotes';
 import {
@@ -65,6 +71,66 @@ import {
   INITIAL_PRESETS,
   SavedPreset,
 } from './utils/visualStudioData';
+
+// Web Audio API Synthesizer for study alerts & task completions
+function playWebAudioChime(type: 'task' | 'pomoEnd' | 'pomoStart') {
+  try {
+    const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+    if (!AudioCtx) return;
+    const ctx = new AudioCtx();
+    if (ctx.state === 'suspended') {
+      ctx.resume().catch(() => {});
+    }
+
+    if (type === 'task') {
+      // Pleasant light chime (E6 -> G#6)
+      const now = ctx.currentTime;
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(659.25, now);
+      osc.frequency.exponentialRampToValueAtTime(830.61, now + 0.12);
+      gain.gain.setValueAtTime(0.08, now);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.35);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start(now);
+      osc.stop(now + 0.36);
+    } else if (type === 'pomoEnd') {
+      // Harmonic 4-bell alert chime (C5 -> E5 -> G5 -> C6)
+      const freqs = [523.25, 659.25, 783.99, 1046.5];
+      freqs.forEach((freq, idx) => {
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        const startTime = ctx.currentTime + idx * 0.16;
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(freq, startTime);
+        gain.gain.setValueAtTime(0.18, startTime);
+        gain.gain.exponentialRampToValueAtTime(0.001, startTime + 0.9);
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start(startTime);
+        osc.stop(startTime + 0.95);
+      });
+    } else if (type === 'pomoStart') {
+      // Subtle start focus beep
+      const now = ctx.currentTime;
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(440, now);
+      osc.frequency.exponentialRampToValueAtTime(659.25, now + 0.18);
+      gain.gain.setValueAtTime(0.07, now);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.3);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start(now);
+      osc.stop(now + 0.32);
+    }
+  } catch {
+    // Audio Context restriction handled gracefully
+  }
+}
 
 interface CuratedWallpaper {
   id: string;
@@ -308,6 +374,14 @@ interface DashboardConfig {
     width: number;
     height: number;
   };
+  pomodoro: {
+    visible: boolean;
+    glassBg: boolean;
+    x: number | null;
+    y: number | null;
+    width: number;
+    height: number;
+  };
   activeThemeId?: string;
   bgSaturation?: number;
   bgBrightness?: number;
@@ -426,6 +500,14 @@ const DEFAULT_CONFIG: DashboardConfig = {
     width: 380,
     height: 340,
   },
+  pomodoro: {
+    visible: true,
+    glassBg: true,
+    x: null,
+    y: null,
+    width: 360,
+    height: 240,
+  },
 };
 
 export default function App() {
@@ -457,6 +539,7 @@ export default function App() {
           tasks: { ...DEFAULT_CONFIG.tasks, ...(parsed.tasks || {}) },
           notification: { ...DEFAULT_CONFIG.notification, ...(parsed.notification || {}) },
           calendar: { ...DEFAULT_CONFIG.calendar, ...(parsed.calendar || {}) },
+          pomodoro: { ...DEFAULT_CONFIG.pomodoro, ...(parsed.pomodoro || {}) },
         };
       }
     } catch {
@@ -484,8 +567,27 @@ export default function App() {
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [zenMode, setZenMode] = useState(false);
   const [isFocusModeActive, setIsFocusModeActive] = useState(false);
-  const [focusedWidget, setFocusedWidget] = useState<'nameWidget' | 'clock' | 'countdown' | 'tasks' | 'notification' | 'calendar' | 'motivation' | null>(null);
+  const [focusedWidget, setFocusedWidget] = useState<'nameWidget' | 'clock' | 'countdown' | 'tasks' | 'notification' | 'calendar' | 'motivation' | 'pomodoro' | null>(null);
   const [urlInput, setUrlInput] = useState('');
+
+  // Task Completion Animation State
+  const [justCompletedTaskId, setJustCompletedTaskId] = useState<string | null>(null);
+
+  // Focus-Enhancing Pomodoro Timer State
+  const [pomoMode, setPomoMode] = useState<'focus' | 'shortBreak' | 'longBreak'>('focus');
+  const [pomoSecondsLeft, setPomoSecondsLeft] = useState<number>(25 * 60);
+  const [pomoTotalSeconds, setPomoTotalSeconds] = useState<number>(25 * 60);
+  const [isPomoRunning, setIsPomoRunning] = useState<boolean>(false);
+  const [pomoStreak, setPomoStreak] = useState<number>(() => {
+    try {
+      const saved = localStorage.getItem('flocus_pomo_streak');
+      return saved ? parseInt(saved, 10) || 0 : 0;
+    } catch {
+      return 0;
+    }
+  });
+  const [pomoAlertActive, setPomoAlertActive] = useState<boolean>(false);
+  const [pomoSoundEnabled, setPomoSoundEnabled] = useState<boolean>(true);
 
   // Visual Customization Studio State
   const [studioOpen, setStudioOpen] = useState(false);
@@ -548,11 +650,12 @@ export default function App() {
   const notifRef = useRef<HTMLDivElement | null>(null);
   const calendarRef = useRef<HTMLDivElement | null>(null);
   const motivationRef = useRef<HTMLDivElement | null>(null);
+  const pomodoroRef = useRef<HTMLDivElement | null>(null);
 
   // Interaction tracking (drag/resize)
   const dragResizeState = useRef<{
     type: 'drag' | 'resize' | null;
-    widget: 'nameWidget' | 'clock' | 'countdown' | 'tasks' | 'notification' | 'calendar' | 'motivation' | null;
+    widget: 'nameWidget' | 'clock' | 'countdown' | 'tasks' | 'notification' | 'calendar' | 'motivation' | 'pomodoro' | null;
     handle?: string;
     startX: number;
     startY: number;
@@ -659,7 +762,7 @@ export default function App() {
         console.warn('Cloud sync error:', err);
         setSyncStatus('error');
       }
-    }, 2500);
+    }, 800);
 
     return () => {
       if (syncTimeoutRef.current) window.clearTimeout(syncTimeoutRef.current);
@@ -949,10 +1052,127 @@ export default function App() {
   };
 
   const handleToggleTask = (id: string) => {
-    saveTasksList(prev =>
-      prev.map(task => (task.id === id ? { ...task, completed: !task.completed } : task))
-    );
+    const target = tasks.find(t => t.id === id);
+    const willBeCompleted = !target?.completed;
+
+    setJustCompletedTaskId(id);
+    setTimeout(() => {
+      setJustCompletedTaskId(prev => (prev === id ? null : prev));
+    }, 750);
+
+    if (willBeCompleted) {
+      playWebAudioChime('task');
+    }
+
+    saveTasksList(prev => {
+      const current = prev.find(t => t.id === id);
+      if (!current) return prev;
+      const updated = { ...current, completed: !current.completed };
+      const others = prev.filter(t => t.id !== id);
+
+      if (updated.completed) {
+        // Move newly completed task to the bottom of the list
+        const uncompleted = others.filter(t => !t.completed);
+        const completed = others.filter(t => t.completed);
+        return [...uncompleted, ...completed, updated];
+      } else {
+        // Re-opened task moves back to the top of active tasks
+        const uncompleted = others.filter(t => !t.completed);
+        const completed = others.filter(t => t.completed);
+        return [updated, ...uncompleted, ...completed];
+      }
+    });
   };
+
+  // ================= POMODORO TIMER CONTROLS =================
+  const handleSwitchPomoMode = (mode: 'focus' | 'shortBreak' | 'longBreak') => {
+    setPomoMode(mode);
+    setIsPomoRunning(false);
+    const secs = mode === 'focus' ? 25 * 60 : mode === 'shortBreak' ? 5 * 60 : 15 * 60;
+    setPomoSecondsLeft(secs);
+    setPomoTotalSeconds(secs);
+  };
+
+  const togglePomodoro = () => {
+    if (!isPomoRunning) {
+      if (pomoSecondsLeft === 0) {
+        resetPomodoro(pomoMode);
+      }
+      setIsPomoRunning(true);
+      if (pomoSoundEnabled) {
+        playWebAudioChime('pomoStart');
+      }
+      if (typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'default') {
+        Notification.requestPermission().catch(() => {});
+      }
+    } else {
+      setIsPomoRunning(false);
+    }
+  };
+
+  const resetPomodoro = (mode = pomoMode) => {
+    setIsPomoRunning(false);
+    const secs = mode === 'focus' ? 25 * 60 : mode === 'shortBreak' ? 5 * 60 : 15 * 60;
+    setPomoSecondsLeft(secs);
+    setPomoTotalSeconds(secs);
+  };
+
+  const formatMinutesSeconds = (totalSec: number) => {
+    const m = Math.floor(totalSec / 60);
+    const s = totalSec % 60;
+    return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+  };
+
+  // Pomodoro Countdown Interval Effect
+  useEffect(() => {
+    if (!isPomoRunning) return;
+
+    const interval = setInterval(() => {
+      setPomoSecondsLeft(prev => {
+        if (prev <= 1) {
+          clearInterval(interval);
+          setIsPomoRunning(false);
+          setPomoAlertActive(true);
+
+          if (pomoSoundEnabled) {
+            playWebAudioChime('pomoEnd');
+          }
+
+          if (typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'granted') {
+            try {
+              new Notification(
+                pomoMode === 'focus' ? '🍅 Pomodoro Focus Complete!' : '☕ Break Finished!',
+                {
+                  body: pomoMode === 'focus'
+                    ? 'Great work completing 25 minutes of deep focus! Take a 5-minute break.'
+                    : 'Break time is over. Ready for your next study sprint?',
+                }
+              );
+            } catch {
+              // ignore
+            }
+          }
+
+          if (pomoMode === 'focus') {
+            setPomoStreak(s => {
+              const next = s + 1;
+              try {
+                localStorage.setItem('flocus_pomo_streak', String(next));
+              } catch {
+                // ignore
+              }
+              return next;
+            });
+          }
+
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+
+    return () => clearInterval(interval);
+  }, [isPomoRunning, pomoMode, pomoSoundEnabled]);
 
   const handleDeleteTask = (id: string) => {
     saveTasksList(prev => prev.filter(task => task.id !== id));
@@ -1034,6 +1254,8 @@ export default function App() {
     const calH = config.calendar.height || 340;
     const motW = config.motivation.width || 440;
     const motH = config.motivation.height || 140;
+    const pomoW = config.pomodoro?.width || 360;
+    const pomoH = config.pomodoro?.height || 240;
 
     if (sw >= 1400) {
       const nameX = Math.max(10, (sw - nameW) / 2);
@@ -1047,6 +1269,9 @@ export default function App() {
       const notifX = Math.min(sw - notifW - 20, (sw / 2) + 15);
 
       const tasksX = Math.max(20, sw - tasksW - 30);
+      const tasksY = bottomY;
+      const pomoX = Math.max(20, sw - pomoW - 30);
+      const pomoY = 24;
       const calX = 30;
       const motX = 30;
       const motY = 24;
@@ -1057,9 +1282,10 @@ export default function App() {
         clock: { ...prev.clock, x: clockX, y: clockY },
         countdown: { ...prev.countdown, x: cdX, y: bottomY },
         notification: { ...prev.notification, x: notifX, y: bottomY },
-        tasks: { ...prev.tasks, x: tasksX, y: bottomY },
+        tasks: { ...prev.tasks, x: tasksX, y: tasksY },
         calendar: { ...prev.calendar, x: calX, y: bottomY },
         motivation: { ...prev.motivation, x: motX, y: motY },
+        pomodoro: { ...prev.pomodoro, x: pomoX, y: pomoY },
       }));
     } else {
       const nameX = Math.max(10, (sw - nameW) / 2);
@@ -1072,8 +1298,10 @@ export default function App() {
       const notifY = cdY + cdH + 14;
       const tasksX = Math.max(10, (sw - tasksW) / 2);
       const tasksY = notifY + notifH + 14;
+      const pomoX = Math.max(10, (sw - pomoW) / 2);
+      const pomoY = tasksY + tasksH + 14;
       const calX = Math.max(10, (sw - calW) / 2);
-      const calY = tasksY + tasksH + 14;
+      const calY = pomoY + pomoH + 14;
       const motX = Math.max(10, (sw - motW) / 2);
       const motY = calY + calH + 14;
 
@@ -1086,6 +1314,7 @@ export default function App() {
         tasks: { ...prev.tasks, x: tasksX, y: tasksY },
         calendar: { ...prev.calendar, x: calX, y: calY },
         motivation: { ...prev.motivation, x: motX, y: motY },
+        pomodoro: { ...prev.pomodoro, x: pomoX, y: pomoY },
       }));
     }
   }, [
@@ -1103,6 +1332,8 @@ export default function App() {
     config.calendar.height,
     config.motivation.width,
     config.motivation.height,
+    config.pomodoro?.width,
+    config.pomodoro?.height,
     updateConfig,
   ]);
 
@@ -1115,11 +1346,25 @@ export default function App() {
       config.countdown.x === null ||
       config.tasks.x === null ||
       config.calendar.x === null ||
-      config.motivation.x === null
+      config.motivation.x === null ||
+      config.pomodoro?.x === null ||
+      config.pomodoro?.y === null
     ) {
       recenterWidgets();
     }
-  }, [config.clock.x, config.clock.y, config.nameWidget.x, config.notification.x, config.countdown.x, config.tasks.x, config.calendar.x, config.motivation.x, recenterWidgets]);
+  }, [
+    config.clock.x,
+    config.clock.y,
+    config.nameWidget.x,
+    config.notification.x,
+    config.countdown.x,
+    config.tasks.x,
+    config.calendar.x,
+    config.motivation.x,
+    config.pomodoro?.x,
+    config.pomodoro?.y,
+    recenterWidgets,
+  ]);
 
   // Sync fullscreen change
   useEffect(() => {
@@ -1345,7 +1590,7 @@ export default function App() {
   }, [config.canvasTheme, config.wallpaperUrl, config.animationIntensity, config.isWallpaperStatic, config.personalization.reducedMotion]);
 
   // Pointer event listeners for Drag & Corner Resize
-  const getWidgetRef = (widgetName: 'nameWidget' | 'clock' | 'countdown' | 'tasks' | 'notification' | 'calendar' | 'motivation') => {
+  const getWidgetRef = (widgetName: 'nameWidget' | 'clock' | 'countdown' | 'tasks' | 'notification' | 'calendar' | 'motivation' | 'pomodoro') => {
     switch (widgetName) {
       case 'nameWidget':
         return nameWidgetRef.current;
@@ -1361,12 +1606,14 @@ export default function App() {
         return calendarRef.current;
       case 'motivation':
         return motivationRef.current;
+      case 'pomodoro':
+        return pomodoroRef.current;
     }
   };
 
   const handlePointerDown = (
     e: React.PointerEvent<HTMLDivElement>,
-    widgetName: 'nameWidget' | 'clock' | 'countdown' | 'tasks' | 'notification' | 'calendar' | 'motivation'
+    widgetName: 'nameWidget' | 'clock' | 'countdown' | 'tasks' | 'notification' | 'calendar' | 'motivation' | 'pomodoro'
   ) => {
     setFocusedWidget(widgetName);
     if (!config.optionalFeatures.widgetCustomization) return;
@@ -1508,7 +1755,7 @@ export default function App() {
 
   const handleWheelZoom = (
     e: React.WheelEvent<HTMLDivElement>,
-    widget: 'nameWidget' | 'clock' | 'countdown' | 'tasks' | 'notification' | 'calendar' | 'motivation'
+    widget: 'nameWidget' | 'clock' | 'countdown' | 'tasks' | 'notification' | 'calendar' | 'motivation' | 'pomodoro'
   ) => {
     if (!config.optionalFeatures.widgetCustomization) return;
     if (!e.ctrlKey && !e.metaKey) return;
@@ -1711,6 +1958,28 @@ export default function App() {
         available: true,
       },
       {
+        id: 'pomodoro-toggle',
+        label: isPomoRunning ? 'Pause Pomodoro Timer' : 'Start 25-min Pomodoro Study Session',
+        category: 'Pomodoro',
+        shortcut: 'P',
+        action: () => { togglePomodoro(); setCommandMenuOpen(false); },
+        available: true,
+      },
+      {
+        id: 'pomodoro-break',
+        label: 'Switch Pomodoro to 5-min Short Break',
+        category: 'Pomodoro',
+        action: () => { handleSwitchPomoMode('shortBreak'); setCommandMenuOpen(false); },
+        available: true,
+      },
+      {
+        id: 'pomodoro-reset',
+        label: 'Reset Pomodoro Timer',
+        category: 'Pomodoro',
+        action: () => { resetPomodoro(); setCommandMenuOpen(false); },
+        available: true,
+      },
+      {
         id: 'features-menu',
         label: 'Open Optional Features Switches Menu',
         category: 'Settings',
@@ -1723,7 +1992,7 @@ export default function App() {
     if (!commandSearch.trim()) return list;
     const q = commandSearch.toLowerCase();
     return list.filter(item => item.label.toLowerCase().includes(q) || item.category.toLowerCase().includes(q));
-  }, [commandSearch, isFocusModeActive, config.optionalFeatures, config.routineMode, config.calendar.visible, recenterWidgets, handleToggleFocusMode, toggleRoutineMode, handleNextQuote, updateConfig]);
+  }, [commandSearch, isFocusModeActive, isPomoRunning, config.optionalFeatures, config.routineMode, config.calendar.visible, recenterWidgets, handleToggleFocusMode, toggleRoutineMode, handleNextQuote, updateConfig, togglePomodoro, resetPomodoro]);
 
   const handleCommandKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'ArrowDown') {
@@ -1770,60 +2039,9 @@ export default function App() {
       {/* ================= FLOATING ACTION CONTROLS (TOP RIGHT CORNER) ================= */}
       <div
         id="floating-hud"
-        className="absolute top-5 right-5 sm:top-6 sm:right-6 z-40 flex items-center gap-2 transition-all duration-300"
+        className="absolute top-4 right-4 sm:top-6 sm:right-6 z-40 flex items-center gap-2 transition-all duration-300"
       >
-        {/* Visual Customization Studio Button */}
-        <button
-          onClick={() => setStudioOpen(true)}
-          title="Visual Customization Studio (Press V)"
-          className="px-3 py-2 rounded-2xl hud-btn cursor-pointer flex items-center gap-1.5 bg-cyan-500/15 border border-cyan-400/40 text-cyan-300 hover:bg-cyan-500/25 shadow-[0_0_15px_rgba(6,182,212,0.2)]"
-        >
-          <Sparkles className="w-3.5 h-3.5 animate-pulse text-cyan-400" />
-          <span className="font-bold text-xs tracking-wide">Studio</span>
-        </button>
-
-        {/* Quick Access Menu Button (Feature 2) */}
-        <button
-          onClick={() => { setCommandMenuOpen(true); setCommandSearch(''); setSelectedCommandIndex(0); }}
-          title="Quick Access Command Palette (Ctrl+K or Cmd+K)"
-          className="p-2.5 rounded-2xl hud-btn cursor-pointer flex items-center gap-1.5"
-        >
-          <Search className="w-4 h-4 text-cyan-300" />
-          <span className="hidden md:inline font-mono text-[10px] text-white/50 px-1 py-0.5 rounded bg-white/10">⌘K</span>
-        </button>
-
-        {/* Focus Mode Trigger */}
-        {config.optionalFeatures.focusMode && (
-          <button
-            onClick={handleToggleFocusMode}
-            title={isFocusModeActive ? 'Exit Focus Mode' : 'Enter Focus Mode (Distraction-Free)'}
-            className={`p-2.5 rounded-2xl hud-btn cursor-pointer ${
-              isFocusModeActive ? 'bg-amber-500/25 text-amber-300 border-amber-400/60 shadow-[0_0_15px_rgba(251,191,36,0.25)]' : ''
-            }`}
-          >
-            <Flame className="w-4 h-4" />
-          </button>
-        )}
-
-        {/* Center & Align button */}
-        <button
-          onClick={recenterWidgets}
-          title="Center & Align (Press C)"
-          className="p-2.5 rounded-2xl hud-btn cursor-pointer"
-        >
-          <LayoutGrid className="w-4 h-4" />
-        </button>
-
-        {/* Zen Mode */}
-        <button
-          onClick={() => setZenMode(prev => !prev)}
-          title="Zen Pure View (Press H)"
-          className={`p-2.5 rounded-2xl hud-btn cursor-pointer ${zenMode ? 'bg-cyan-500/20 text-cyan-300 border-cyan-500/40' : ''}`}
-        >
-          <Eye className="w-4 h-4" />
-        </button>
-
-        {/* Fullscreen */}
+        {/* Fullscreen Mode Icon */}
         <button
           onClick={() => {
             if (!document.fullscreenElement) {
@@ -1832,19 +2050,21 @@ export default function App() {
               document.exitFullscreen().catch(() => {});
             }
           }}
-          title="Full Screen Pure View (Press F)"
-          className="p-2.5 rounded-2xl hud-btn cursor-pointer"
+          title={isFullscreen ? 'Exit Full Screen (Press F)' : 'Full Screen Pure View (Press F)'}
+          aria-label="Toggle Full Screen"
+          className="p-2.5 sm:p-3 min-w-[44px] min-h-[44px] sm:min-w-[48px] sm:min-h-[48px] rounded-2xl hud-btn cursor-pointer flex items-center justify-center bg-black/40 hover:bg-black/60 border border-white/10 text-white/80 hover:text-white transition shadow-sm"
         >
-          <Maximize className="w-4 h-4" />
+          {isFullscreen ? <Minimize className="w-4 h-4 sm:w-5 sm:h-5 text-cyan-300" /> : <Maximize className="w-4 h-4 sm:w-5 sm:h-5 text-white/80" />}
         </button>
 
-        {/* Central Features & Settings Menu */}
+        {/* Menu Bar Icon */}
         <button
           onClick={() => setDrawerOpen(true)}
-          title="Features & Settings Menu (Press M)"
-          className="p-2.5 rounded-2xl hud-btn cursor-pointer relative"
+          title="Menu & Settings (Press M)"
+          aria-label="Open Settings and Features Menu"
+          className="p-2.5 sm:p-3 min-w-[44px] min-h-[44px] sm:min-w-[48px] sm:min-h-[48px] rounded-2xl hud-btn cursor-pointer relative flex items-center justify-center bg-cyan-500/15 hover:bg-cyan-500/25 border border-cyan-400/40 text-cyan-300 transition shadow-[0_0_15px_rgba(6,182,212,0.2)]"
         >
-          <MenuIcon className="w-4 h-4" />
+          <MenuIcon className="w-4 h-4 sm:w-5 sm:h-5" />
           {syncStatus === 'saving' ? (
             <span className="absolute -top-1 -right-1 w-2.5 h-2.5 rounded-full bg-amber-400 animate-pulse" />
           ) : syncStatus === 'saved' ? (
@@ -2526,25 +2746,28 @@ export default function App() {
               tasks.map(task => (
                 <div
                   key={task.id}
-                  className={`group flex items-start gap-2.5 p-2 rounded-xl transition duration-150 ${
-                    task.completed ? 'bg-white/[0.02] opacity-60' : 'bg-white/[0.04] hover:bg-white/[0.08]'
-                  }`}
+                  className={`task-item-animated group flex items-start gap-2.5 p-2 rounded-xl transition-all duration-300 border border-transparent ${
+                    task.completed
+                      ? 'bg-white/[0.02] opacity-60'
+                      : 'bg-white/[0.04] hover:bg-white/[0.08] hover:border-white/10'
+                  } ${justCompletedTaskId === task.id ? 'task-just-completed' : ''}`}
                 >
                   <button
                     type="button"
                     onClick={() => handleToggleTask(task.id)}
-                    className={`mt-0.5 w-4 h-4 rounded-md border flex items-center justify-center transition cursor-pointer shrink-0 ${
+                    aria-label={task.completed ? 'Mark task incomplete' : 'Mark task complete'}
+                    className={`mt-0.5 w-4 h-4 rounded-md border flex items-center justify-center transition-all duration-200 cursor-pointer shrink-0 active:scale-90 ${
                       task.completed
-                        ? 'bg-emerald-500 border-emerald-500 text-black'
-                        : 'border-white/30 hover:border-emerald-400 bg-transparent'
+                        ? 'bg-emerald-500 border-emerald-500 text-black shadow-[0_0_8px_rgba(16,185,129,0.5)]'
+                        : 'border-white/30 hover:border-emerald-400 hover:scale-105 bg-transparent'
                     }`}
                   >
-                    {task.completed && <Check className="w-3 h-3 stroke-[3]" />}
+                    {task.completed && <Check className="w-3 h-3 stroke-[3] task-check-spring" />}
                   </button>
                   <span
                     onClick={() => handleToggleTask(task.id)}
-                    className={`flex-1 text-xs leading-snug cursor-pointer select-none transition ${
-                      task.completed ? 'line-through text-slate-400' : 'text-slate-100 font-normal'
+                    className={`flex-1 text-xs leading-snug cursor-pointer select-none transition-all duration-200 ${
+                      task.completed ? 'line-through text-slate-400' : 'text-slate-100 font-normal hover:text-white'
                     }`}
                   >
                     {task.text}
@@ -2570,6 +2793,275 @@ export default function App() {
               <div className="resize-handle resize-nw text-emerald-400" data-handle="nw" />
             </>
           )}
+        </div>
+      )}
+
+      {/* ================= WIDGET 6: POMODORO FOCUS TIMER WIDGET ================= */}
+      {config.pomodoro?.visible && (
+        <div
+          ref={pomodoroRef}
+          id="pomodoro-widget"
+          onPointerDown={e => handlePointerDown(e, 'pomodoro')}
+          onWheel={e => handleWheelZoom(e, 'pomodoro')}
+          className={`dashboard-widget z-20 px-5 sm:px-6 py-4 flex flex-col justify-between ${
+            config.optionalFeatures.widgetCustomization ? 'cursor-grab active:cursor-grabbing' : 'cursor-default'
+          } ${
+            config.pomodoro?.glassBg ? 'widget-glass-card' : 'widget-transparent'
+          } ${focusedWidget === 'pomodoro' ? 'widget-focused' : ''} ${radiusClass} ${
+            isPomoRunning ? (pomoMode === 'focus' ? 'pomo-glow-active' : 'pomo-break-active') : ''
+          }`}
+          style={{
+            width: config.pomodoro?.width || 360,
+            height: config.pomodoro?.height || 240,
+            left: config.pomodoro?.x ?? 580,
+            top: config.pomodoro?.y ?? 530,
+          }}
+        >
+          {showHandles && (
+            <div
+              className={`drag-pill absolute top-2 left-1/2 -translate-x-1/2 w-8 h-1 rounded-full ${
+                pomoMode === 'focus' ? 'bg-rose-400/40' : 'bg-emerald-400/40'
+              } pointer-events-none`}
+            />
+          )}
+
+          {/* Widget Header */}
+          <div className="flex items-center justify-between no-drag">
+            <div className="flex items-center gap-2">
+              <span
+                className={`w-2 h-2 rounded-full ${
+                  isPomoRunning
+                    ? pomoMode === 'focus'
+                      ? 'bg-rose-500 animate-ping'
+                      : 'bg-emerald-500 animate-ping'
+                    : 'bg-white/40'
+                }`}
+              />
+              <div className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-[0.16em] text-white">
+                <Timer className={`w-3.5 h-3.5 ${pomoMode === 'focus' ? 'text-rose-400' : 'text-emerald-400'}`} />
+                <span>{pomoMode === 'focus' ? 'Pomodoro Focus' : pomoMode === 'shortBreak' ? 'Short Break' : 'Long Break'}</span>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-1.5">
+              <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-white/10 text-rose-300 border border-white/10" title="Completed Focus Sessions">
+                🍅 {pomoStreak}
+              </span>
+              <button
+                type="button"
+                onClick={() => setPomoSoundEnabled(prev => !prev)}
+                className={`p-1 rounded-lg text-white/60 hover:text-white transition cursor-pointer ${pomoSoundEnabled ? 'text-rose-300' : 'opacity-40'}`}
+                title={pomoSoundEnabled ? 'Sound alerts enabled' : 'Sound alerts muted'}
+              >
+                {pomoSoundEnabled ? <Volume2 className="w-3.5 h-3.5" /> : <VolumeX className="w-3.5 h-3.5" />}
+              </button>
+            </div>
+          </div>
+
+          {/* Mode Switcher Tabs */}
+          <div className="grid grid-cols-3 gap-1 p-1 rounded-xl bg-black/40 border border-white/5 my-2 no-drag text-[10px] font-medium text-center">
+            <button
+              type="button"
+              onClick={() => handleSwitchPomoMode('focus')}
+              className={`py-1 rounded-lg transition cursor-pointer font-semibold ${
+                pomoMode === 'focus'
+                  ? 'bg-rose-500 text-white shadow-[0_0_12px_rgba(244,63,94,0.4)]'
+                  : 'text-white/60 hover:text-white hover:bg-white/5'
+              }`}
+            >
+              25m Focus
+            </button>
+            <button
+              type="button"
+              onClick={() => handleSwitchPomoMode('shortBreak')}
+              className={`py-1 rounded-lg transition cursor-pointer font-semibold ${
+                pomoMode === 'shortBreak'
+                  ? 'bg-emerald-500 text-black shadow-[0_0_12px_rgba(16,185,129,0.4)]'
+                  : 'text-white/60 hover:text-white hover:bg-white/5'
+              }`}
+            >
+              5m Break
+            </button>
+            <button
+              type="button"
+              onClick={() => handleSwitchPomoMode('longBreak')}
+              className={`py-1 rounded-lg transition cursor-pointer font-semibold ${
+                pomoMode === 'longBreak'
+                  ? 'bg-sky-500 text-black shadow-[0_0_12px_rgba(14,165,233,0.4)]'
+                  : 'text-white/60 hover:text-white hover:bg-white/5'
+              }`}
+            >
+              15m Rest
+            </button>
+          </div>
+
+          {/* Central Countdown Digits & Progress */}
+          <div className="flex flex-col items-center justify-center my-1 no-drag">
+            <div className="text-3xl sm:text-4xl font-black tracking-tight tabular-digits text-white font-mono drop-shadow-md">
+              {formatMinutesSeconds(pomoSecondsLeft)}
+            </div>
+
+            {/* Progress Bar */}
+            <div className="w-full bg-white/10 rounded-full h-1.5 mt-2.5 overflow-hidden">
+              <div
+                className={`h-full transition-all duration-300 ${
+                  pomoMode === 'focus'
+                    ? 'bg-gradient-to-r from-rose-500 to-amber-400'
+                    : 'bg-gradient-to-r from-emerald-400 to-cyan-400'
+                }`}
+                style={{ width: `${Math.min(100, Math.max(0, ((pomoTotalSeconds - pomoSecondsLeft) / pomoTotalSeconds) * 100))}%` }}
+              />
+            </div>
+          </div>
+
+          {/* Controls Bar */}
+          <div className="flex items-center justify-between pt-2 border-t border-white/5 no-drag">
+            <div className="flex items-center gap-1.5">
+              <button
+                type="button"
+                onClick={togglePomodoro}
+                className={`px-3 py-1.5 rounded-xl font-bold text-xs tracking-wider transition cursor-pointer flex items-center gap-1.5 ${
+                  isPomoRunning
+                    ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40 hover:bg-amber-500/30'
+                    : pomoMode === 'focus'
+                    ? 'bg-rose-500 text-white hover:bg-rose-600 shadow-[0_0_15px_rgba(244,63,94,0.35)]'
+                    : 'bg-emerald-500 text-black hover:bg-emerald-400 shadow-[0_0_15px_rgba(16,185,129,0.35)]'
+                }`}
+              >
+                {isPomoRunning ? (
+                  <>
+                    <Pause className="w-3.5 h-3.5 fill-current" />
+                    <span>PAUSE</span>
+                  </>
+                ) : (
+                  <>
+                    <Play className="w-3.5 h-3.5 fill-current" />
+                    <span>START</span>
+                  </>
+                )}
+              </button>
+
+              <button
+                type="button"
+                onClick={() => resetPomodoro(pomoMode)}
+                title="Reset session timer"
+                className="p-1.5 rounded-xl bg-white/5 hover:bg-white/15 text-white/70 hover:text-white border border-white/10 transition cursor-pointer"
+              >
+                <RotateCcw className="w-3.5 h-3.5" />
+              </button>
+            </div>
+
+            <div className="flex items-center gap-1 text-[11px] text-white/50">
+              <button
+                type="button"
+                onClick={() => setPomoSecondsLeft(prev => Math.max(60, prev - 300))}
+                disabled={pomoSecondsLeft <= 300}
+                className="px-1.5 py-0.5 rounded bg-white/5 hover:bg-white/15 disabled:opacity-30 text-[10px] cursor-pointer"
+                title="Subtract 5 minutes"
+              >
+                -5m
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setPomoSecondsLeft(prev => prev + 300);
+                  setPomoTotalSeconds(prev => Math.max(prev, pomoSecondsLeft + 300));
+                }}
+                className="px-1.5 py-0.5 rounded bg-white/5 hover:bg-white/15 text-[10px] cursor-pointer"
+                title="Add 5 minutes"
+              >
+                +5m
+              </button>
+            </div>
+          </div>
+
+          {showHandles && (
+            <>
+              <div className="resize-handle resize-se text-rose-400" data-handle="se" />
+              <div className="resize-handle resize-sw text-rose-400" data-handle="sw" />
+              <div className="resize-handle resize-ne text-rose-400" data-handle="ne" />
+              <div className="resize-handle resize-nw text-rose-400" data-handle="nw" />
+            </>
+          )}
+        </div>
+      )}
+
+      {/* ================= POMODORO SESSION COMPLETION ALERT MODAL ================= */}
+      {pomoAlertActive && (
+        <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-md flex items-center justify-center p-4">
+          <div className="w-full max-w-md rounded-3xl bg-[#0d121f] border border-rose-500/40 p-6 shadow-[0_25px_70px_rgba(244,63,94,0.35)] flex flex-col items-center text-center animate-in zoom-in-95 duration-200">
+            <div className="w-16 h-16 rounded-2xl bg-rose-500/20 border border-rose-500/40 flex items-center justify-center mb-4 shadow-[0_0_20px_rgba(244,63,94,0.3)]">
+              <span className="text-3xl animate-bounce">🍅</span>
+            </div>
+
+            <span className="px-3 py-1 rounded-full text-[10px] font-bold tracking-widest uppercase bg-rose-500/20 text-rose-300 border border-rose-500/30 mb-2">
+              SESSION COMPLETED
+            </span>
+
+            <h3 className="text-xl font-bold text-white mb-2">
+              {pomoMode === 'focus' ? '25-Minute Focus Sprint Finished!' : 'Break Completed!'}
+            </h3>
+
+            <p className="text-xs text-white/70 leading-relaxed mb-6 max-w-sm">
+              {pomoMode === 'focus'
+                ? 'Outstanding work! You maintained deep focus for 25 minutes. Take a 5-minute break to rest your mind, hydrate, and stretch.'
+                : 'Break time is over. You are refreshed and ready for your next study sprint!'}
+            </p>
+
+            <div className="flex flex-col sm:flex-row gap-2.5 w-full">
+              {pomoMode === 'focus' ? (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setPomoAlertActive(false);
+                      handleSwitchPomoMode('shortBreak');
+                      setIsPomoRunning(true);
+                      if (pomoSoundEnabled) playWebAudioChime('pomoStart');
+                    }}
+                    className="flex-1 py-3 px-4 rounded-xl font-bold text-xs bg-emerald-500 hover:bg-emerald-400 text-black shadow-[0_0_20px_rgba(16,185,129,0.3)] transition cursor-pointer flex items-center justify-center gap-2"
+                  >
+                    <Coffee className="w-4 h-4" />
+                    <span>Start 5m Break</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setPomoAlertActive(false);
+                      handleSwitchPomoMode('focus');
+                      setIsPomoRunning(true);
+                      if (pomoSoundEnabled) playWebAudioChime('pomoStart');
+                    }}
+                    className="flex-1 py-3 px-4 rounded-xl font-semibold text-xs bg-white/10 hover:bg-white/15 text-white border border-white/15 transition cursor-pointer"
+                  >
+                    Another 25m Focus
+                  </button>
+                </>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setPomoAlertActive(false);
+                    handleSwitchPomoMode('focus');
+                    setIsPomoRunning(true);
+                    if (pomoSoundEnabled) playWebAudioChime('pomoStart');
+                  }}
+                  className="w-full py-3 px-4 rounded-xl font-bold text-xs bg-rose-500 hover:bg-rose-400 text-white shadow-[0_0_20px_rgba(244,63,94,0.3)] transition cursor-pointer flex items-center justify-center gap-2"
+                >
+                  <Timer className="w-4 h-4" />
+                  <span>Start 25m Focus Sprint</span>
+                </button>
+              )}
+            </div>
+
+            <button
+              type="button"
+              onClick={() => setPomoAlertActive(false)}
+              className="mt-3 text-xs text-white/50 hover:text-white transition cursor-pointer"
+            >
+              Dismiss
+            </button>
+          </div>
         </div>
       )}
 
@@ -2694,6 +3186,111 @@ export default function App() {
           >
             <X className="w-4 h-4" />
           </button>
+        </div>
+
+        {/* Quick Controls Hub (Relocated from Top Bar) */}
+        <div className="mt-4 p-3 rounded-2xl bg-white/[0.04] border border-white/10 space-y-2.5">
+          <div className="flex items-center justify-between text-[11px] font-semibold text-white/70 uppercase tracking-wider px-1">
+            <span>Quick Controls</span>
+            <span className="text-[10px] text-cyan-400 font-mono">Dashboard Hub</span>
+          </div>
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+            {/* 1. Visual Studio */}
+            <button
+              type="button"
+              onClick={() => { setStudioOpen(true); setDrawerOpen(false); }}
+              className="flex items-center gap-2 p-2.5 rounded-xl bg-cyan-500/10 hover:bg-cyan-500/20 border border-cyan-500/30 text-cyan-300 text-xs font-medium transition cursor-pointer text-left shadow-sm min-h-[48px]"
+              title="Visual Customization Studio (V)"
+            >
+              <Sparkles className="w-4 h-4 text-cyan-400 shrink-0 animate-pulse" />
+              <div className="truncate">
+                <div className="font-semibold text-white text-xs">Studio</div>
+                <div className="text-[10px] text-cyan-300/80">Themes & Fonts (V)</div>
+              </div>
+            </button>
+
+            {/* 2. Quick Search */}
+            <button
+              type="button"
+              onClick={() => { setCommandMenuOpen(true); setDrawerOpen(false); setCommandSearch(''); setSelectedCommandIndex(0); }}
+              className="flex items-center gap-2 p-2.5 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 text-white text-xs font-medium transition cursor-pointer text-left min-h-[48px]"
+              title="Quick Access Search (⌘K)"
+            >
+              <Search className="w-4 h-4 text-cyan-400 shrink-0" />
+              <div className="truncate">
+                <div className="font-semibold text-white text-xs">Search</div>
+                <div className="text-[10px] text-white/50">Palette (⌘K)</div>
+              </div>
+            </button>
+
+            {/* 3. Focus Mode */}
+            <button
+              type="button"
+              onClick={() => handleToggleFocusMode()}
+              className={`flex items-center gap-2 p-2.5 rounded-xl border text-xs font-medium transition cursor-pointer text-left min-h-[48px] ${
+                isFocusModeActive
+                  ? 'bg-amber-500/25 border-amber-400 text-amber-300 shadow-[0_0_12px_rgba(251,191,36,0.25)]'
+                  : 'bg-white/5 hover:bg-white/10 border-white/10 text-white'
+              }`}
+              title="Focus Mode (Distraction-Free)"
+            >
+              <Flame className="w-4 h-4 text-amber-400 shrink-0" />
+              <div className="truncate">
+                <div className="font-semibold text-white text-xs">{isFocusModeActive ? 'Exit Focus' : 'Focus Mode'}</div>
+                <div className="text-[10px] text-white/50">Distraction-free</div>
+              </div>
+            </button>
+
+            {/* 4. Center & Align */}
+            <button
+              type="button"
+              onClick={() => recenterWidgets()}
+              className="flex items-center gap-2 p-2.5 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 text-white text-xs font-medium transition cursor-pointer text-left min-h-[48px]"
+              title="Center & Align All Widgets (C)"
+            >
+              <LayoutGrid className="w-4 h-4 text-white/80 shrink-0" />
+              <div className="truncate">
+                <div className="font-semibold text-white text-xs">Center & Align</div>
+                <div className="text-[10px] text-white/50">Auto-grid (C)</div>
+              </div>
+            </button>
+
+            {/* 5. Zen Pure View */}
+            <button
+              type="button"
+              onClick={() => setZenMode(prev => !prev)}
+              className={`flex items-center gap-2 p-2.5 rounded-xl border text-xs font-medium transition cursor-pointer text-left min-h-[48px] ${
+                zenMode
+                  ? 'bg-cyan-500/25 border-cyan-400 text-cyan-300 shadow-[0_0_12px_rgba(6,182,212,0.2)]'
+                  : 'bg-white/5 hover:bg-white/10 border-white/10 text-white'
+              }`}
+              title="Zen Pure View (H)"
+            >
+              <Eye className="w-4 h-4 text-cyan-400 shrink-0" />
+              <div className="truncate">
+                <div className="font-semibold text-white text-xs">{zenMode ? 'Exit Zen' : 'Zen View'}</div>
+                <div className="text-[10px] text-white/50">Pure clock (H)</div>
+              </div>
+            </button>
+
+            {/* 6. Pomodoro Quick Action */}
+            <button
+              type="button"
+              onClick={togglePomodoro}
+              className={`flex items-center gap-2 p-2.5 rounded-xl border text-xs font-medium transition cursor-pointer text-left min-h-[48px] ${
+                isPomoRunning
+                  ? 'bg-rose-500/25 border-rose-400 text-rose-300 shadow-[0_0_12px_rgba(244,63,94,0.25)]'
+                  : 'bg-white/5 hover:bg-white/10 border-white/10 text-white'
+              }`}
+              title="Start or pause 25-minute Pomodoro focus session"
+            >
+              <Timer className="w-4 h-4 text-rose-400 shrink-0" />
+              <div className="truncate">
+                <div className="font-semibold text-white text-xs">{isPomoRunning ? 'Pause Pomo' : 'Start Pomo'}</div>
+                <div className="text-[10px] text-white/50">{formatMinutesSeconds(pomoSecondsLeft)}</div>
+              </div>
+            </button>
+          </div>
         </div>
 
         {/* Tab Navigation with All Sections */}
@@ -4123,6 +4720,25 @@ export default function App() {
                     type="checkbox"
                     checked={config.tasks.visible}
                     onChange={e => updateConfig(p => ({ ...p, tasks: { ...p.tasks, visible: e.target.checked } }))}
+                    className="w-4 h-4 rounded text-cyan-500"
+                  />
+                </div>
+              </div>
+
+              {/* Pomodoro Focus Timer */}
+              <div className="flex items-center justify-between text-xs text-white/80 py-1">
+                <span>Pomodoro Focus Timer (25m)</span>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => updateConfig(p => ({ ...p, pomodoro: { ...p.pomodoro, glassBg: !p.pomodoro.glassBg } }))}
+                    className="text-[10px] text-white/50 hover:text-white underline cursor-pointer"
+                  >
+                    {config.pomodoro?.glassBg ? 'Glass' : 'Transparent'}
+                  </button>
+                  <input
+                    type="checkbox"
+                    checked={config.pomodoro?.visible}
+                    onChange={e => updateConfig(p => ({ ...p, pomodoro: { ...p.pomodoro, visible: e.target.checked } }))}
                     className="w-4 h-4 rounded text-cyan-500"
                   />
                 </div>

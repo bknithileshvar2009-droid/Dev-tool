@@ -13,6 +13,7 @@ import {
   User,
 } from 'firebase/auth';
 import {
+  initializeFirestore,
   getFirestore,
   doc,
   getDoc,
@@ -24,8 +25,16 @@ import firebaseConfig from '../../firebase-applet-config.json';
 // Initialize Firebase App
 export const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
 
-// Initialize Firestore with database ID from config as mandated by Firebase skill
-export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
+const customDbId = (firebaseConfig.firestoreDatabaseId &&
+  firebaseConfig.firestoreDatabaseId !== '(default)' &&
+  firebaseConfig.firestoreDatabaseId.trim() !== '')
+  ? firebaseConfig.firestoreDatabaseId
+  : undefined;
+
+// Initialize Firestore with auto-detect long-polling to prevent 10s backend unreachable timeouts
+export const db = initializeFirestore(app, {
+  experimentalAutoDetectLongPolling: true,
+}, customDbId);
 
 // Initialize Firebase Auth
 export const auth = getAuth(app);
@@ -84,17 +93,23 @@ export function handleFirestoreError(error: unknown, operationType: OperationTyp
  */
 export async function testConnection(): Promise<boolean> {
   try {
-    await getDocFromServer(doc(db, 'test', 'connection'));
+    const probePromise = getDocFromServer(doc(db, 'test', 'connection'));
+    const timeoutPromise = new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error('the client is offline or timed out')), 3500)
+    );
+    await Promise.race([probePromise, timeoutPromise]);
     return true;
   } catch (error) {
-    if (error instanceof Error && error.message.includes('the client is offline')) {
-      console.warn('Firestore offline / check configuration');
+    if (error instanceof Error && (error.message.includes('the client is offline') || error.message.includes('timed out'))) {
+      console.warn('Firestore operating in offline mode or awaiting initial server response.');
+    } else {
+      console.warn('Firestore probe notice:', error instanceof Error ? error.message : error);
     }
     return false;
   }
 }
-// Run connection probe
-testConnection();
+// Run connection probe safely in background
+testConnection().catch(() => {});
 
 /**
  * Sign in using Google Auth Provider via Popup
