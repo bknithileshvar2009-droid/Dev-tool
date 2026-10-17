@@ -1,0 +1,391 @@
+@import "tailwindcss";
+
+* {
+  box-sizing: border-box;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+body {
+  margin: 0;
+  padding: 0;
+  background-color: #030407;
+  color: #f1f5f9;
+  overflow: hidden;
+  width: 100vw;
+  height: 100vh;
+  user-select: none;
+  -webkit-user-select: none;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+}
+
+.tabular-digits {
+  font-variant-numeric: tabular-nums;
+  -webkit-font-feature-settings: "tnum";
+  font-feature-settings: "tnum";
+}
+
+/* Range inputs styling */
+input[type=range] {
+  accent-color: #06b6d4;
+}
+
+/* Custom scrollbars */
+::-webkit-scrollbar { width: 5px; height: 5px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.15); border-radius: 9999px; }
+::-webkit-scrollbar-thumb:hover { background: rgba(255, 255, 255, 0.3); }
+
+/* Modular Widget Architecture */
+.dashboard-widget {
+  position: absolute;
+  touch-action: none;
+  will-change: transform, width, height, left, top;
+  transition: box-shadow 0.2s ease, border-color 0.2s ease;
+  border: 1px dashed transparent;
+  border-radius: 24px;
+}
+
+body:not(.fullscreen-locked):not(.zen-mode) .dashboard-widget:hover {
+  border-color: rgba(255, 255, 255, 0.2);
+}
+
+.widget-focused {
+  z-index: 35 !important;
+}
+
+/* Corner Resize Handles */
+.resize-handle {
+  position: absolute;
+  width: 16px;
+  height: 16px;
+  z-index: 40;
+  opacity: 0;
+  transition: opacity 0.2s ease, transform 0.2s ease;
+  touch-action: none;
+}
+
+body:not(.fullscreen-locked):not(.zen-mode) .dashboard-widget:hover .resize-handle {
+  opacity: 0.75;
+}
+.resize-handle:hover {
+  opacity: 1 !important;
+  transform: scale(1.35);
+}
+
+.resize-se { bottom: 4px; right: 4px; cursor: nwse-resize; border-right: 2px solid currentColor; border-bottom: 2px solid currentColor; border-bottom-right-radius: 3px; }
+.resize-sw { bottom: 4px; left: 4px; cursor: nesw-resize; border-left: 2px solid currentColor; border-bottom: 2px solid currentColor; border-bottom-left-radius: 3px; }
+.resize-ne { top: 4px; right: 4px; cursor: nesw-resize; border-right: 2px solid currentColor; border-top: 2px solid currentColor; border-top-right-radius: 3px; }
+.resize-nw { top: 4px; left: 4px; cursor: nwse-resize; border-left: 2px solid currentColor; border-top: 2px solid currentColor; border-top-left-radius: 3px; }
+
+.drag-pill {
+  opacity: 0;
+  transition: opacity 0.2s ease;
+}
+body:not(.fullscreen-locked):not(.zen-mode) .dashboard-widget:hover .drag-pill {
+  opacity: 0.65;
+}
+
+/* Strict Fullscreen & Zen Lockdown */
+body.fullscreen-locked #floating-hud,
+body.fullscreen-locked #laptop-shortcut-bar,
+body.fullscreen-locked .resize-handle,
+body.fullscreen-locked .drag-pill,
+body.fullscreen-locked #drawer-menu,
+body.fullscreen-locked .widget-action-btn,
+body.zen-mode #floating-hud,
+body.zen-mode #laptop-shortcut-bar,
+body.zen-mode .resize-handle,
+body.zen-mode .drag-pill,
+body.zen-mode #drawer-menu,
+body.zen-mode .widget-action-btn {
+  display: none !important;
+  opacity: 0 !important;
+  pointer-events: none !important;
+  visibility: hidden !important;
+}
+
+body.fullscreen-locked .dashboard-widget,
+body.zen-mode .dashboard-widget {
+  cursor: default !important;
+  border-color: transparent !important;
+  box-shadow: none !important;
+}
+
+/* 10 Architectural Clock Designs */
+.clock-style-giant #time-main,
+.clock-style-giant #time-seconds,
+.clock-style-giant #time-ms {
+  font-family: 'Anton', sans-serif !important;
+  text-transform: uppercase;
+  letter-spacing: -0.04em;
+  line-height: 0.88;
+}
+
+.clock-style-grid {
+  background: rgba(10, 14, 23, 0.72) !important;
+  border: 1px solid rgba(255, 255, 255, 0.12) !important;
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border-radius: 20px !important;
+}
+.clock-style-grid #time-main,
+.clock-style-grid #time-seconds,
+.clock-style-grid #time-ms {
+  font-family: 'JetBrains Mono', monospace !important;
+  letter-spacing: -0.02em;
+}
+
+.clock-style-glass {
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.1) 0%, rgba(255, 255, 255, 0.02) 100%) !important;
+  backdrop-filter: blur(28px) saturate(180%) !important;
+  -webkit-backdrop-filter: blur(28px) saturate(180%) !important;
+  border: 1px solid rgba(255, 255, 255, 0.18) !important;
+  border-radius: 32px !important;
+  box-shadow: 0 30px 60px -15px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.3) !important;
+}
+.clock-style-glass #time-main,
+.clock-style-glass #time-seconds,
+.clock-style-glass #time-ms {
+  font-family: 'Plus Jakarta Sans', sans-serif !important;
+  font-weight: 300;
+}
+
+.clock-style-lcd {
+  background: #090c0a !important;
+  border: 2px solid #1a221d !important;
+  border-radius: 16px !important;
+  box-shadow: inset 0 0 25px rgba(0,0,0,0.9), 0 15px 35px rgba(0,0,0,0.6) !important;
+}
+.clock-style-lcd #time-main,
+.clock-style-lcd #time-seconds,
+.clock-style-lcd #time-ms {
+  font-family: 'VT323', monospace !important;
+  letter-spacing: 0.06em;
+}
+
+.clock-style-dotmatrix #time-main,
+.clock-style-dotmatrix #time-seconds,
+.clock-style-dotmatrix #time-ms {
+  font-family: 'Doto', monospace !important;
+  font-weight: 900;
+  letter-spacing: 0.05em;
+}
+
+.clock-style-flip {
+  background: rgba(18, 20, 26, 0.78) !important;
+  border-radius: 20px !important;
+  border: 1px solid rgba(255, 255, 255, 0.12) !important;
+  box-shadow: inset 0 -3px 0 rgba(0,0,0,0.5), 0 10px 25px rgba(0,0,0,0.5) !important;
+}
+.clock-style-flip #time-main,
+.clock-style-flip #time-seconds,
+.clock-style-flip #time-ms {
+  font-family: 'Inter', sans-serif !important;
+  font-weight: 800;
+}
+
+.clock-style-neon #time-main,
+.clock-style-neon #time-seconds,
+.clock-style-neon #time-ms {
+  font-family: 'Audiowide', cursive !important;
+  animation: neonPulse 3.5s infinite alternate;
+}
+@keyframes neonPulse {
+  0%, 100% { filter: brightness(1) drop-shadow(0 0 8px currentColor); }
+  50% { filter: brightness(1.25) drop-shadow(0 0 22px currentColor); }
+}
+
+.clock-style-morph {
+  background: rgba(12, 14, 22, 0.75) !important;
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border-radius: 30px !important;
+  position: relative;
+  border: 2px solid transparent !important;
+  background-clip: padding-box;
+}
+.clock-style-morph::before {
+  content: '';
+  position: absolute;
+  inset: -2px;
+  border-radius: 32px;
+  background: linear-gradient(130deg, #06b6d4, #8b5cf6, #ec4899, #10b981);
+  z-index: -1;
+  background-size: 300% 300%;
+  animation: morphGradient 7s ease infinite;
+}
+@keyframes morphGradient {
+  0% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+  100% { background-position: 0% 50%; }
+}
+.clock-style-morph #time-main,
+.clock-style-morph #time-seconds,
+.clock-style-morph #time-ms {
+  font-family: 'Plus Jakarta Sans', sans-serif !important;
+  font-weight: 700;
+}
+
+.clock-style-aurora #time-main,
+.clock-style-aurora #time-seconds,
+.clock-style-aurora #time-ms {
+  font-family: 'Inter', sans-serif !important;
+  font-weight: 900;
+  background: linear-gradient(90deg, #38bdf8, #818cf8, #c084fc, #f472b6, #38bdf8);
+  background-size: 300% auto;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: auroraDigiShift 9s linear infinite;
+}
+@keyframes auroraDigiShift {
+  to { background-position: 300% center; }
+}
+
+.clock-style-statusbar {
+  background: rgba(15, 18, 26, 0.88) !important;
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(255, 255, 255, 0.12) !important;
+  border-radius: 9999px !important;
+  padding-left: 32px !important;
+  padding-right: 32px !important;
+  box-shadow: 0 20px 45px rgba(0, 0, 0, 0.5) !important;
+}
+.clock-style-statusbar #time-main,
+.clock-style-statusbar #time-seconds,
+.clock-style-statusbar #time-ms {
+  font-family: 'JetBrains Mono', monospace !important;
+  font-weight: 500;
+}
+
+/* Translucent / Glass Styling */
+.widget-glass-card {
+  background: rgba(11, 14, 22, 0.62) !important;
+  backdrop-filter: blur(24px) saturate(160%);
+  -webkit-backdrop-filter: blur(24px) saturate(160%);
+  border: 1px solid rgba(255, 255, 255, 0.12) !important;
+  border-radius: 28px !important;
+  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.55), inset 0 1px 0 rgba(255, 255, 255, 0.15) !important;
+}
+
+.widget-transparent {
+  background: transparent !important;
+  border: 1px solid transparent !important;
+  box-shadow: none !important;
+}
+
+/* UI Controls & Drawer */
+.hud-btn {
+  background: rgba(255, 255, 255, 0.08);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  color: rgba(255, 255, 255, 0.85);
+  transition: all 0.2s ease;
+}
+.hud-btn:hover {
+  background: rgba(255, 255, 255, 0.22);
+  color: #fff;
+  transform: translateY(-1px);
+}
+
+.drawer-glass {
+  background: rgba(10, 13, 20, 0.96);
+  backdrop-filter: blur(36px);
+  -webkit-backdrop-filter: blur(36px);
+  border-left: 1px solid rgba(255, 255, 255, 0.1);
+  box-shadow: -25px 0 60px rgba(0, 0, 0, 0.75);
+}
+
+.custom-img-card {
+  position: relative;
+  overflow: hidden;
+  border-radius: 12px;
+  border: 2px solid transparent;
+  cursor: pointer;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+.custom-img-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 20px rgba(0,0,0,0.5);
+  border-color: rgba(255, 255, 255, 0.4);
+}
+.custom-img-card.active-wallpaper {
+  border-color: #06b6d4 !important;
+  box-shadow: 0 0 15px rgba(6, 182, 212, 0.45);
+}
+
+/* Typography Studio Font Classes */
+.font-inter { font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif !important; }
+.font-roboto { font-family: 'Roboto', sans-serif !important; }
+.font-poppins { font-family: 'Poppins', sans-serif !important; }
+.font-montserrat { font-family: 'Montserrat', sans-serif !important; }
+.font-outfit { font-family: 'Outfit', sans-serif !important; }
+.font-space { font-family: 'Space Grotesk', sans-serif !important; }
+.font-orbitron { font-family: 'Orbitron', sans-serif !important; }
+.font-mono-jb { font-family: 'JetBrains Mono', monospace !important; }
+.font-mono-ibm { font-family: 'IBM Plex Mono', monospace !important; }
+.font-system { font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif !important; }
+.font-anton { font-family: 'Anton', sans-serif !important; }
+.font-audiowide { font-family: 'Audiowide', cursive !important; }
+.font-vt323 { font-family: 'VT323', monospace !important; }
+.font-doto { font-family: 'Doto', sans-serif !important; }
+
+/* 7 Distinct Widget Appearance Styles */
+.widget-style-transparent {
+  background: transparent !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  border: 1px solid transparent !important;
+  box-shadow: none !important;
+}
+
+.widget-style-minimal-flat {
+  background: rgba(12, 16, 24, 0.72) !important;
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border: 1px solid rgba(255, 255, 255, 0.08) !important;
+  box-shadow: none !important;
+}
+
+.widget-style-subtle-dark-glass {
+  background: rgba(8, 12, 20, 0.58) !important;
+  backdrop-filter: blur(16px) saturate(140%);
+  -webkit-backdrop-filter: blur(16px) saturate(140%);
+  border: 1px solid rgba(255, 255, 255, 0.12) !important;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45) !important;
+}
+
+.widget-style-frosted-glass {
+  background: rgba(255, 255, 255, 0.09) !important;
+  backdrop-filter: blur(28px) saturate(180%);
+  -webkit-backdrop-filter: blur(28px) saturate(180%);
+  border: 1px solid rgba(255, 255, 255, 0.22) !important;
+  box-shadow: 0 20px 45px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.2) !important;
+}
+
+.widget-style-thin-outlined {
+  background: rgba(0, 0, 0, 0.25) !important;
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border: 1.5px solid rgba(255, 255, 255, 0.3) !important;
+  box-shadow: inset 0 0 20px rgba(255, 255, 255, 0.03) !important;
+}
+
+.widget-style-soft-shadow {
+  background: rgba(14, 18, 28, 0.88) !important;
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(255, 255, 255, 0.07) !important;
+  box-shadow: 0 25px 55px -8px rgba(0, 0, 0, 0.8), 0 10px 25px rgba(0, 0, 0, 0.6) !important;
+}
+
+.widget-style-compact-info {
+  background: rgba(15, 23, 42, 0.82) !important;
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  border: 1px solid rgba(6, 182, 212, 0.35) !important;
+  box-shadow: 0 10px 30px rgba(6, 182, 212, 0.12), inset 0 1px 0 rgba(6, 182, 212, 0.25) !important;
+}
+

@@ -1,0 +1,6 @@
+{
+  "name": "Flocus Dashboard — Clock & Public Exam Countdown",
+  "description": "Minimal aesthetic study dashboard featuring high-precision architectural clock styles, customizable public exam countdown, live atmospheric canvases, and ambient wallpapers.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

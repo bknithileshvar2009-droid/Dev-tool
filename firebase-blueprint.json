@@ -1,0 +1,36 @@
+{
+  "entities": {
+    "UserDashboard": {
+      "title": "User Dashboard Data",
+      "description": "User's study dashboard configuration, tasks, routines, and personalization state",
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "description": "Firebase Auth UID of the dashboard owner",
+          "maxLength": 128
+        },
+        "config": {
+          "type": "object",
+          "description": "Dashboard configuration object including widgets, themes, and preferences"
+        },
+        "tasks": {
+          "type": "array",
+          "description": "Array of quick study tasks"
+        },
+        "updatedAt": {
+          "type": "string",
+          "description": "ISO timestamp string of when the data was saved",
+          "maxLength": 64
+        }
+      },
+      "required": ["userId", "config", "updatedAt"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}/dashboard/data": {
+      "schema": "UserDashboard",
+      "description": "User-specific persistent study dashboard settings and quick task list"
+    }
+  }
+}
