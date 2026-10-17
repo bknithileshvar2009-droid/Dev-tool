@@ -58,6 +58,12 @@ import {
   Layers,
   ArrowRight,
   CornerDownRight,
+  Pin,
+  Copy,
+  Minimize2,
+  ChevronUp,
+  ChevronDown,
+  FileText,
 } from 'lucide-react';
 import { MOTIVATION_QUOTES, MotivationQuote } from './utils/quotes';
 import {
@@ -420,6 +426,14 @@ interface DashboardConfig {
     width: number;
     height: number;
   };
+  scratchpad: {
+    visible: boolean;
+    glassBg: boolean;
+    x: number | null;
+    y: number | null;
+    width: number;
+    height: number;
+  };
   activeThemeId?: string;
   bgSaturation?: number;
   bgBrightness?: number;
@@ -580,6 +594,14 @@ const DEFAULT_CONFIG: DashboardConfig = {
     width: 360,
     height: 240,
   },
+  scratchpad: {
+    visible: true,
+    glassBg: true,
+    x: null,
+    y: null,
+    width: 380,
+    height: 300,
+  },
 };
 
 export default function App() {
@@ -592,6 +614,7 @@ export default function App() {
         return {
           ...DEFAULT_CONFIG,
           ...parsed,
+          scratchpad: parsed.scratchpad ? { ...DEFAULT_CONFIG.scratchpad, ...parsed.scratchpad } : DEFAULT_CONFIG.scratchpad,
           routineMode: parsed.routineMode || 'school',
           animationIntensity: parsed.animationIntensity ?? 1.0,
           isWallpaperStatic: parsed.isWallpaperStatic ?? false,
@@ -660,7 +683,7 @@ export default function App() {
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [zenMode, setZenMode] = useState(false);
   const [isFocusModeActive, setIsFocusModeActive] = useState(false);
-  const [focusedWidget, setFocusedWidget] = useState<'nameWidget' | 'clock' | 'countdown' | 'tasks' | 'notification' | 'calendar' | 'motivation' | 'pomodoro' | null>(null);
+  const [focusedWidget, setFocusedWidget] = useState<DashboardWidgetKey | null>(null);
   const [urlInput, setUrlInput] = useState('');
 
   // Task Completion Animation State
@@ -739,6 +762,44 @@ export default function App() {
   // Live Time
   const [currentTime, setCurrentTime] = useState(new Date());
 
+  // Scratchpad / Quick Notes Widget State
+  const [scratchpadCollapsed, setScratchpadCollapsed] = useState(false);
+  const [scratchpadText, setScratchpadText] = useState<string>(() => {
+    try {
+      return localStorage.getItem('flocus_scratchpad_notes') || '';
+    } catch {
+      return '';
+    }
+  });
+  const [scratchpadSavedPulse, setScratchpadSavedPulse] = useState(false);
+  const [scratchpadCopyFeedback, setScratchpadCopyFeedback] = useState(false);
+  const scratchpadSaveTimeoutRef = useRef<any>(null);
+
+  const handleScratchpadChange = useCallback((newText: string) => {
+    setScratchpadText(newText);
+    try {
+      localStorage.setItem('flocus_scratchpad_notes', newText);
+      setScratchpadSavedPulse(true);
+      if (scratchpadSaveTimeoutRef.current) clearTimeout(scratchpadSaveTimeoutRef.current);
+      scratchpadSaveTimeoutRef.current = setTimeout(() => {
+        setScratchpadSavedPulse(false);
+      }, 1200);
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  const handleCopyScratchpad = useCallback(() => {
+    if (!scratchpadText) return;
+    navigator.clipboard.writeText(scratchpadText);
+    setScratchpadCopyFeedback(true);
+    setTimeout(() => setScratchpadCopyFeedback(false), 2000);
+  }, [scratchpadText]);
+
+  const handleClearScratchpad = useCallback(() => {
+    handleScratchpadChange('');
+  }, [handleScratchpadChange]);
+
   // Canvas ref
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
@@ -751,6 +812,7 @@ export default function App() {
   const calendarRef = useRef<HTMLDivElement | null>(null);
   const motivationRef = useRef<HTMLDivElement | null>(null);
   const pomodoroRef = useRef<HTMLDivElement | null>(null);
+  const scratchpadRef = useRef<HTMLDivElement | null>(null);
   const dashboardRef = useRef<HTMLDivElement | null>(null);
   const [placementModal, setPlacementModal] = useState<{
     isOpen: boolean;
@@ -762,10 +824,23 @@ export default function App() {
   } | null>(null);
   const [isPlacementModeActive, setIsPlacementModeActive] = useState<boolean>(false);
 
+  // Right-Click Gesture Detector Ref (Double-click 300ms threshold timer)
+  const rightClickDetectorRef = useRef<{
+    timer: ReturnType<typeof setTimeout> | null;
+    lastTime: number;
+    clickX: number;
+    clickY: number;
+  }>({
+    timer: null,
+    lastTime: 0,
+    clickX: 0,
+    clickY: 0,
+  });
+
   // Interaction tracking (drag/resize)
   const dragResizeState = useRef<{
     type: 'drag' | 'resize' | null;
-    widget: 'nameWidget' | 'clock' | 'countdown' | 'tasks' | 'notification' | 'calendar' | 'motivation' | 'pomodoro' | null;
+    widget: DashboardWidgetKey | null;
     handle?: string;
     startX: number;
     startY: number;
@@ -813,21 +888,15 @@ export default function App() {
   // Right-Click Context Menu State & Widget Management
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; visible: boolean } | null>(null);
 
-  const handleContextMenu = useCallback((e: React.MouseEvent) => {
-    const target = e.target as HTMLElement;
-    if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA') return;
-    e.preventDefault();
-    const menuWidth = 300;
-    const menuHeight = 480;
-    const x = Math.min(e.clientX, window.innerWidth - menuWidth - 10);
-    const y = Math.min(e.clientY, window.innerHeight - menuHeight - 10);
-    setContextMenu({ x: Math.max(10, x), y: Math.max(10, y), visible: true });
-  }, []);
-
   useEffect(() => {
-    const handleGlobalClick = () => setContextMenu(null);
+    const handleGlobalClick = () => {
+      setContextMenu(null);
+    };
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setContextMenu(null);
+      if (e.key === 'Escape') {
+        setContextMenu(null);
+        setPlacementModal(null);
+      }
     };
     window.addEventListener('click', handleGlobalClick);
     window.addEventListener('keydown', handleKeyDown);
@@ -838,12 +907,12 @@ export default function App() {
   }, []);
 
   // Transparency Controls (Per-Widget & Global)
-  const toggleWidgetTransparency = useCallback((widgetKey: 'clock' | 'countdown' | 'notification' | 'calendar' | 'tasks' | 'motivation' | 'pomodoro' | 'nameWidget') => {
+  const toggleWidgetTransparency = useCallback((widgetKey: DashboardWidgetKey) => {
     updateConfig(p => ({
       ...p,
       [widgetKey]: {
-        ...p[widgetKey],
-        glassBg: !p[widgetKey]?.glassBg,
+        ...(p as any)[widgetKey],
+        glassBg: !(p as any)[widgetKey]?.glassBg,
       },
     }));
   }, [updateConfig]);
@@ -860,6 +929,7 @@ export default function App() {
       motivation: { ...p.motivation, glassBg: !transparent },
       pomodoro: { ...p.pomodoro, glassBg: !transparent },
       nameWidget: { ...p.nameWidget, glassBg: !transparent },
+      scratchpad: { ...p.scratchpad, glassBg: !transparent },
     }));
   }, [updateConfig]);
 
@@ -872,7 +942,8 @@ export default function App() {
       !config.tasks.glassBg &&
       !config.motivation.glassBg &&
       !config.nameWidget.glassBg &&
-      !config.pomodoro?.glassBg
+      !config.pomodoro?.glassBg &&
+      !config.scratchpad?.glassBg
     );
   }, [config]);
 
@@ -893,6 +964,7 @@ export default function App() {
     { id: 'calendar', label: 'Exam Study Calendar', defaultW: 380, defaultH: 340, icon: CalendarIcon, category: 'Calendar' },
     { id: 'motivation', label: 'Daily Intention & Motivation', defaultW: 440, defaultH: 140, icon: Sparkles, category: 'Mindset' },
     { id: 'pomodoro', label: 'Pomodoro Focus Timer', defaultW: 360, defaultH: 240, icon: Zap, category: 'Focus' },
+    { id: 'scratchpad', label: 'Scratchpad / Quick Notes', defaultW: 380, defaultH: 300, icon: FileText, category: 'Notes' },
   ], []);
 
   const hexToRgba = useCallback((hex: string, alpha: number): string => {
@@ -994,6 +1066,7 @@ export default function App() {
     return base;
   }, [config, hexToRgba]);
 
+  // 1. Regular Left-Clicks: Never accidentally pop up widget placement modals; dismiss open menus smoothly
   const handleDashboardClick = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
     const target = e.target as HTMLElement;
     if (
@@ -1006,35 +1079,90 @@ export default function App() {
       target.closest('.context-menu-container') ||
       target.closest('.no-canvas-click') ||
       target.closest('.task-item-action') ||
-      target.closest('.resize-handle')
+      target.closest('.resize-handle') ||
+      target.closest('#scratchpad-widget')
     ) {
       return;
     }
 
+    setPlacementModal(null);
     setContextMenu(null);
+  }, []);
+
+  // 2. Right-Click Gesture Detector:
+  // - Single Right-Click on empty space: Open "ADD WIDGET AT POSITION" at cursor coordinates
+  // - Double Right-Click (or Single Right-Click directly on an occupied widget/card): Open "POSITION OCCUPIED" menu
+  // - Suppresses native browser context menu
+  const handleContextMenu = useCallback((e: React.MouseEvent) => {
+    const target = e.target as HTMLElement;
+    if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA') return;
+
+    // Suppress native browser context menu on the dashboard canvas
+    e.preventDefault();
 
     const rect = dashboardRef.current?.getBoundingClientRect() || { left: 0, top: 0 };
     const clickX = Math.round(e.clientX - rect.left);
     const clickY = Math.round(e.clientY - rect.top);
 
+    // Check if clicked directly on an occupied widget/card
     let occupiedId: DashboardWidgetKey | null = null;
     let occupiedLabel: string | null = null;
 
-    for (const item of ALL_WIDGET_REGISTRY) {
-      const wConfig = (config as any)[item.id];
-      if (wConfig && wConfig.visible !== false) {
-        const wx = wConfig.x ?? 50;
-        const wy = wConfig.y ?? 50;
-        const ww = wConfig.width || item.defaultW;
-        const wh = wConfig.height || item.defaultH;
-        if (clickX >= wx && clickX <= wx + ww && clickY >= wy && clickY <= wy + wh) {
-          occupiedId = item.id;
-          occupiedLabel = item.label;
-          break;
+    // Check DOM hierarchy for data-widget-id or specific widget container id
+    const widgetDom = target.closest(
+      '#motivation-widget, #name-widget, #clock-widget, #countdown-widget, #notification-widget, #calendar-widget, #tasks-widget, #pomodoro-widget, #scratchpad-widget, [data-widget-id], .dashboard-widget'
+    ) as HTMLElement | null;
+
+    if (widgetDom) {
+      const explicitId = widgetDom.dataset?.widgetId;
+      if (explicitId) {
+        const found = ALL_WIDGET_REGISTRY.find(w => w.id === explicitId);
+        if (found) {
+          occupiedId = found.id;
+          occupiedLabel = found.label;
+        }
+      } else {
+        const domId = widgetDom.id;
+        const mappedId: DashboardWidgetKey | null =
+          domId === 'name-widget' ? 'nameWidget' :
+          domId === 'clock-widget' ? 'clock' :
+          domId === 'countdown-widget' ? 'countdown' :
+          domId === 'tasks-widget' ? 'tasks' :
+          domId === 'notification-widget' ? 'notification' :
+          domId === 'calendar-widget' ? 'calendar' :
+          domId === 'motivation-widget' ? 'motivation' :
+          domId === 'pomodoro-widget' ? 'pomodoro' :
+          domId === 'scratchpad-widget' ? 'scratchpad' : null;
+
+        if (mappedId) {
+          const found = ALL_WIDGET_REGISTRY.find(w => w.id === mappedId);
+          if (found) {
+            occupiedId = found.id;
+            occupiedLabel = found.label;
+          }
         }
       }
     }
 
+    // Also check bounding coordinates of all visible widgets
+    if (!occupiedId) {
+      for (const item of ALL_WIDGET_REGISTRY) {
+        const wConfig = (config as any)[item.id];
+        if (wConfig && wConfig.visible !== false) {
+          const wx = wConfig.x ?? 50;
+          const wy = wConfig.y ?? 50;
+          const ww = wConfig.width || item.defaultW;
+          const wh = wConfig.height || item.defaultH;
+          if (clickX >= wx && clickX <= wx + ww && clickY >= wy && clickY <= wy + wh) {
+            occupiedId = item.id;
+            occupiedLabel = item.label;
+            break;
+          }
+        }
+      }
+    }
+
+    // Calculate nearest grid slot for layout presets
     const currentPreset = STUDIO_LAYOUT_ARRANGEMENTS.find(p => p.id === (config.selectedGridPresetId || 'preset-grid-1')) || STUDIO_LAYOUT_ARRANGEMENTS[0];
     const usableW = Math.max(600, window.innerWidth - (config.gridMargins ?? 24) * 2);
     const usableH = Math.max(500, window.innerHeight - (config.gridMargins ?? 24) * 2);
@@ -1060,14 +1188,96 @@ export default function App() {
       });
     }
 
-    setPlacementModal({
-      isOpen: true,
-      x: clickX,
-      y: clickY,
-      occupiedBy: occupiedId,
-      occupiedWidgetLabel: occupiedLabel,
-      nearestGridSlot: nearestSlot ? { name: nearestSlot.label, cellX: Math.round(nearestSlot.xPercent), cellY: Math.round(nearestSlot.yPercent) } : undefined,
-    });
+    const nearestGridSlotInfo = nearestSlot
+      ? { name: nearestSlot.label, cellX: Math.round(nearestSlot.xPercent), cellY: Math.round(nearestSlot.yPercent) }
+      : undefined;
+
+    // Helper to find the nearest occupied widget if double right-clicking on empty canvas
+    const getNearestOccupiedWidget = (): { id: DashboardWidgetKey; label: string } => {
+      let closestId: DashboardWidgetKey = 'clock';
+      let closestLabel = 'Master Architectural Clock';
+      let minDist = Infinity;
+      for (const item of ALL_WIDGET_REGISTRY) {
+        const wConfig = (config as any)[item.id];
+        if (wConfig && wConfig.visible !== false) {
+          const wx = (wConfig.x ?? 50) + (wConfig.width || item.defaultW) / 2;
+          const wy = (wConfig.y ?? 50) + (wConfig.height || item.defaultH) / 2;
+          const dist = Math.hypot(clickX - wx, clickY - wy);
+          if (dist < minDist) {
+            minDist = dist;
+            closestId = item.id;
+            closestLabel = item.label;
+          }
+        }
+      }
+      return { id: closestId, label: closestLabel };
+    };
+
+    // Case 1: Single Right-Click DIRECTLY on an occupied widget/card -> Open "POSITION OCCUPIED" menu
+    if (occupiedId) {
+      if (rightClickDetectorRef.current.timer) {
+        clearTimeout(rightClickDetectorRef.current.timer);
+        rightClickDetectorRef.current.timer = null;
+      }
+      setContextMenu(null);
+      setPlacementModal({
+        isOpen: true,
+        x: clickX,
+        y: clickY,
+        occupiedBy: occupiedId,
+        occupiedWidgetLabel: occupiedLabel,
+        nearestGridSlot: nearestGridSlotInfo,
+      });
+      return;
+    }
+
+    // Case 2: Right-Click on empty space -> 300ms double-click detector
+    const now = Date.now();
+    const prev = rightClickDetectorRef.current;
+    const isDoubleRightClick =
+      now - prev.lastTime <= 300 &&
+      Math.hypot(clickX - prev.clickX, clickY - prev.clickY) < 60;
+
+    if (isDoubleRightClick) {
+      // Double Right-Click on empty space -> Open "POSITION OCCUPIED" menu
+      if (prev.timer) {
+        clearTimeout(prev.timer);
+        prev.timer = null;
+      }
+      prev.lastTime = 0;
+      setContextMenu(null);
+      const fallback = getNearestOccupiedWidget();
+      setPlacementModal({
+        isOpen: true,
+        x: clickX,
+        y: clickY,
+        occupiedBy: fallback.id,
+        occupiedWidgetLabel: fallback.label,
+        nearestGridSlot: nearestGridSlotInfo,
+      });
+    } else {
+      // First Right-Click on empty space -> start 300ms timer
+      if (prev.timer) {
+        clearTimeout(prev.timer);
+      }
+      prev.lastTime = now;
+      prev.clickX = clickX;
+      prev.clickY = clickY;
+
+      prev.timer = setTimeout(() => {
+        // Single Right-Click on empty space -> Open "ADD WIDGET AT POSITION" menu positioned at cursor
+        setContextMenu(null);
+        setPlacementModal({
+          isOpen: true,
+          x: clickX,
+          y: clickY,
+          occupiedBy: null, // Signals "ADD WIDGET AT POSITION"
+          occupiedWidgetLabel: null,
+          nearestGridSlot: nearestGridSlotInfo,
+        });
+        prev.timer = null;
+      }, 300);
+    }
   }, [config, ALL_WIDGET_REGISTRY]);
 
   const handlePlaceWidgetAtSelectedPosition = useCallback((
@@ -1814,6 +2024,14 @@ export default function App() {
         calendar: { ...prev.calendar, ...coords.calendar },
         motivation: { ...prev.motivation, ...coords.motivation },
         pomodoro: { ...prev.pomodoro, ...coords.pomodoro },
+        scratchpad: prev.scratchpad ? { ...prev.scratchpad, ...coords.scratchpad } : {
+          visible: true,
+          glassBg: true,
+          x: coords.scratchpad?.x ?? 50,
+          y: coords.scratchpad?.y ?? 550,
+          width: 380,
+          height: 300,
+        },
       }));
       return;
     }
@@ -1834,6 +2052,8 @@ export default function App() {
     const motH = config.motivation.height || 140;
     const pomoW = config.pomodoro?.width || 360;
     const pomoH = config.pomodoro?.height || 240;
+    const spW = config.scratchpad?.width || 380;
+    const spH = config.scratchpad?.height || 300;
 
     if (sw >= 1400) {
       // 1. Top section: Title header and Clock hero
@@ -1864,6 +2084,9 @@ export default function App() {
       const availableLeft = sh - motY - motH - bottomReserved - gapY;
       const calY = Math.min(sh - calH - bottomReserved, motY + motH + gapY + Math.max(0, Math.round((availableLeft - calH) / 2)));
 
+      const spX = Math.max(20, Math.round((sw - spW) / 2));
+      const spY = Math.min(sh - spH - 20, Math.max(topEnd + gapY, sh - spH - 30));
+
       updateConfig(prev => ({
         ...prev,
         nameWidget: { ...prev.nameWidget, x: nameX, y: nameY },
@@ -1874,6 +2097,7 @@ export default function App() {
         calendar: { ...prev.calendar, x: calX, y: calY },
         motivation: { ...prev.motivation, x: motX, y: motY },
         pomodoro: { ...prev.pomodoro, x: pomoX, y: pomoY },
+        scratchpad: { ...prev.scratchpad, x: prev.scratchpad?.x ?? spX, y: prev.scratchpad?.y ?? spY, width: spW, height: spH },
       }));
     } else {
       const nameX = Math.max(10, Math.round((sw - nameW) / 2));
@@ -1894,6 +2118,8 @@ export default function App() {
       const calY = pomoY + pomoH + stepGap;
       const motX = Math.max(10, Math.round((sw - motW) / 2));
       const motY = calY + calH + stepGap;
+      const spX = Math.max(10, Math.round((sw - spW) / 2));
+      const spY = motY + motH + stepGap;
 
       updateConfig(prev => ({
         ...prev,
@@ -1905,6 +2131,7 @@ export default function App() {
         calendar: { ...prev.calendar, x: calX, y: calY },
         motivation: { ...prev.motivation, x: motX, y: motY },
         pomodoro: { ...prev.pomodoro, x: pomoX, y: pomoY },
+        scratchpad: { ...prev.scratchpad, x: prev.scratchpad?.x ?? spX, y: prev.scratchpad?.y ?? spY, width: spW, height: spH },
       }));
     }
   }, [
@@ -1926,6 +2153,8 @@ export default function App() {
     config.motivation.height,
     config.pomodoro?.width,
     config.pomodoro?.height,
+    config.scratchpad?.width,
+    config.scratchpad?.height,
     updateConfig,
   ]);
 
@@ -1940,7 +2169,9 @@ export default function App() {
       config.calendar.x === null ||
       config.motivation.x === null ||
       config.pomodoro?.x === null ||
-      config.pomodoro?.y === null
+      config.pomodoro?.y === null ||
+      config.scratchpad?.x === null ||
+      config.scratchpad?.y === null
     ) {
       recenterWidgets();
     }
@@ -1955,6 +2186,8 @@ export default function App() {
     config.motivation.x,
     config.pomodoro?.x,
     config.pomodoro?.y,
+    config.scratchpad?.x,
+    config.scratchpad?.y,
     recenterWidgets,
   ]);
 
@@ -2002,9 +2235,18 @@ export default function App() {
     }
   }, [zenMode]);
 
-  // ================= 2. KEYBOARD SHORTCUTS (INCLUDING CMD+K / CTRL+K) =================
+  // ================= 2. KEYBOARD SHORTCUTS (INCLUDING CMD+K / CTRL+K & ALT+N) =================
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      // Global shortcut for Scratchpad (Alt+N)
+      if (e.altKey && e.key.toLowerCase() === 'n') {
+        e.preventDefault();
+        setScratchpadCollapsed(prev => !prev);
+        const textarea = scratchpadRef.current?.querySelector('textarea');
+        if (textarea) textarea.focus();
+        return;
+      }
+
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
         e.preventDefault();
         setCommandMenuOpen(prev => !prev);
@@ -2042,6 +2284,8 @@ export default function App() {
         setCommandMenuOpen(false);
         setDrawerOpen(false);
         setZenMode(false);
+        setPlacementModal(null);
+        setContextMenu(null);
         if (isFocusModeActive) {
           setIsFocusModeActive(false);
         }
@@ -2200,7 +2444,7 @@ export default function App() {
   }, [config.canvasTheme, config.wallpaperUrl, config.animationIntensity, config.isWallpaperStatic, config.personalization.reducedMotion]);
 
   // Pointer event listeners for Drag & Corner Resize
-  const getWidgetRef = (widgetName: 'nameWidget' | 'clock' | 'countdown' | 'tasks' | 'notification' | 'calendar' | 'motivation' | 'pomodoro') => {
+  const getWidgetRef = (widgetName: DashboardWidgetKey) => {
     switch (widgetName) {
       case 'nameWidget':
         return nameWidgetRef.current;
@@ -2218,12 +2462,14 @@ export default function App() {
         return motivationRef.current;
       case 'pomodoro':
         return pomodoroRef.current;
+      case 'scratchpad':
+        return scratchpadRef.current;
     }
   };
 
   const handlePointerDown = (
     e: React.PointerEvent<HTMLDivElement>,
-    widgetName: 'nameWidget' | 'clock' | 'countdown' | 'tasks' | 'notification' | 'calendar' | 'motivation' | 'pomodoro'
+    widgetName: DashboardWidgetKey
   ) => {
     setFocusedWidget(widgetName);
     if (!config.optionalFeatures.widgetCustomization) return;
@@ -2365,7 +2611,7 @@ export default function App() {
 
   const handleWheelZoom = (
     e: React.WheelEvent<HTMLDivElement>,
-    widget: 'nameWidget' | 'clock' | 'countdown' | 'tasks' | 'notification' | 'calendar' | 'motivation' | 'pomodoro'
+    widget: DashboardWidgetKey
   ) => {
     if (!config.optionalFeatures.widgetCustomization) return;
     if (!e.ctrlKey && !e.metaKey) return;
@@ -2374,7 +2620,7 @@ export default function App() {
     const minW = widget === 'nameWidget' ? 280 : widget === 'tasks' ? 260 : 260;
     const minH = widget === 'nameWidget' ? 70 : widget === 'tasks' ? 200 : 100;
     updateConfig(prev => {
-      const current = prev[widget];
+      const current = (prev as any)[widget];
       const newW = Math.max(minW, Math.min(window.innerWidth * 0.9, Math.round(current.width * factor)));
       const newH = Math.max(minH, Math.min(window.innerHeight * 0.8, Math.round(current.height * factor)));
       return {
@@ -2734,6 +2980,8 @@ export default function App() {
         activeThemeId={config.activeThemeId}
       />
 
+
+
       {/* ================= FLOATING ACTION CONTROLS (TOP RIGHT CORNER) ================= */}
       <div
         id="floating-hud"
@@ -2813,70 +3061,7 @@ export default function App() {
         </button>
       </div>
 
-      {/* ================= LAPTOP KEYBOARD SHORTCUTS BAR ================= */}
-      <div
-        id="laptop-shortcut-bar"
-        className="absolute bottom-0 mb-3 left-6 z-40 hidden md:flex items-center gap-3 py-1.5 px-3.5 rounded-full bg-black/40 backdrop-blur-md border border-white/10 text-[11px] text-white/60 transition-all duration-300"
-      >
-        <span>
-          <kbd className="px-1.5 py-0.5 rounded bg-white/10 font-mono text-cyan-300 text-[10px]">V</kbd> Studio
-        </span>
-        <span className="opacity-30">•</span>
-        <span>
-          <kbd className="px-1.5 py-0.5 rounded bg-white/10 font-mono text-white text-[10px]">⌘K</kbd> Quick Search
-        </span>
-        <span className="opacity-30">•</span>
-        <span>
-          <kbd className="px-1.5 py-0.5 rounded bg-white/10 font-mono text-white text-[10px]">F</kbd> Fullscreen
-        </span>
-        <span className="opacity-30">•</span>
-        <span>
-          <kbd className="px-1.5 py-0.5 rounded bg-white/10 font-mono text-white text-[10px]">M</kbd> Menu
-        </span>
-        <span className="opacity-30">•</span>
-        <span>
-          <kbd className="px-1.5 py-0.5 rounded bg-white/10 font-mono text-white text-[10px]">C</kbd> Center
-        </span>
-        <span className="opacity-30">•</span>
-        {currentUser ? (
-          <button
-            type="button"
-            onClick={handleManualSyncNow}
-            title={
-              autoSyncEnabled
-                ? `Firebase Auto-Sync Active (Last: ${lastSyncedTime || 'recent'}). Click to sync immediately.`
-                : 'Firebase Auto-Sync is Paused. Click to sync.'
-            }
-            className="flex items-center gap-1.5 text-emerald-400 font-medium hover:text-emerald-300 cursor-pointer transition"
-          >
-            <span
-              className={`w-2 h-2 rounded-full ${
-                syncStatus === 'saving' ? 'bg-amber-400 animate-ping' : autoSyncEnabled ? 'bg-emerald-400' : 'bg-amber-400'
-              }`}
-            />
-            <span>
-              {syncStatus === 'saving'
-                ? 'Auto-Syncing...'
-                : autoSyncEnabled
-                ? 'Firebase Auto-Synced'
-                : 'Auto-Sync Paused'}
-            </span>
-          </button>
-        ) : (
-          <button
-            type="button"
-            onClick={() => {
-              setActiveTab('cloud');
-              setDrawerOpen(true);
-            }}
-            title="Click to sign in with Google and activate Firebase Auto-Sync"
-            className="flex items-center gap-1.5 text-cyan-300 hover:text-cyan-200 cursor-pointer transition font-medium"
-          >
-            <Cloud className="w-3.5 h-3.5 text-cyan-400" />
-            <span>Connect Firebase Auto-Sync</span>
-          </button>
-        )}
-      </div>
+
 
       {/* ================= FOCUS MODE OVERLAY BANNER ================= */}
       {isFocusModeActive && (
@@ -3862,6 +4047,128 @@ export default function App() {
               <div className="resize-handle resize-sw text-rose-400" data-handle="sw" />
               <div className="resize-handle resize-ne text-rose-400" data-handle="ne" />
               <div className="resize-handle resize-nw text-rose-400" data-handle="nw" />
+            </>
+          )}
+        </div>
+      )}
+
+      {/* ================= WIDGET 7: SCRATCHPAD / QUICK NOTES INDEPENDENT WIDGET ================= */}
+      {config.scratchpad?.visible && (
+        <div
+          ref={scratchpadRef}
+          id="scratchpad-widget"
+          data-widget-id="scratchpad"
+          onPointerDown={e => handlePointerDown(e, 'scratchpad')}
+          onWheel={e => handleWheelZoom(e, 'scratchpad')}
+          className={`dashboard-widget z-20 px-4 py-3.5 flex flex-col justify-between ${
+            config.optionalFeatures.widgetCustomization ? 'cursor-grab active:cursor-grabbing' : 'cursor-default'
+          } ${getWidgetMaterialClass(config.scratchpad?.glassBg ?? true)} ${focusedWidget === 'scratchpad' ? 'widget-focused' : ''} ${radiusClass}`}
+          style={{
+            width: config.scratchpad?.width || 380,
+            height: scratchpadCollapsed ? 54 : (config.scratchpad?.height || 300),
+            left: config.scratchpad?.x ?? 50,
+            top: config.scratchpad?.y ?? 550,
+            transition: 'height 0.2s ease, width 0.2s ease',
+            ...getWidgetComputedStyle('scratchpad'),
+          }}
+        >
+          {showHandles && (
+            <>
+              <div className="drag-pill absolute top-2 left-1/2 -translate-x-1/2 w-8 h-1 rounded-full bg-cyan-400/40 pointer-events-none" />
+              <button
+                type="button"
+                onClick={e => {
+                  e.stopPropagation();
+                  toggleWidgetTransparency('scratchpad');
+                }}
+                title={config.scratchpad?.glassBg ? 'Switch Scratchpad to Transparent' : 'Switch Scratchpad to Glass Card'}
+                className="no-drag absolute top-2 right-2 px-2 py-0.5 rounded-md bg-black/60 hover:bg-black/90 text-[9px] font-mono text-white/80 hover:text-white border border-white/20 transition cursor-pointer z-30 flex items-center gap-1 shadow-sm"
+              >
+                <span className={`w-1.5 h-1.5 rounded-full ${config.scratchpad?.glassBg ? 'bg-cyan-400' : 'bg-amber-400'}`} />
+                <span>{config.scratchpad?.glassBg ? 'Glass' : 'Transp.'}</span>
+              </button>
+            </>
+          )}
+
+          {/* Widget Header */}
+          <div className="flex items-center justify-between no-drag pb-2 border-b border-white/10">
+            <div className="flex items-center gap-2">
+              <span className="text-base select-none">📝</span>
+              <div className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-[0.14em] text-white font-['Plus_Jakarta_Sans']">
+                <span>Scratchpad / Quick Notes</span>
+              </div>
+              <span
+                className={`w-2 h-2 rounded-full transition-all duration-300 ${
+                  scratchpadSavedPulse
+                    ? 'bg-emerald-400 scale-125 shadow-[0_0_8px_rgba(52,211,153,0.8)]'
+                    : 'bg-emerald-500/70'
+                }`}
+                title={scratchpadSavedPulse ? 'Saved ✓' : 'Auto-saved to storage'}
+              />
+            </div>
+
+            <div className="flex items-center gap-1.5">
+              <button
+                type="button"
+                onClick={handleCopyScratchpad}
+                title="Copy all notes"
+                className="px-2 py-0.5 rounded-md bg-white/5 hover:bg-white/15 text-white/70 hover:text-white text-[10px] font-medium border border-white/10 transition cursor-pointer flex items-center gap-1"
+              >
+                <Copy className="w-3 h-3 text-cyan-400" />
+                <span>{scratchpadCopyFeedback ? 'Copied!' : 'Copy'}</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={handleClearScratchpad}
+                title="Clear scratchpad"
+                className="px-2 py-0.5 rounded-md bg-white/5 hover:bg-rose-500/20 text-white/70 hover:text-rose-300 text-[10px] font-medium border border-white/10 hover:border-rose-500/30 transition cursor-pointer flex items-center gap-1"
+              >
+                <Trash2 className="w-3 h-3 text-rose-400" />
+                <span>Clear</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setScratchpadCollapsed(prev => !prev)}
+                title={scratchpadCollapsed ? 'Expand Scratchpad' : 'Minimize Scratchpad'}
+                className="p-1 rounded-md bg-white/5 hover:bg-white/15 text-white/70 hover:text-white transition cursor-pointer ml-0.5"
+              >
+                {scratchpadCollapsed ? (
+                  <ChevronDown className="w-3.5 h-3.5 text-cyan-400" />
+                ) : (
+                  <Minimize2 className="w-3.5 h-3.5 text-white/70" />
+                )}
+              </button>
+            </div>
+          </div>
+
+          {/* Textarea Content (when expanded) */}
+          {!scratchpadCollapsed && (
+            <>
+              <div className="flex-1 py-2 flex flex-col relative no-drag min-h-0">
+                <textarea
+                  value={scratchpadText}
+                  onChange={e => handleScratchpadChange(e.target.value)}
+                  placeholder="Type temporary notes, rough math calculations, problem steps, or equations here... Auto-saves with every keystroke."
+                  className="w-full h-full min-h-[110px] resize-none bg-black/30 border border-white/10 rounded-xl p-2.5 text-xs font-mono text-cyan-100 placeholder:text-white/30 focus:outline-none focus:border-cyan-500/50 focus:ring-1 focus:ring-cyan-500/30 selection:bg-cyan-500/30 leading-relaxed overflow-y-auto"
+                />
+              </div>
+
+              {/* Card Footer Strip */}
+              <div className="pt-1.5 border-t border-white/5 flex items-center justify-between text-[10px] text-white/40 font-mono no-drag">
+                <span>Auto-saved to storage</span>
+                <span>{scratchpadText.length} chars • {scratchpadText ? scratchpadText.split('\n').length : 0} lines</span>
+              </div>
+            </>
+          )}
+
+          {showHandles && !scratchpadCollapsed && (
+            <>
+              <div className="resize-handle resize-se text-cyan-400" data-handle="se" />
+              <div className="resize-handle resize-sw text-cyan-400" data-handle="sw" />
+              <div className="resize-handle resize-ne text-cyan-400" data-handle="ne" />
+              <div className="resize-handle resize-nw text-cyan-400" data-handle="nw" />
             </>
           )}
         </div>
@@ -5776,6 +6083,12 @@ export default function App() {
       {/* ================= CLICK-TO-ADD WIDGET PLACEMENT MODAL & TARGET PREVIEW ================= */}
       {placementModal && placementModal.isOpen && (
         <>
+          {/* Transparent Backdrop Dismiss Overlay: Clicking anywhere outside smoothly closes the modal */}
+          <div
+            onClick={() => setPlacementModal(null)}
+            className="fixed inset-0 z-40 bg-transparent"
+          />
+
           {/* Target Reticle Anchor at Exact Clicked Coordinates */}
           <div
             className="fixed pointer-events-none z-50 -translate-x-1/2 -translate-y-1/2 flex items-center justify-center transition-all duration-150"

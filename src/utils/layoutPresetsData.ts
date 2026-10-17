@@ -11,7 +11,8 @@ export type DashboardWidgetKey =
   | 'notification'
   | 'calendar'
   | 'motivation'
-  | 'pomodoro';
+  | 'pomodoro'
+  | 'scratchpad';
 
 export interface GridCellSlot {
   widgetKey: DashboardWidgetKey;
@@ -983,7 +984,7 @@ export function computePresetWidgetCoordinates(
   });
 
   // Guarantee coordinates exist for any unmapped widgets by docking in a safe bottom row
-  const allKeys: DashboardWidgetKey[] = ['clock', 'countdown', 'nameWidget', 'tasks', 'notification', 'calendar', 'motivation', 'pomodoro'];
+  const allKeys: DashboardWidgetKey[] = ['clock', 'countdown', 'nameWidget', 'tasks', 'notification', 'calendar', 'motivation', 'pomodoro', 'scratchpad'];
   let unmappedOffset = 0;
   allKeys.forEach(key => {
     if (!coords[key]) {
