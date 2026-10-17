@@ -95,7 +95,8 @@ body:not(.fullscreen-locked):not(.zen-mode) .dashboard-widget:hover .drag-pill {
 
 /* Zen Mode Lockdown (Hides peripheral chrome) */
 body.zen-mode #floating-hud,
-body.zen-mode #laptop-shortcut-bar,
+body.zen-mode #unified-bottom-dock,
+body.zen-mode #top-telemetry-bar,
 body.zen-mode .resize-handle,
 body.zen-mode .drag-pill,
 body.zen-mode #drawer-menu,
@@ -115,16 +116,17 @@ body.fullscreen-locked .drag-pill {
   visibility: hidden !important;
 }
 
-body.fullscreen-locked #laptop-shortcut-bar {
+body.fullscreen-locked #unified-bottom-dock {
   display: flex !important;
   opacity: 1 !important;
   visibility: visible !important;
   pointer-events: auto !important;
-  position: absolute !important;
-  bottom: 0 !important;
-  margin-bottom: 0.75rem !important;
-  left: 1.5rem !important;
-  z-index: 40 !important;
+  position: fixed !important;
+  bottom: 8px !important;
+  left: 50% !important;
+  transform: translateX(-50%) !important;
+  max-height: 52px !important;
+  z-index: 50 !important;
 }
 
 /* Top-right control buttons / action bar completely hidden in fullscreen mode */

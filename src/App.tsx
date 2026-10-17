@@ -58,6 +58,11 @@ import {
   Layers,
   ArrowRight,
   CornerDownRight,
+  Pin,
+  Copy,
+  Music,
+  Minimize2,
+  ChevronUp,
 } from 'lucide-react';
 import { MOTIVATION_QUOTES, MotivationQuote } from './utils/quotes';
 import {
@@ -70,6 +75,9 @@ import {
   onAuthStateChanged,
   User,
   SyncStatus,
+  recordDailyCheckin,
+  getInitialCheckinStatus,
+  listenAndIncrementVisitorCount,
 } from './utils/firebase';
 import VisualCustomizationStudio from './components/VisualCustomizationStudio';
 import AnimatedCharacterBackdrop from './components/AnimatedCharacterBackdrop';
@@ -739,6 +747,90 @@ export default function App() {
   // Live Time
   const [currentTime, setCurrentTime] = useState(new Date());
 
+  // Daily Attendance & Study Streak State
+  const [checkinInfo, setCheckinInfo] = useState<{
+    isCheckedInToday: boolean;
+    streak: number;
+    lastDate: string | null;
+  }>(() => getInitialCheckinStatus());
+  const [isCheckinLoading, setIsCheckinLoading] = useState(false);
+  const [checkinToast, setCheckinToast] = useState<string | null>(null);
+
+  const handleMarkDailyAttendance = useCallback(async () => {
+    if (isCheckinLoading) return;
+    setIsCheckinLoading(true);
+    try {
+      const result = await recordDailyCheckin(currentUser?.uid, currentUser?.displayName || 'Student');
+      setCheckinInfo({
+        isCheckedInToday: true,
+        streak: result.streak,
+        lastDate: result.date,
+      });
+      setCheckinToast(`Attendance Marked! 🔥 ${result.streak} Day Streak`);
+      setTimeout(() => setCheckinToast(null), 3500);
+      playWebAudioChime('task');
+    } catch (err) {
+      console.warn('Checkin error:', err);
+    } finally {
+      setIsCheckinLoading(false);
+    }
+  }, [currentUser, isCheckinLoading]);
+
+  // Live Visitor / View Counter Telemetry State
+  const [visitorCount, setVisitorCount] = useState<number>(() => {
+    return parseInt(localStorage.getItem('flocus_total_views') || '142', 10);
+  });
+
+  useEffect(() => {
+    const unsubscribe = listenAndIncrementVisitorCount((count) => {
+      setVisitorCount(count);
+    });
+    return () => {
+      unsubscribe();
+    };
+  }, []);
+
+  // Sticky Scratchpad State
+  const [scratchpadOpen, setScratchpadOpen] = useState(false);
+  const [scratchpadText, setScratchpadText] = useState<string>(() => {
+    try {
+      return localStorage.getItem('flocus_scratchpad_notes') || '';
+    } catch {
+      return '';
+    }
+  });
+  const [scratchpadSavedPulse, setScratchpadSavedPulse] = useState(false);
+  const [scratchpadCopyFeedback, setScratchpadCopyFeedback] = useState(false);
+  const scratchpadSaveTimeoutRef = useRef<any>(null);
+
+  const handleScratchpadChange = useCallback((newText: string) => {
+    setScratchpadText(newText);
+    try {
+      localStorage.setItem('flocus_scratchpad_notes', newText);
+      setScratchpadSavedPulse(true);
+      if (scratchpadSaveTimeoutRef.current) clearTimeout(scratchpadSaveTimeoutRef.current);
+      scratchpadSaveTimeoutRef.current = setTimeout(() => {
+        setScratchpadSavedPulse(false);
+      }, 1200);
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  const handleCopyScratchpad = useCallback(() => {
+    if (!scratchpadText) return;
+    navigator.clipboard.writeText(scratchpadText);
+    setScratchpadCopyFeedback(true);
+    setTimeout(() => setScratchpadCopyFeedback(false), 2000);
+  }, [scratchpadText]);
+
+  const handleClearScratchpad = useCallback(() => {
+    handleScratchpadChange('');
+  }, [handleScratchpadChange]);
+
+  // Floating Spotify Playlist Popover Toggle
+  const [spotifyPopoverOpen, setSpotifyPopoverOpen] = useState(false);
+
   // Canvas ref
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
@@ -761,6 +853,19 @@ export default function App() {
     nearestGridSlot?: { name: string; cellX: number; cellY: number };
   } | null>(null);
   const [isPlacementModeActive, setIsPlacementModeActive] = useState<boolean>(false);
+
+  // Right-Click Gesture Detector Ref (Double-click 300ms threshold timer)
+  const rightClickDetectorRef = useRef<{
+    timer: ReturnType<typeof setTimeout> | null;
+    lastTime: number;
+    clickX: number;
+    clickY: number;
+  }>({
+    timer: null,
+    lastTime: 0,
+    clickX: 0,
+    clickY: 0,
+  });
 
   // Interaction tracking (drag/resize)
   const dragResizeState = useRef<{
@@ -813,21 +918,15 @@ export default function App() {
   // Right-Click Context Menu State & Widget Management
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; visible: boolean } | null>(null);
 
-  const handleContextMenu = useCallback((e: React.MouseEvent) => {
-    const target = e.target as HTMLElement;
-    if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA') return;
-    e.preventDefault();
-    const menuWidth = 300;
-    const menuHeight = 480;
-    const x = Math.min(e.clientX, window.innerWidth - menuWidth - 10);
-    const y = Math.min(e.clientY, window.innerHeight - menuHeight - 10);
-    setContextMenu({ x: Math.max(10, x), y: Math.max(10, y), visible: true });
-  }, []);
-
   useEffect(() => {
-    const handleGlobalClick = () => setContextMenu(null);
+    const handleGlobalClick = () => {
+      setContextMenu(null);
+    };
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setContextMenu(null);
+      if (e.key === 'Escape') {
+        setContextMenu(null);
+        setPlacementModal(null);
+      }
     };
     window.addEventListener('click', handleGlobalClick);
     window.addEventListener('keydown', handleKeyDown);
@@ -994,6 +1093,7 @@ export default function App() {
     return base;
   }, [config, hexToRgba]);
 
+  // 1. Regular Left-Clicks: Never accidentally pop up widget placement modals; dismiss open menus smoothly
   const handleDashboardClick = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
     const target = e.target as HTMLElement;
     if (
@@ -1006,35 +1106,90 @@ export default function App() {
       target.closest('.context-menu-container') ||
       target.closest('.no-canvas-click') ||
       target.closest('.task-item-action') ||
-      target.closest('.resize-handle')
+      target.closest('.resize-handle') ||
+      target.closest('#scratchpad-drawer') ||
+      target.closest('#unified-bottom-dock')
     ) {
       return;
     }
 
+    setPlacementModal(null);
     setContextMenu(null);
+  }, []);
+
+  // 2. Right-Click Gesture Detector:
+  // - Single Right-Click on empty space: Open "ADD WIDGET AT POSITION" at cursor coordinates
+  // - Double Right-Click (or Single Right-Click directly on an occupied widget/card): Open "POSITION OCCUPIED" menu
+  // - Suppresses native browser context menu
+  const handleContextMenu = useCallback((e: React.MouseEvent) => {
+    const target = e.target as HTMLElement;
+    if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA') return;
+
+    // Suppress native browser context menu on the dashboard canvas
+    e.preventDefault();
 
     const rect = dashboardRef.current?.getBoundingClientRect() || { left: 0, top: 0 };
     const clickX = Math.round(e.clientX - rect.left);
     const clickY = Math.round(e.clientY - rect.top);
 
+    // Check if clicked directly on an occupied widget/card
     let occupiedId: DashboardWidgetKey | null = null;
     let occupiedLabel: string | null = null;
 
-    for (const item of ALL_WIDGET_REGISTRY) {
-      const wConfig = (config as any)[item.id];
-      if (wConfig && wConfig.visible !== false) {
-        const wx = wConfig.x ?? 50;
-        const wy = wConfig.y ?? 50;
-        const ww = wConfig.width || item.defaultW;
-        const wh = wConfig.height || item.defaultH;
-        if (clickX >= wx && clickX <= wx + ww && clickY >= wy && clickY <= wy + wh) {
-          occupiedId = item.id;
-          occupiedLabel = item.label;
-          break;
+    // Check DOM hierarchy for data-widget-id or specific widget container id
+    const widgetDom = target.closest(
+      '#motivation-widget, #name-widget, #clock-widget, #countdown-widget, #notification-widget, #calendar-widget, #tasks-widget, #pomodoro-widget, [data-widget-id], .dashboard-widget'
+    ) as HTMLElement | null;
+
+    if (widgetDom) {
+      const explicitId = widgetDom.dataset?.widgetId;
+      if (explicitId) {
+        const found = ALL_WIDGET_REGISTRY.find(w => w.id === explicitId);
+        if (found) {
+          occupiedId = found.id;
+          occupiedLabel = found.label;
+        }
+      } else {
+        const domId = widgetDom.id;
+        const mappedId: DashboardWidgetKey | null =
+          domId === 'name-widget' ? 'nameWidget' :
+          domId === 'clock-widget' ? 'clock' :
+          domId === 'countdown-widget' ? 'countdown' :
+          domId === 'tasks-widget' ? 'tasks' :
+          domId === 'notification-widget' ? 'notification' :
+          domId === 'calendar-widget' ? 'calendar' :
+          domId === 'motivation-widget' ? 'motivation' :
+          domId === 'pomodoro-widget' ? 'pomodoro' : null;
+
+        if (mappedId) {
+          const found = ALL_WIDGET_REGISTRY.find(w => w.id === mappedId);
+          if (found) {
+            occupiedId = found.id;
+            occupiedLabel = found.label;
+          }
         }
       }
     }
 
+    // Also check bounding coordinates of all visible widgets
+    if (!occupiedId) {
+      for (const item of ALL_WIDGET_REGISTRY) {
+        const wConfig = (config as any)[item.id];
+        if (wConfig && wConfig.visible !== false) {
+          const wx = wConfig.x ?? 50;
+          const wy = wConfig.y ?? 50;
+          const ww = wConfig.width || item.defaultW;
+          const wh = wConfig.height || item.defaultH;
+          if (clickX >= wx && clickX <= wx + ww && clickY >= wy && clickY <= wy + wh) {
+            occupiedId = item.id;
+            occupiedLabel = item.label;
+            break;
+          }
+        }
+      }
+    }
+
+    // Calculate nearest grid slot for layout presets
     const currentPreset = STUDIO_LAYOUT_ARRANGEMENTS.find(p => p.id === (config.selectedGridPresetId || 'preset-grid-1')) || STUDIO_LAYOUT_ARRANGEMENTS[0];
     const usableW = Math.max(600, window.innerWidth - (config.gridMargins ?? 24) * 2);
     const usableH = Math.max(500, window.innerHeight - (config.gridMargins ?? 24) * 2);
@@ -1060,14 +1215,96 @@ export default function App() {
       });
     }
 
-    setPlacementModal({
-      isOpen: true,
-      x: clickX,
-      y: clickY,
-      occupiedBy: occupiedId,
-      occupiedWidgetLabel: occupiedLabel,
-      nearestGridSlot: nearestSlot ? { name: nearestSlot.label, cellX: Math.round(nearestSlot.xPercent), cellY: Math.round(nearestSlot.yPercent) } : undefined,
-    });
+    const nearestGridSlotInfo = nearestSlot
+      ? { name: nearestSlot.label, cellX: Math.round(nearestSlot.xPercent), cellY: Math.round(nearestSlot.yPercent) }
+      : undefined;
+
+    // Helper to find the nearest occupied widget if double right-clicking on empty canvas
+    const getNearestOccupiedWidget = (): { id: DashboardWidgetKey; label: string } => {
+      let closestId: DashboardWidgetKey = 'clock';
+      let closestLabel = 'Master Architectural Clock';
+      let minDist = Infinity;
+      for (const item of ALL_WIDGET_REGISTRY) {
+        const wConfig = (config as any)[item.id];
+        if (wConfig && wConfig.visible !== false) {
+          const wx = (wConfig.x ?? 50) + (wConfig.width || item.defaultW) / 2;
+          const wy = (wConfig.y ?? 50) + (wConfig.height || item.defaultH) / 2;
+          const dist = Math.hypot(clickX - wx, clickY - wy);
+          if (dist < minDist) {
+            minDist = dist;
+            closestId = item.id;
+            closestLabel = item.label;
+          }
+        }
+      }
+      return { id: closestId, label: closestLabel };
+    };
+
+    // Case 1: Single Right-Click DIRECTLY on an occupied widget/card -> Open "POSITION OCCUPIED" menu
+    if (occupiedId) {
+      if (rightClickDetectorRef.current.timer) {
+        clearTimeout(rightClickDetectorRef.current.timer);
+        rightClickDetectorRef.current.timer = null;
+      }
+      setContextMenu(null);
+      setPlacementModal({
+        isOpen: true,
+        x: clickX,
+        y: clickY,
+        occupiedBy: occupiedId,
+        occupiedWidgetLabel: occupiedLabel,
+        nearestGridSlot: nearestGridSlotInfo,
+      });
+      return;
+    }
+
+    // Case 2: Right-Click on empty space -> 300ms double-click detector
+    const now = Date.now();
+    const prev = rightClickDetectorRef.current;
+    const isDoubleRightClick =
+      now - prev.lastTime <= 300 &&
+      Math.hypot(clickX - prev.clickX, clickY - prev.clickY) < 60;
+
+    if (isDoubleRightClick) {
+      // Double Right-Click on empty space -> Open "POSITION OCCUPIED" menu
+      if (prev.timer) {
+        clearTimeout(prev.timer);
+        prev.timer = null;
+      }
+      prev.lastTime = 0;
+      setContextMenu(null);
+      const fallback = getNearestOccupiedWidget();
+      setPlacementModal({
+        isOpen: true,
+        x: clickX,
+        y: clickY,
+        occupiedBy: fallback.id,
+        occupiedWidgetLabel: fallback.label,
+        nearestGridSlot: nearestGridSlotInfo,
+      });
+    } else {
+      // First Right-Click on empty space -> start 300ms timer
+      if (prev.timer) {
+        clearTimeout(prev.timer);
+      }
+      prev.lastTime = now;
+      prev.clickX = clickX;
+      prev.clickY = clickY;
+
+      prev.timer = setTimeout(() => {
+        // Single Right-Click on empty space -> Open "ADD WIDGET AT POSITION" menu positioned at cursor
+        setContextMenu(null);
+        setPlacementModal({
+          isOpen: true,
+          x: clickX,
+          y: clickY,
+          occupiedBy: null, // Signals "ADD WIDGET AT POSITION"
+          occupiedWidgetLabel: null,
+          nearestGridSlot: nearestGridSlotInfo,
+        });
+        prev.timer = null;
+      }, 300);
+    }
   }, [config, ALL_WIDGET_REGISTRY]);
 
   const handlePlaceWidgetAtSelectedPosition = useCallback((
@@ -2002,9 +2239,16 @@ export default function App() {
     }
   }, [zenMode]);
 
-  // ================= 2. KEYBOARD SHORTCUTS (INCLUDING CMD+K / CTRL+K) =================
+  // ================= 2. KEYBOARD SHORTCUTS (INCLUDING CMD+K / CTRL+K & ALT+N) =================
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      // Global shortcut for Scratchpad (Alt+N)
+      if (e.altKey && e.key.toLowerCase() === 'n') {
+        e.preventDefault();
+        setScratchpadOpen(prev => !prev);
+        return;
+      }
+
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
         e.preventDefault();
         setCommandMenuOpen(prev => !prev);
@@ -2042,6 +2286,10 @@ export default function App() {
         setCommandMenuOpen(false);
         setDrawerOpen(false);
         setZenMode(false);
+        setScratchpadOpen(false);
+        setSpotifyPopoverOpen(false);
+        setPlacementModal(null);
+        setContextMenu(null);
         if (isFocusModeActive) {
           setIsFocusModeActive(false);
         }
@@ -2734,6 +2982,78 @@ export default function App() {
         activeThemeId={config.activeThemeId}
       />
 
+      {/* ================= TOP-LEFT ATTENDANCE BADGE & LIVE VISITOR COUNTER ================= */}
+      <div
+        id="top-telemetry-bar"
+        className="absolute top-4 left-4 sm:top-6 sm:left-6 z-40 flex items-center gap-2.5 flex-wrap pointer-events-auto transition-all duration-300"
+      >
+        {/* Daily Registration / Study Check-In Badge */}
+        <button
+          type="button"
+          onClick={handleMarkDailyAttendance}
+          disabled={isCheckinLoading}
+          title={
+            checkinInfo.isCheckedInToday
+              ? `Attendance recorded for today! Consecutive streak: ${checkinInfo.streak} day${checkinInfo.streak === 1 ? '' : 's'}.`
+              : 'Click to mark your daily study attendance and increment your streak'
+          }
+          className={`flex items-center gap-2 px-3 py-1.5 sm:px-3.5 sm:py-2 rounded-full backdrop-blur-xl border text-xs font-medium transition-all duration-300 shadow-lg cursor-pointer ${
+            checkinInfo.isCheckedInToday
+              ? 'bg-emerald-500/15 border-emerald-500/40 text-emerald-300 shadow-[0_0_15px_rgba(16,185,129,0.25)] hover:bg-emerald-500/25'
+              : 'bg-cyan-500/15 border-cyan-400/40 text-cyan-300 hover:bg-cyan-500/25 hover:border-cyan-400/60 shadow-[0_0_15px_rgba(6,182,212,0.2)] animate-pulse'
+          }`}
+        >
+          {checkinInfo.isCheckedInToday ? (
+            <>
+              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 flex-shrink-0" />
+              <span className="font-semibold tracking-wide">Checked In ✓</span>
+              <span className="text-white/30">•</span>
+              <span className="flex items-center gap-1 text-amber-300 font-bold">
+                <Flame className="w-3.5 h-3.5 text-amber-400 animate-bounce flex-shrink-0" />
+                {checkinInfo.streak} Day Streak
+              </span>
+            </>
+          ) : (
+            <>
+              <Pin className="w-3.5 h-3.5 text-cyan-300 rotate-45 flex-shrink-0" />
+              <span className="font-semibold tracking-wide">📌 Mark Daily Attendance</span>
+              {checkinInfo.streak > 0 && (
+                <>
+                  <span className="text-white/30">•</span>
+                  <span className="flex items-center gap-1 text-amber-300/90 font-bold">
+                    <Flame className="w-3 h-3 text-amber-400 flex-shrink-0" />
+                    {checkinInfo.streak}d streak
+                  </span>
+                </>
+              )}
+            </>
+          )}
+        </button>
+
+        {/* Live Visitor / View Counter Badge */}
+        <div
+          title="Live Visitor Telemetry connected to Firebase Realtime Database"
+          className="flex items-center gap-2 px-3 py-1.5 sm:px-3.5 sm:py-2 rounded-full bg-black/50 backdrop-blur-xl border border-white/10 text-xs text-white/80 shadow-lg hover:border-white/20 transition-all duration-200"
+        >
+          {/* Animated Green Pulse Dot */}
+          <span className="relative flex h-2 w-2">
+            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+            <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+          </span>
+          <Eye className="w-3.5 h-3.5 text-cyan-400 flex-shrink-0" />
+          <span className="font-mono text-white/90">
+            Total Visits: <span className="font-bold text-white tracking-wider">{visitorCount.toLocaleString()}</span>
+          </span>
+        </div>
+
+        {/* Transient toast feedback for check-in */}
+        {checkinToast && (
+          <div className="text-xs px-3 py-1 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 animate-fade-in shadow-md font-medium">
+            {checkinToast}
+          </div>
+        )}
+      </div>
+
       {/* ================= FLOATING ACTION CONTROLS (TOP RIGHT CORNER) ================= */}
       <div
         id="floating-hud"
@@ -2813,69 +3133,195 @@ export default function App() {
         </button>
       </div>
 
-      {/* ================= LAPTOP KEYBOARD SHORTCUTS BAR ================= */}
-      <div
-        id="laptop-shortcut-bar"
-        className="absolute bottom-0 mb-3 left-6 z-40 hidden md:flex items-center gap-3 py-1.5 px-3.5 rounded-full bg-black/40 backdrop-blur-md border border-white/10 text-[11px] text-white/60 transition-all duration-300"
-      >
-        <span>
-          <kbd className="px-1.5 py-0.5 rounded bg-white/10 font-mono text-cyan-300 text-[10px]">V</kbd> Studio
-        </span>
-        <span className="opacity-30">•</span>
-        <span>
-          <kbd className="px-1.5 py-0.5 rounded bg-white/10 font-mono text-white text-[10px]">⌘K</kbd> Quick Search
-        </span>
-        <span className="opacity-30">•</span>
-        <span>
-          <kbd className="px-1.5 py-0.5 rounded bg-white/10 font-mono text-white text-[10px]">F</kbd> Fullscreen
-        </span>
-        <span className="opacity-30">•</span>
-        <span>
-          <kbd className="px-1.5 py-0.5 rounded bg-white/10 font-mono text-white text-[10px]">M</kbd> Menu
-        </span>
-        <span className="opacity-30">•</span>
-        <span>
-          <kbd className="px-1.5 py-0.5 rounded bg-white/10 font-mono text-white text-[10px]">C</kbd> Center
-        </span>
-        <span className="opacity-30">•</span>
-        {currentUser ? (
-          <button
-            type="button"
-            onClick={handleManualSyncNow}
-            title={
-              autoSyncEnabled
-                ? `Firebase Auto-Sync Active (Last: ${lastSyncedTime || 'recent'}). Click to sync immediately.`
-                : 'Firebase Auto-Sync is Paused. Click to sync.'
-            }
-            className="flex items-center gap-1.5 text-emerald-400 font-medium hover:text-emerald-300 cursor-pointer transition"
+      {/* ================= EXPANDABLE FLOATING NOTEPAD (DRAWER/MODAL) ================= */}
+      {scratchpadOpen && (
+        <>
+          {/* Backdrop dismiss overlay */}
+          <div
+            onClick={() => setScratchpadOpen(false)}
+            className="fixed inset-0 z-40 bg-black/50 backdrop-blur-[2px] transition-opacity"
+          />
+
+          <div
+            id="scratchpad-drawer"
+            className="fixed bottom-[64px] sm:bottom-[68px] left-1/2 -translate-x-1/2 z-50 w-[calc(100vw-24px)] sm:w-[520px] max-w-[95vw] h-[380px] bg-[#070b12]/95 backdrop-blur-2xl border border-cyan-500/40 rounded-2xl shadow-[0_20px_50px_rgba(0,0,0,0.85),0_0_30px_rgba(6,182,212,0.25)] flex flex-col overflow-hidden animate-in slide-in-from-bottom-4 duration-300 pointer-events-auto"
           >
-            <span
-              className={`w-2 h-2 rounded-full ${
-                syncStatus === 'saving' ? 'bg-amber-400 animate-ping' : autoSyncEnabled ? 'bg-emerald-400' : 'bg-amber-400'
-              }`}
+            {/* Header */}
+            <div className="flex items-center justify-between px-4 py-3 border-b border-white/10 bg-black/50">
+              <div className="flex items-center gap-2">
+                <span className="text-base">📝</span>
+                <span className="font-bold text-sm tracking-wide text-white font-['Plus_Jakarta_Sans']">
+                  Scratchpad & Rough Work
+                </span>
+                <span
+                  className={`text-[11px] font-mono px-2 py-0.5 rounded-full border transition-all duration-300 flex items-center gap-1.5 ${
+                    scratchpadSavedPulse
+                      ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40 scale-105'
+                      : 'bg-white/5 text-white/50 border-white/10'
+                  }`}
+                >
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+                  {scratchpadSavedPulse ? 'Saved ✓' : 'Auto-saved'}
+                </span>
+              </div>
+
+              <div className="flex items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={handleCopyScratchpad}
+                  title="Copy scratchpad notes to clipboard"
+                  className="px-2.5 py-1 rounded-lg bg-white/5 hover:bg-white/15 text-white/80 hover:text-white text-xs font-medium border border-white/10 transition flex items-center gap-1 cursor-pointer"
+                >
+                  <Copy className="w-3.5 h-3.5 text-cyan-400" />
+                  <span>{scratchpadCopyFeedback ? 'Copied! ✓' : 'Copy All'}</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={handleClearScratchpad}
+                  title="Clear scratchpad contents"
+                  className="px-2.5 py-1 rounded-lg bg-white/5 hover:bg-rose-500/20 text-white/80 hover:text-rose-300 text-xs font-medium border border-white/10 hover:border-rose-500/30 transition flex items-center gap-1 cursor-pointer"
+                >
+                  <Trash2 className="w-3.5 h-3.5 text-rose-400" />
+                  <span>Clear</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setScratchpadOpen(false)}
+                  title="Minimize Scratchpad (Esc or Alt+N)"
+                  className="p-1 rounded-lg hover:bg-white/15 text-white/60 hover:text-white transition cursor-pointer ml-1"
+                >
+                  <Minimize2 className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+
+            {/* Notepad Multi-line Textarea */}
+            <div className="flex-1 p-3 flex flex-col relative bg-transparent">
+              <textarea
+                value={scratchpadText}
+                onChange={(e) => handleScratchpadChange(e.target.value)}
+                placeholder="Type temporary notes, rough math calculations, problem steps, or equations here... Auto-saves with every keystroke."
+                autoFocus
+                className="w-full h-full resize-none bg-black/40 border border-white/10 rounded-xl p-3 text-xs sm:text-sm font-mono text-cyan-100 placeholder:text-white/30 focus:outline-none focus:border-cyan-500/50 focus:ring-1 focus:ring-cyan-500/30 selection:bg-cyan-500/30 leading-relaxed overflow-y-auto"
+              />
+            </div>
+
+            {/* Bottom Info Strip */}
+            <div className="px-4 py-2 bg-black/60 border-t border-white/5 flex items-center justify-between text-[11px] text-white/40 font-mono">
+              <span>Press <kbd className="px-1 py-0.5 rounded bg-white/10 text-cyan-300 text-[10px]">Esc</kbd> or <kbd className="px-1 py-0.5 rounded bg-white/10 text-cyan-300 text-[10px]">Alt+N</kbd> to minimize</span>
+              <span>{scratchpadText.length} chars • {scratchpadText ? scratchpadText.split('\n').length : 0} lines</span>
+            </div>
+          </div>
+        </>
+      )}
+
+      {/* ================= OPTIONAL FLOATING SPOTIFY EXPANDED POPOVER ================= */}
+      {spotifyPopoverOpen && (
+        <>
+          <div
+            onClick={() => setSpotifyPopoverOpen(false)}
+            className="fixed inset-0 z-40 bg-transparent"
+          />
+          <div
+            className="fixed bottom-[64px] sm:bottom-[68px] right-3 sm:right-auto sm:left-1/2 sm:translate-x-[20px] md:translate-x-[60px] z-50 w-[330px] max-w-[92vw] h-[160px] rounded-2xl overflow-hidden bg-black/95 backdrop-blur-2xl border border-white/20 shadow-[0_20px_50px_rgba(0,0,0,0.9),0_0_25px_rgba(16,185,129,0.2)] flex flex-col animate-in fade-in slide-in-from-bottom-2 duration-200"
+          >
+            <div className="flex items-center justify-between px-3 py-1.5 bg-black/80 border-b border-white/10 text-xs">
+              <span className="font-semibold text-emerald-400 flex items-center gap-1.5">
+                <Music className="w-3.5 h-3.5" /> Spotify Focus Beats
+              </span>
+              <button
+                type="button"
+                onClick={() => setSpotifyPopoverOpen(false)}
+                className="p-1 rounded text-white/50 hover:text-white hover:bg-white/10 transition cursor-pointer"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
+            <iframe
+              src="https://open.spotify.com/embed/playlist/605WnshSvUcVRN3qt85z0b?utm_source=generator&theme=0"
+              width="100%"
+              height="152"
+              frameBorder="0"
+              allow="autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture"
+              loading="lazy"
+              style={{ borderRadius: '0 0 16px 16px', border: 'none' }}
+              title="Spotify Focus Playlist Expanded"
+              className="w-full flex-1"
             />
-            <span>
-              {syncStatus === 'saving'
-                ? 'Auto-Syncing...'
-                : autoSyncEnabled
-                ? 'Firebase Auto-Synced'
-                : 'Auto-Sync Paused'}
-            </span>
-          </button>
-        ) : (
+          </div>
+        </>
+      )}
+
+      {/* ================= ULTRA-SLIM DUAL-UTILITY HORIZONTAL BOTTOM DOCK ================= */}
+      <div
+        id="unified-bottom-dock"
+        style={{
+          position: 'fixed',
+          bottom: '8px',
+          left: '50%',
+          transform: 'translateX(-50%)',
+          width: 'calc(100% - 16px)',
+          maxWidth: '600px',
+          maxHeight: '50px',
+          zIndex: 50,
+        }}
+        className="h-[48px] sm:h-[50px] rounded-full bg-[#050812]/85 backdrop-blur-2xl border border-cyan-500/25 shadow-[0_8px_32px_rgba(0,0,0,0.8),0_0_15px_rgba(6,182,212,0.15)] px-2 sm:px-3 flex flex-row items-center justify-between gap-2 pointer-events-auto transition-all duration-300"
+      >
+        {/* Left Side: Slim Scratchpad Trigger Pill */}
+        <button
+          type="button"
+          onClick={() => setScratchpadOpen(prev => !prev)}
+          title="Open Scratchpad / Rough Work (Click or press Alt+N)"
+          className="flex items-center gap-1.5 sm:gap-2 px-2.5 sm:px-3 py-1.5 rounded-full bg-white/5 hover:bg-white/10 border border-white/10 hover:border-cyan-400/40 text-left transition-all duration-200 group cursor-pointer shrink-0"
+        >
+          <span className="text-sm">📝</span>
+          <span className="text-xs text-white/90 group-hover:text-cyan-200 font-medium">
+            Scratchpad
+          </span>
+          <span
+            className={`w-2 h-2 rounded-full transition-all duration-300 ${
+              scratchpadSavedPulse
+                ? 'bg-emerald-400 scale-125 shadow-[0_0_8px_rgba(52,211,153,0.8)]'
+                : 'bg-emerald-500/80'
+            }`}
+            title="Auto-saved ✓"
+          />
+          <span className="text-[10px] text-white/40 hidden sm:inline ml-0.5">
+            {scratchpadText.trim() ? '✓' : '(Alt+N)'}
+          </span>
+        </button>
+
+        {/* Right Side: Ultra-Compact Spotify Music Pill */}
+        <div className="flex items-center h-[38px] max-w-[50%] sm:max-w-[300px] flex-1 justify-end gap-1.5">
+          <div className="w-full h-[38px] rounded-full overflow-hidden border border-white/10 bg-black/70 shadow-inner flex items-center relative">
+            <iframe
+              src="https://open.spotify.com/embed/playlist/605WnshSvUcVRN3qt85z0b?utm_source=generator&theme=0"
+              width="100%"
+              height="80"
+              frameBorder="0"
+              allow="autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture"
+              loading="lazy"
+              style={{
+                borderRadius: '9999px',
+                border: 'none',
+                height: '80px',
+                marginTop: '-21px',
+                background: 'transparent',
+              }}
+              title="Spotify Focus Playlist"
+              className="w-full scale-95"
+            />
+          </div>
+          {/* Quick Expand Toggle for Full Spotify View */}
           <button
             type="button"
-            onClick={() => {
-              setActiveTab('cloud');
-              setDrawerOpen(true);
-            }}
-            title="Click to sign in with Google and activate Firebase Auto-Sync"
-            className="flex items-center gap-1.5 text-cyan-300 hover:text-cyan-200 cursor-pointer transition font-medium"
+            onClick={() => setSpotifyPopoverOpen(prev => !prev)}
+            title={spotifyPopoverOpen ? 'Close playlist view' : 'Expand Spotify playlist'}
+            className="p-1.5 rounded-full bg-white/5 hover:bg-white/15 text-white/60 hover:text-cyan-300 transition shrink-0 cursor-pointer hidden xs:flex items-center justify-center border border-white/10"
           >
-            <Cloud className="w-3.5 h-3.5 text-cyan-400" />
-            <span>Connect Firebase Auto-Sync</span>
+            <ChevronUp className={`w-3.5 h-3.5 transition-transform duration-200 ${spotifyPopoverOpen ? 'rotate-180 text-cyan-400' : ''}`} />
           </button>
-        )}
+        </div>
       </div>
 
       {/* ================= FOCUS MODE OVERLAY BANNER ================= */}
@@ -5776,6 +6222,12 @@ export default function App() {
       {/* ================= CLICK-TO-ADD WIDGET PLACEMENT MODAL & TARGET PREVIEW ================= */}
       {placementModal && placementModal.isOpen && (
         <>
+          {/* Transparent Backdrop Dismiss Overlay: Clicking anywhere outside smoothly closes the modal */}
+          <div
+            onClick={() => setPlacementModal(null)}
+            className="fixed inset-0 z-40 bg-transparent"
+          />
+
           {/* Target Reticle Anchor at Exact Clicked Coordinates */}
           <div
             className="fixed pointer-events-none z-50 -translate-x-1/2 -translate-y-1/2 flex items-center justify-center transition-all duration-150"

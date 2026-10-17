@@ -23,6 +23,15 @@ import {
 } from 'firebase/firestore';
 import firebaseConfig from '../../firebase-applet-config.json';
 
+import {
+  getDatabase,
+  ref as rtdbRef,
+  set as rtdbSet,
+  get as rtdbGet,
+  onValue as rtdbOnValue,
+  runTransaction as rtdbRunTransaction,
+} from 'firebase/database';
+
 // Initialize Firebase App
 export const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
 
@@ -39,6 +48,9 @@ export const db = initializeFirestore(app, {
 
 // Initialize Firebase Auth
 export const auth = getAuth(app);
+
+// Initialize Realtime Database
+export const rtdb = getDatabase(app);
 
 export type SyncStatus = 'idle' | 'saving' | 'saved' | 'error' | 'offline';
 
@@ -201,4 +213,158 @@ export {
   signOut,
   onAuthStateChanged,
   type User,
+  rtdbRef,
+  rtdbSet,
+  rtdbGet,
+  rtdbOnValue,
+  rtdbRunTransaction,
 };
+
+/**
+ * Format local date as YYYY-MM-DD
+ */
+export function getLocalDateString(d: Date = new Date()): string {
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+/**
+ * Record Daily Study Attendance Check-in
+ */
+export async function recordDailyCheckin(
+  userId?: string,
+  userName?: string
+): Promise<{ streak: number; date: string; alreadyCheckedIn: boolean }> {
+  const todayStr = getLocalDateString();
+  const yesterday = new Date();
+  yesterday.setDate(yesterday.getDate() - 1);
+  const yesterdayStr = getLocalDateString(yesterday);
+
+  const storedDate = localStorage.getItem('flocus_last_checkin_date');
+  const storedStreak = parseInt(localStorage.getItem('flocus_study_streak') || '0', 10);
+
+  if (storedDate === todayStr) {
+    return {
+      streak: Math.max(1, storedStreak),
+      date: todayStr,
+      alreadyCheckedIn: true,
+    };
+  }
+
+  let newStreak = 1;
+  if (storedDate === yesterdayStr) {
+    newStreak = (storedStreak > 0 ? storedStreak : 0) + 1;
+  } else {
+    // If first time or missed day, start at 1
+    newStreak = storedStreak > 0 && !storedDate ? storedStreak + 1 : 1;
+  }
+
+  // Update local storage immediately for zero-lag UI
+  localStorage.setItem('flocus_last_checkin_date', todayStr);
+  localStorage.setItem('flocus_study_streak', String(newStreak));
+
+  // Sync to Firebase Realtime Database under daily_checkins/
+  try {
+    const cleanUid = userId ? userId.replace(/[.#$[\]]/g, '_') : 'guest_student';
+    const checkinRef = rtdbRef(rtdb, `daily_checkins/${cleanUid}/${todayStr}`);
+    await rtdbSet(checkinRef, {
+      date: todayStr,
+      timestamp: Date.now(),
+      streak: newStreak,
+      userId: userId || 'guest',
+      userName: userName || 'Student',
+    });
+
+    // Also update global checkin index for live telemetry
+    const globalSummaryRef = rtdbRef(rtdb, `daily_checkins/summary/${cleanUid}`);
+    await rtdbSet(globalSummaryRef, {
+      lastCheckinDate: todayStr,
+      streak: newStreak,
+      lastActive: Date.now(),
+    });
+  } catch (err) {
+    console.warn('Realtime Database daily_checkin notice (using local storage fallback):', err);
+  }
+
+  return { streak: newStreak, date: todayStr, alreadyCheckedIn: false };
+}
+
+/**
+ * Read Initial Study Check-in Status
+ */
+export function getInitialCheckinStatus(): {
+  isCheckedInToday: boolean;
+  streak: number;
+  lastDate: string | null;
+} {
+  const todayStr = getLocalDateString();
+  const storedDate = localStorage.getItem('flocus_last_checkin_date');
+  const storedStreak = parseInt(localStorage.getItem('flocus_study_streak') || '0', 10);
+
+  const isCheckedInToday = storedDate === todayStr;
+  return {
+    isCheckedInToday,
+    streak: storedStreak > 0 ? storedStreak : 0,
+    lastDate: storedDate,
+  };
+}
+
+/**
+ * Increment and listen for live site visitors/views in Firebase Realtime Database
+ * Under path: site_telemetry/views
+ */
+export function listenAndIncrementVisitorCount(
+  onViewsUpdate: (count: number) => void
+): () => void {
+  const viewsRef = rtdbRef(rtdb, 'site_telemetry/views');
+
+  // Initial fallback from localStorage or default baseline
+  const cachedViews = parseInt(localStorage.getItem('flocus_total_views') || '142', 10);
+  onViewsUpdate(cachedViews);
+
+  // Automatically increment the total view count on initial page load
+  const sessionKey = 'flocus_telemetry_view_counted';
+  if (!sessionStorage.getItem(sessionKey)) {
+    sessionStorage.setItem(sessionKey, 'true');
+    try {
+      rtdbRunTransaction(viewsRef, (currentVal) => {
+        const val = typeof currentVal === 'number' && !isNaN(currentVal) ? currentVal : cachedViews;
+        return val + 1;
+      }).catch((err) => {
+        console.warn('Visitor view count transaction notice:', err);
+        const fallback = cachedViews + 1;
+        localStorage.setItem('flocus_total_views', String(fallback));
+        onViewsUpdate(fallback);
+      });
+    } catch (err) {
+      console.warn('Visitor counter init notice:', err);
+    }
+  }
+
+  // Real-time listener using onValue
+  try {
+    const unsubscribe = rtdbOnValue(
+      viewsRef,
+      (snapshot) => {
+        const val = snapshot.val();
+        if (typeof val === 'number' && !isNaN(val)) {
+          localStorage.setItem('flocus_total_views', String(val));
+          onViewsUpdate(val);
+        } else if (val === null) {
+          // If node doesn't exist yet, seed it with 1
+          rtdbSet(viewsRef, 1).catch(() => {});
+          onViewsUpdate(1);
+        }
+      },
+      (err) => {
+        console.warn('Realtime Database views onValue notice:', err);
+      }
+    );
+    return unsubscribe;
+  } catch (err) {
+    console.warn('Realtime Database listener failed:', err);
+    return () => {};
+  }
+}
