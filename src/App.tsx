@@ -82,6 +82,8 @@ import AnimatedCharacterBackdrop from './components/AnimatedCharacterBackdrop';
 import {
   STUDIO_LAYOUT_ARRANGEMENTS,
   computePresetWidgetCoordinates,
+  computeLaptopFitCoordinates,
+  computeMobileFitCoordinates,
   DashboardWidgetKey,
 } from './utils/layoutPresetsData';
 import {
@@ -100,6 +102,8 @@ import {
   WidgetSpecificStyle,
   DashboardWidgetStyles,
   AnimationControlsConfig,
+  DailyRegisterEntry,
+  DEFAULT_DAILY_REGISTER_ENTRIES,
 } from './utils/visualStudioData';
 
 // Web Audio API Synthesizer for study alerts & task completions
@@ -449,18 +453,18 @@ interface DashboardConfig {
 }
 
 const DEFAULT_CONFIG: DashboardConfig = {
-  activeWallpaper: 'hero-doctor-doom',
-  wallpaperUrl: 'https://images.unsplash.com/photo-1518709268805-4e9042af9f23?auto=format&fit=crop&w=2400&q=85',
-  canvasTheme: 'doom-animated',
+  activeWallpaper: 'lofi-tokyo',
+  wallpaperUrl: 'https://images.unsplash.com/photo-1518495973542-4542c06a5843?auto=format&fit=crop&w=2400&q=85',
+  canvasTheme: 'minimal',
   bgDimmer: 35,
-  bgBlur: 1,
-  bgSaturation: 115,
+  bgBlur: 0,
+  bgSaturation: 100,
   bgBrightness: 95,
   animationIntensity: 1.0,
   isWallpaperStatic: false,
   wallpaperScaling: 'cover',
-  widgetStyle: 'metallic-panel',
-  activeThemeId: 'hero-doctor-doom',
+  widgetStyle: 'frosted-glass',
+  activeThemeId: 'obsidian-glass',
   layoutMode: 'grid',
   selectedGridPresetId: 'preset-grid-1',
   gridGaps: 16,
@@ -472,12 +476,12 @@ const DEFAULT_CONFIG: DashboardConfig = {
     enabled: true,
     intensity: 'medium',
     speed: 1.0,
-    energyColor: '#10b981',
-    energyIntensity: 75,
-    focalPosition: 'left',
+    energyColor: '#06b6d4',
+    energyIntensity: 60,
+    focalPosition: 'center',
     characterScale: 100,
     dimmer: 35,
-    overlayOpacity: 88,
+    overlayOpacity: 70,
   },
   widgetStyles: {
     global: {
@@ -800,6 +804,41 @@ export default function App() {
     handleScratchpadChange('');
   }, [handleScratchpadChange]);
 
+  // Daily Register & Study Summary State
+  const [dailyRegisterEntries, setDailyRegisterEntries] = useState<DailyRegisterEntry[]>(() => {
+    try {
+      const saved = localStorage.getItem('flocus_daily_register_entries');
+      if (saved) return JSON.parse(saved);
+    } catch {
+      // ignore
+    }
+    return DEFAULT_DAILY_REGISTER_ENTRIES;
+  });
+  const [dailySummaryOpen, setDailySummaryOpen] = useState(false);
+  const [dailyRegViewMode, setDailyRegViewMode] = useState<'log' | 'notes'>('log');
+  const [newRegSubject, setNewRegSubject] = useState('Mathematics');
+  const [newRegTopic, setNewRegTopic] = useState('');
+  const [newRegNotes, setNewRegNotes] = useState('');
+  const [newRegDuration, setNewRegDuration] = useState(45);
+  const [newRegRating, setNewRegRating] = useState(5);
+  const [dailySummaryFilterSubject, setDailySummaryFilterSubject] = useState('all');
+  const [dailySummarySearch, setDailySummarySearch] = useState('');
+  const [registerSuccessPulse, setRegisterSuccessPulse] = useState(false);
+
+  // Screen responsiveness detector (Laptop vs Mobile)
+  const [isMobileScreen, setIsMobileScreen] = useState(() => typeof window !== 'undefined' && window.innerWidth < 768);
+  const [viewportWidth, setViewportWidth] = useState(() => typeof window !== 'undefined' ? window.innerWidth : 1280);
+
+  useEffect(() => {
+    const handleResize = () => {
+      const w = window.innerWidth;
+      setViewportWidth(w);
+      setIsMobileScreen(w < 768);
+    };
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+
   // Canvas ref
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
@@ -885,6 +924,103 @@ export default function App() {
     });
   }, []);
 
+  // Save Daily Register entries with local storage and Firebase auto-sync
+  const saveDailyRegisterList = useCallback((updater: (prev: DailyRegisterEntry[]) => DailyRegisterEntry[]) => {
+    setDailyRegisterEntries(prev => {
+      const next = updater(prev);
+      try {
+        localStorage.setItem('flocus_daily_register_entries', JSON.stringify(next));
+      } catch {
+        // ignore
+      }
+      if (currentUser) {
+        saveUserDashboard(currentUser.uid, {
+          config,
+          tasks,
+          dailyRegister: next,
+          updatedAt: new Date().toISOString(),
+        }).catch(() => {});
+      }
+      return next;
+    });
+  }, [currentUser, config, tasks]);
+
+  const handleAddDailyRegisterEntry = useCallback(() => {
+    if (!newRegTopic.trim() && !newRegNotes.trim()) return;
+
+    const newEntry: DailyRegisterEntry = {
+      id: `entry-${Date.now()}`,
+      date: new Date().toISOString().slice(0, 10),
+      time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      subject: newRegSubject,
+      topic: newRegTopic.trim() || `${newRegSubject} Session`,
+      notes: newRegNotes.trim() || 'Logged via Daily Register.',
+      durationMinutes: newRegDuration,
+      status: 'completed',
+      rating: newRegRating,
+      createdAt: Date.now(),
+    };
+
+    saveDailyRegisterList(prev => [newEntry, ...prev]);
+    setNewRegTopic('');
+    setNewRegNotes('');
+    setRegisterSuccessPulse(true);
+    playWebAudioChime('task');
+    setTimeout(() => setRegisterSuccessPulse(false), 2000);
+  }, [newRegSubject, newRegTopic, newRegNotes, newRegDuration, newRegRating, saveDailyRegisterList]);
+
+  // Responsive Layout: Fit all widgets for Laptop screens
+  const applyLaptopFitLayout = useCallback(() => {
+    const coords = computeLaptopFitCoordinates(window.innerWidth, window.innerHeight);
+    updateConfig(prev => {
+      const next = { ...prev };
+      (Object.keys(coords) as DashboardWidgetKey[]).forEach(k => {
+        if ((next as any)[k]) {
+          (next as any)[k] = {
+            ...(next as any)[k],
+            x: coords[k].x,
+            y: coords[k].y,
+            width: coords[k].width,
+            height: coords[k].height,
+            visible: true,
+          };
+        }
+      });
+      return {
+        ...next,
+        layoutMode: 'freeform',
+        freeformLayout: coords,
+      };
+    });
+    setPlacementModal(null);
+  }, [updateConfig]);
+
+  // Responsive Layout: Fit all widgets for Mobile screens
+  const applyMobileFitLayout = useCallback(() => {
+    const coords = computeMobileFitCoordinates(window.innerWidth, window.innerHeight);
+    updateConfig(prev => {
+      const next = { ...prev };
+      (Object.keys(coords) as DashboardWidgetKey[]).forEach(k => {
+        if ((next as any)[k]) {
+          (next as any)[k] = {
+            ...(next as any)[k],
+            x: coords[k].x,
+            y: coords[k].y,
+            width: coords[k].width,
+            height: coords[k].height,
+            visible: true,
+          };
+        }
+      });
+      return {
+        ...next,
+        layoutMode: 'freeform',
+        freeformLayout: coords,
+      };
+    });
+    setPlacementModal(null);
+  }, [updateConfig]);
+
   // Right-Click Context Menu State & Widget Management
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; visible: boolean } | null>(null);
 
@@ -964,7 +1100,7 @@ export default function App() {
     { id: 'calendar', label: 'Exam Study Calendar', defaultW: 380, defaultH: 340, icon: CalendarIcon, category: 'Calendar' },
     { id: 'motivation', label: 'Daily Intention & Motivation', defaultW: 440, defaultH: 140, icon: Sparkles, category: 'Mindset' },
     { id: 'pomodoro', label: 'Pomodoro Focus Timer', defaultW: 360, defaultH: 240, icon: Zap, category: 'Focus' },
-    { id: 'scratchpad', label: 'Scratchpad / Quick Notes', defaultW: 380, defaultH: 300, icon: FileText, category: 'Notes' },
+    { id: 'scratchpad', label: 'Daily Register (Study Notes & Summary)', defaultW: 400, defaultH: 340, icon: FileText, category: 'Register' },
   ], []);
 
   const hexToRgba = useCallback((hex: string, alpha: number): string => {
@@ -984,33 +1120,10 @@ export default function App() {
     const globalStyle = config.widgetStyles?.global;
     const style = customOverrides || globalStyle;
 
-    const isDoom = config.activeThemeId === 'hero-doctor-doom' || config.canvasTheme === 'doom-animated';
-    const isIronMan = config.activeThemeId === 'hero-iron-man' || config.canvasTheme === 'ironman-animated';
-    const isStandoff = config.activeThemeId === 'hero-doom-vs-ironman' || config.canvasTheme === 'doom-vs-ironman-animated';
-
-    const defaultBg = isDoom
-      ? 'rgba(12, 26, 20, 0.84)'
-      : isIronMan
-      ? 'rgba(24, 8, 12, 0.82)'
-      : isStandoff
-      ? 'rgba(14, 20, 26, 0.85)'
-      : 'rgba(15, 23, 42, 0.78)';
-
-    const defaultBorder = isDoom
-      ? 'rgba(16, 185, 129, 0.45)'
-      : isIronMan
-      ? 'rgba(239, 68, 68, 0.48)'
-      : isStandoff
-      ? 'rgba(16, 185, 129, 0.45)'
-      : 'rgba(255, 255, 255, 0.12)';
-
-    const defaultGlow = isDoom
-      ? 'rgba(16, 185, 129, 0.35)'
-      : isIronMan
-      ? 'rgba(239, 68, 68, 0.35)'
-      : isStandoff
-      ? 'rgba(6, 182, 212, 0.3)'
-      : 'transparent';
+    const activeTheme = STUDIO_THEMES.find(t => t.id === config.activeThemeId);
+    const defaultBg = activeTheme ? activeTheme.previewWidgetBg : 'rgba(15, 23, 42, 0.78)';
+    const defaultBorder = activeTheme ? activeTheme.previewWidgetBorder : 'rgba(255, 255, 255, 0.12)';
+    const defaultGlow = activeTheme?.accentColor ? `${activeTheme.accentColor}33` : 'transparent';
 
     if (!glassBg) {
       return {
@@ -1405,6 +1518,10 @@ export default function App() {
               setTasks(cloudData.tasks);
               localStorage.setItem('flocus_quick_tasks', JSON.stringify(cloudData.tasks));
             }
+            if (cloudData.dailyRegister && Array.isArray(cloudData.dailyRegister)) {
+              setDailyRegisterEntries(cloudData.dailyRegister);
+              localStorage.setItem('flocus_daily_register_entries', JSON.stringify(cloudData.dailyRegister));
+            }
             if (cloudData.updatedAt) {
               setLastSyncedTime(new Date(cloudData.updatedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }));
             }
@@ -1414,6 +1531,7 @@ export default function App() {
             await saveUserDashboard(user.uid, {
               config,
               tasks,
+              dailyRegister: dailyRegisterEntries,
               updatedAt: nowIso,
             });
             setLastSyncedTime(new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }));
@@ -1452,6 +1570,10 @@ export default function App() {
         if (cloudData.tasks && Array.isArray(cloudData.tasks)) {
           setTasks(cloudData.tasks);
           localStorage.setItem('flocus_quick_tasks', JSON.stringify(cloudData.tasks));
+        }
+        if (cloudData.dailyRegister && Array.isArray(cloudData.dailyRegister)) {
+          setDailyRegisterEntries(cloudData.dailyRegister);
+          localStorage.setItem('flocus_daily_register_entries', JSON.stringify(cloudData.dailyRegister));
         }
         setSyncStatus('saved');
         if (cloudData.updatedAt) {
@@ -4052,7 +4174,7 @@ export default function App() {
         </div>
       )}
 
-      {/* ================= WIDGET 7: SCRATCHPAD / QUICK NOTES INDEPENDENT WIDGET ================= */}
+      {/* ================= WIDGET 7: DAILY REGISTER (STUDY NOTES & SUMMARY) ================= */}
       {config.scratchpad?.visible && (
         <div
           ref={scratchpadRef}
@@ -4064,8 +4186,8 @@ export default function App() {
             config.optionalFeatures.widgetCustomization ? 'cursor-grab active:cursor-grabbing' : 'cursor-default'
           } ${getWidgetMaterialClass(config.scratchpad?.glassBg ?? true)} ${focusedWidget === 'scratchpad' ? 'widget-focused' : ''} ${radiusClass}`}
           style={{
-            width: config.scratchpad?.width || 380,
-            height: scratchpadCollapsed ? 54 : (config.scratchpad?.height || 300),
+            width: config.scratchpad?.width || 420,
+            height: scratchpadCollapsed ? 54 : (config.scratchpad?.height || 360),
             left: config.scratchpad?.x ?? 50,
             top: config.scratchpad?.y ?? 550,
             transition: 'height 0.2s ease, width 0.2s ease',
@@ -4081,7 +4203,7 @@ export default function App() {
                   e.stopPropagation();
                   toggleWidgetTransparency('scratchpad');
                 }}
-                title={config.scratchpad?.glassBg ? 'Switch Scratchpad to Transparent' : 'Switch Scratchpad to Glass Card'}
+                title={config.scratchpad?.glassBg ? 'Switch Daily Register to Transparent' : 'Switch Daily Register to Glass Card'}
                 className="no-drag absolute top-2 right-2 px-2 py-0.5 rounded-md bg-black/60 hover:bg-black/90 text-[9px] font-mono text-white/80 hover:text-white border border-white/20 transition cursor-pointer z-30 flex items-center gap-1 shadow-sm"
               >
                 <span className={`w-1.5 h-1.5 rounded-full ${config.scratchpad?.glassBg ? 'bg-cyan-400' : 'bg-amber-400'}`} />
@@ -4093,45 +4215,46 @@ export default function App() {
           {/* Widget Header */}
           <div className="flex items-center justify-between no-drag pb-2 border-b border-white/10">
             <div className="flex items-center gap-2">
-              <span className="text-base select-none">📝</span>
-              <div className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-[0.14em] text-white font-['Plus_Jakarta_Sans']">
-                <span>Scratchpad / Quick Notes</span>
+              <span className="text-base select-none">📋</span>
+              <div className="flex flex-col">
+                <div className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-[0.14em] text-white font-['Plus_Jakarta_Sans']">
+                  <span>Daily Register</span>
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+                </div>
+                <span className="text-[9px] text-white/50 font-mono">
+                  {new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', weekday: 'short' })}
+                </span>
               </div>
-              <span
-                className={`w-2 h-2 rounded-full transition-all duration-300 ${
-                  scratchpadSavedPulse
-                    ? 'bg-emerald-400 scale-125 shadow-[0_0_8px_rgba(52,211,153,0.8)]'
-                    : 'bg-emerald-500/70'
-                }`}
-                title={scratchpadSavedPulse ? 'Saved ✓' : 'Auto-saved to storage'}
-              />
             </div>
 
             <div className="flex items-center gap-1.5">
+              {/* Separate Section Trigger: View Daily Summary */}
               <button
                 type="button"
-                onClick={handleCopyScratchpad}
-                title="Copy all notes"
-                className="px-2 py-0.5 rounded-md bg-white/5 hover:bg-white/15 text-white/70 hover:text-white text-[10px] font-medium border border-white/10 transition cursor-pointer flex items-center gap-1"
+                onClick={() => setDailySummaryOpen(true)}
+                title="Open Daily Summary & Study History"
+                className="px-2.5 py-1 rounded-lg bg-emerald-500/20 hover:bg-emerald-500/35 text-emerald-300 hover:text-white border border-emerald-500/40 text-[10px] font-bold transition cursor-pointer flex items-center gap-1 shadow-sm"
               >
-                <Copy className="w-3 h-3 text-cyan-400" />
-                <span>{scratchpadCopyFeedback ? 'Copied!' : 'Copy'}</span>
+                <FileText className="w-3 h-3 text-emerald-400" />
+                <span>Daily Summary</span>
+                <span className="ml-0.5 px-1 py-0.2 rounded-full bg-emerald-400/30 text-[9px]">
+                  {dailyRegisterEntries.length}
+                </span>
               </button>
 
               <button
                 type="button"
-                onClick={handleClearScratchpad}
-                title="Clear scratchpad"
-                className="px-2 py-0.5 rounded-md bg-white/5 hover:bg-rose-500/20 text-white/70 hover:text-rose-300 text-[10px] font-medium border border-white/10 hover:border-rose-500/30 transition cursor-pointer flex items-center gap-1"
+                onClick={() => setDailyRegViewMode(prev => prev === 'log' ? 'notes' : 'log')}
+                title={dailyRegViewMode === 'log' ? 'Switch to Quick Notes Textarea' : 'Switch to Structured Daily Register Log'}
+                className="px-2 py-1 rounded-lg bg-white/5 hover:bg-white/15 text-white/70 hover:text-white text-[10px] font-medium border border-white/10 transition cursor-pointer"
               >
-                <Trash2 className="w-3 h-3 text-rose-400" />
-                <span>Clear</span>
+                {dailyRegViewMode === 'log' ? '📝 Notes' : '⚡ Log'}
               </button>
 
               <button
                 type="button"
                 onClick={() => setScratchpadCollapsed(prev => !prev)}
-                title={scratchpadCollapsed ? 'Expand Scratchpad' : 'Minimize Scratchpad'}
+                title={scratchpadCollapsed ? 'Expand Daily Register' : 'Minimize Daily Register'}
                 className="p-1 rounded-md bg-white/5 hover:bg-white/15 text-white/70 hover:text-white transition cursor-pointer ml-0.5"
               >
                 {scratchpadCollapsed ? (
@@ -4143,25 +4266,135 @@ export default function App() {
             </div>
           </div>
 
-          {/* Textarea Content (when expanded) */}
+          {/* Expanded Content: Either Structured Register Log or Quick Notes Textarea */}
           {!scratchpadCollapsed && (
-            <>
-              <div className="flex-1 py-2 flex flex-col relative no-drag min-h-0">
-                <textarea
-                  value={scratchpadText}
-                  onChange={e => handleScratchpadChange(e.target.value)}
-                  placeholder="Type temporary notes, rough math calculations, problem steps, or equations here... Auto-saves with every keystroke."
-                  className="w-full h-full min-h-[110px] resize-none bg-black/30 border border-white/10 rounded-xl p-2.5 text-xs font-mono text-cyan-100 placeholder:text-white/30 focus:outline-none focus:border-cyan-500/50 focus:ring-1 focus:ring-cyan-500/30 selection:bg-cyan-500/30 leading-relaxed overflow-y-auto"
-                />
-              </div>
+            <div className="flex-1 py-2 flex flex-col relative no-drag min-h-0 overflow-y-auto">
+              {dailyRegViewMode === 'log' ? (
+                /* Structured Daily Register Form */
+                <div className="space-y-2.5 text-xs">
+                  {/* Subject Pills */}
+                  <div className="flex items-center gap-1 overflow-x-auto pb-1 text-[10px] font-medium">
+                    {['Mathematics', 'Physics', 'Chemistry', 'Biology', 'Computer Science', 'General'].map(sub => (
+                      <button
+                        key={sub}
+                        type="button"
+                        onClick={() => setNewRegSubject(sub)}
+                        className={`px-2 py-0.5 rounded-md whitespace-nowrap transition cursor-pointer border ${
+                          newRegSubject === sub
+                            ? 'bg-cyan-500/30 border-cyan-400 text-cyan-200 font-bold'
+                            : 'bg-white/5 border-white/10 text-white/60 hover:text-white'
+                        }`}
+                      >
+                        {sub}
+                      </button>
+                    ))}
+                  </div>
 
-              {/* Card Footer Strip */}
-              <div className="pt-1.5 border-t border-white/5 flex items-center justify-between text-[10px] text-white/40 font-mono no-drag">
-                <span>Auto-saved to storage</span>
-                <span>{scratchpadText.length} chars • {scratchpadText ? scratchpadText.split('\n').length : 0} lines</span>
-              </div>
-            </>
+                  {/* Topic / Chapter Input */}
+                  <input
+                    type="text"
+                    value={newRegTopic}
+                    onChange={e => setNewRegTopic(e.target.value)}
+                    placeholder="Topic / Chapter (e.g. Calculus Derivatives, Organic Reactions)..."
+                    className="w-full bg-black/40 border border-white/10 rounded-xl px-2.5 py-1.5 text-xs text-white placeholder-white/30 focus:outline-none focus:border-cyan-500/60"
+                  />
+
+                  {/* Detailed Study Notes Textarea */}
+                  <textarea
+                    value={newRegNotes}
+                    onChange={e => setNewRegNotes(e.target.value)}
+                    placeholder="Key concepts mastered, formulas derived, problem sets completed, revision takeaways..."
+                    className="w-full h-20 resize-none bg-black/40 border border-white/10 rounded-xl p-2.5 text-xs text-white placeholder-white/30 focus:outline-none focus:border-cyan-500/60 leading-relaxed font-sans"
+                  />
+
+                  {/* Controls: Duration & Focus Rating & Save Button */}
+                  <div className="flex items-center justify-between gap-2 pt-1 border-t border-white/5">
+                    {/* Duration Buttons */}
+                    <div className="flex items-center gap-1 text-[10px]">
+                      <span className="text-white/50 text-[9px]">Time:</span>
+                      {[25, 45, 60, 90].map(mins => (
+                        <button
+                          key={mins}
+                          type="button"
+                          onClick={() => setNewRegDuration(mins)}
+                          className={`px-1.5 py-0.5 rounded transition cursor-pointer border ${
+                            newRegDuration === mins
+                              ? 'bg-amber-500/25 border-amber-400 text-amber-200 font-bold'
+                              : 'bg-white/5 border-white/10 text-white/60 hover:text-white'
+                          }`}
+                        >
+                          {mins}m
+                        </button>
+                      ))}
+                    </div>
+
+                    {/* Focus Star Rating */}
+                    <div className="flex items-center gap-0.5">
+                      {[1, 2, 3, 4, 5].map(star => (
+                        <button
+                          key={star}
+                          type="button"
+                          onClick={() => setNewRegRating(star)}
+                          className={`text-xs transition cursor-pointer hover:scale-125 ${
+                            star <= newRegRating ? 'text-amber-400' : 'text-white/20'
+                          }`}
+                          title={`Focus rating: ${star} of 5`}
+                        >
+                          ★
+                        </button>
+                      ))}
+                    </div>
+
+                    {/* Save Entry Button */}
+                    <button
+                      type="button"
+                      onClick={handleAddDailyRegisterEntry}
+                      disabled={!newRegTopic.trim() && !newRegNotes.trim()}
+                      className={`px-3 py-1 rounded-xl font-bold text-[11px] transition cursor-pointer flex items-center gap-1 shadow-md ${
+                        registerSuccessPulse
+                          ? 'bg-emerald-400 text-black'
+                          : (!newRegTopic.trim() && !newRegNotes.trim())
+                          ? 'bg-white/10 text-white/30 cursor-not-allowed border border-white/10'
+                          : 'bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 hover:to-teal-400 text-black border border-emerald-400/40'
+                      }`}
+                    >
+                      <Check className="w-3.5 h-3.5" />
+                      <span>{registerSuccessPulse ? 'Saved!' : 'Save Entry'}</span>
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                /* Freeform Quick Notes / Scratchpad Textarea */
+                <div className="flex-1 flex flex-col h-full min-h-[120px]">
+                  <textarea
+                    value={scratchpadText}
+                    onChange={e => handleScratchpadChange(e.target.value)}
+                    placeholder="Type temporary notes, rough math calculations, problem steps, or equations here... Auto-saves with every keystroke."
+                    className="w-full h-full min-h-[130px] resize-none bg-black/30 border border-white/10 rounded-xl p-2.5 text-xs font-mono text-cyan-100 placeholder:text-white/30 focus:outline-none focus:border-cyan-500/50 focus:ring-1 focus:ring-cyan-500/30 selection:bg-cyan-500/30 leading-relaxed overflow-y-auto"
+                  />
+                  <div className="pt-1.5 border-t border-white/5 flex items-center justify-between text-[10px] text-white/40 font-mono mt-1">
+                    <span>Auto-saved to storage</span>
+                    <span>{scratchpadText.length} chars</span>
+                  </div>
+                </div>
+              )}
+            </div>
           )}
+
+          {/* Card Footer Strip */}
+          <div className="pt-1.5 border-t border-white/5 flex items-center justify-between text-[10px] text-white/40 font-mono no-drag">
+            <span className="flex items-center gap-1">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+              <span>{currentUser ? 'Firebase Cloud Synced' : 'Saved Locally'}</span>
+            </span>
+            <button
+              type="button"
+              onClick={() => setDailySummaryOpen(true)}
+              className="text-emerald-300 hover:text-emerald-200 underline cursor-pointer"
+            >
+              View Daily Summary ({dailyRegisterEntries.length}) →
+            </button>
+          </div>
 
           {showHandles && !scratchpadCollapsed && (
             <>
@@ -4249,6 +4482,225 @@ export default function App() {
             >
               Dismiss
             </button>
+          </div>
+        </div>
+      )}
+
+      {/* ================= SEPARATE SECTION: DAILY REGISTER SUMMARY & STUDY LOGS ================= */}
+      {dailySummaryOpen && (
+        <div
+          className="fixed inset-0 z-50 bg-black/80 backdrop-blur-xl flex items-center justify-center p-3 sm:p-6 animate-in fade-in duration-200"
+          onClick={() => setDailySummaryOpen(false)}
+        >
+          <div
+            className="w-full max-w-4xl max-h-[90vh] rounded-3xl bg-[#090e18] border border-emerald-500/30 shadow-[0_30px_90px_rgba(0,0,0,0.9)] flex flex-col overflow-hidden text-white animate-in zoom-in-95 duration-200"
+            onClick={e => e.stopPropagation()}
+          >
+            {/* Modal Header */}
+            <div className="px-6 py-4 border-b border-white/10 flex items-center justify-between bg-white/[0.02]">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-2xl bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center text-xl shadow-[0_0_15px_rgba(16,185,129,0.3)]">
+                  📋
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <h3 className="text-base sm:text-lg font-bold text-white tracking-wide">
+                      Daily Register & Study Summary
+                    </h3>
+                    <span className="px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 text-[10px] font-bold">
+                      {dailyRegisterEntries.length} Total Logs
+                    </span>
+                  </div>
+                  <p className="text-xs text-white/50">
+                    Comprehensive chronological record of daily study sessions, revisions, and focus scores
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <div className="hidden sm:flex items-center gap-1.5 px-3 py-1 rounded-full bg-white/5 border border-white/10 text-[10px] font-mono text-emerald-300">
+                  <Cloud className="w-3 h-3 text-emerald-400" />
+                  <span>{currentUser ? 'Stored in Firebase Firestore' : 'Stored in Local Storage'}</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setDailySummaryOpen(false)}
+                  className="p-2 rounded-xl bg-white/5 hover:bg-white/15 text-white/60 hover:text-white transition cursor-pointer"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+
+            {/* KPI Metrics Strip */}
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 p-4 sm:p-6 bg-black/30 border-b border-white/10">
+              <div className="p-3.5 rounded-2xl bg-white/[0.03] border border-white/10 flex flex-col justify-between">
+                <span className="text-[10px] font-semibold uppercase tracking-wider text-white/50">Total Sessions</span>
+                <span className="text-2xl font-black text-cyan-300 mt-1">{dailyRegisterEntries.length}</span>
+                <span className="text-[10px] text-white/40 mt-0.5">Entries recorded</span>
+              </div>
+
+              <div className="p-3.5 rounded-2xl bg-white/[0.03] border border-white/10 flex flex-col justify-between">
+                <span className="text-[10px] font-semibold uppercase tracking-wider text-white/50">Study Duration</span>
+                <span className="text-2xl font-black text-emerald-300 mt-1">
+                  {Math.floor(dailyRegisterEntries.reduce((acc, e) => acc + (e.durationMinutes || 0), 0) / 60)}h{' '}
+                  {dailyRegisterEntries.reduce((acc, e) => acc + (e.durationMinutes || 0), 0) % 60}m
+                </span>
+                <span className="text-[10px] text-white/40 mt-0.5">Total focus hours logged</span>
+              </div>
+
+              <div className="p-3.5 rounded-2xl bg-white/[0.03] border border-white/10 flex flex-col justify-between">
+                <span className="text-[10px] font-semibold uppercase tracking-wider text-white/50">Average Rating</span>
+                <span className="text-2xl font-black text-amber-300 mt-1">
+                  {(dailyRegisterEntries.reduce((acc, e) => acc + (e.rating || 5), 0) / Math.max(1, dailyRegisterEntries.length)).toFixed(1)} ★
+                </span>
+                <span className="text-[10px] text-white/40 mt-0.5">Focus quality index</span>
+              </div>
+
+              <div className="p-3.5 rounded-2xl bg-white/[0.03] border border-white/10 flex flex-col justify-between">
+                <span className="text-[10px] font-semibold uppercase tracking-wider text-white/50">Today's Logs</span>
+                <span className="text-2xl font-black text-rose-300 mt-1">
+                  {dailyRegisterEntries.filter(e => e.date === new Date().toISOString().slice(0, 10)).length}
+                </span>
+                <span className="text-[10px] text-white/40 mt-0.5">Completed today</span>
+              </div>
+            </div>
+
+            {/* Filter and Search Bar */}
+            <div className="px-6 py-3 border-b border-white/10 flex flex-wrap items-center justify-between gap-3 bg-white/[0.01]">
+              <div className="flex items-center gap-1.5 overflow-x-auto text-xs">
+                {['all', 'Mathematics', 'Physics', 'Chemistry', 'Biology', 'Computer Science', 'General'].map(s => (
+                  <button
+                    key={s}
+                    type="button"
+                    onClick={() => setDailySummaryFilterSubject(s)}
+                    className={`px-3 py-1 rounded-xl text-xs font-semibold transition cursor-pointer border ${
+                      dailySummaryFilterSubject === s
+                        ? 'bg-emerald-500/25 border-emerald-400 text-emerald-200'
+                        : 'bg-white/5 border-white/10 text-white/60 hover:text-white'
+                    }`}
+                  >
+                    {s === 'all' ? 'All Subjects' : s}
+                  </button>
+                ))}
+              </div>
+
+              <div className="flex items-center gap-2">
+                <input
+                  type="text"
+                  value={dailySummarySearch}
+                  onChange={e => setDailySummarySearch(e.target.value)}
+                  placeholder="Search notes or topics..."
+                  className="bg-black/40 border border-white/10 rounded-xl px-3 py-1 text-xs text-white placeholder-white/30 focus:outline-none focus:border-emerald-500/50 w-44 sm:w-56"
+                />
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    const textContent = dailyRegisterEntries
+                      .map(
+                        e =>
+                          `# [${e.date} ${e.time}] ${e.subject} - ${e.topic}\nDuration: ${e.durationMinutes} mins | Focus: ${e.rating}/5\n${e.notes}\n---`
+                      )
+                      .join('\n\n');
+                    const blob = new Blob([textContent], { type: 'text/markdown' });
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = `daily_register_summary_${new Date().toISOString().slice(0, 10)}.md`;
+                    a.click();
+                    URL.revokeObjectURL(url);
+                  }}
+                  className="px-3 py-1 rounded-xl bg-white/5 hover:bg-white/15 border border-white/10 text-white/80 hover:text-white text-xs font-semibold transition cursor-pointer flex items-center gap-1"
+                  title="Export summary as Markdown document"
+                >
+                  <Download className="w-3.5 h-3.5 text-cyan-400" />
+                  <span className="hidden sm:inline">Export</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Entries List */}
+            <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-3 min-h-[300px]">
+              {dailyRegisterEntries.filter(e => {
+                const matchesSub = dailySummaryFilterSubject === 'all' || e.subject.toLowerCase() === dailySummaryFilterSubject.toLowerCase();
+                const matchesSearch =
+                  !dailySummarySearch ||
+                  e.topic.toLowerCase().includes(dailySummarySearch.toLowerCase()) ||
+                  e.notes.toLowerCase().includes(dailySummarySearch.toLowerCase()) ||
+                  e.subject.toLowerCase().includes(dailySummarySearch.toLowerCase());
+                return matchesSub && matchesSearch;
+              }).length === 0 ? (
+                <div className="text-center py-16 space-y-2 text-white/40">
+                  <div className="text-3xl">📭</div>
+                  <div className="text-sm font-semibold">No daily register entries found</div>
+                  <div className="text-xs">Use the Daily Register widget on your dashboard to log study notes!</div>
+                </div>
+              ) : (
+                dailyRegisterEntries
+                  .filter(e => {
+                    const matchesSub = dailySummaryFilterSubject === 'all' || e.subject.toLowerCase() === dailySummaryFilterSubject.toLowerCase();
+                    const matchesSearch =
+                      !dailySummarySearch ||
+                      e.topic.toLowerCase().includes(dailySummarySearch.toLowerCase()) ||
+                      e.notes.toLowerCase().includes(dailySummarySearch.toLowerCase()) ||
+                      e.subject.toLowerCase().includes(dailySummarySearch.toLowerCase());
+                    return matchesSub && matchesSearch;
+                  })
+                  .map(entry => (
+                    <div
+                      key={entry.id}
+                      className="p-4 rounded-2xl bg-white/[0.03] border border-white/10 hover:border-emerald-500/30 transition space-y-2.5"
+                    >
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="space-y-1">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="px-2.5 py-0.5 rounded-lg text-xs font-bold bg-cyan-500/20 text-cyan-300 border border-cyan-500/30">
+                              {entry.subject}
+                            </span>
+                            <h4 className="font-bold text-sm text-white">{entry.topic}</h4>
+                          </div>
+                          <div className="flex items-center gap-2 text-[10px] text-white/50 font-mono">
+                            <span>📅 {entry.date}</span>
+                            <span>⏰ {entry.time}</span>
+                            <span>⏱ {entry.durationMinutes} mins</span>
+                            <span className="text-amber-400">{'★'.repeat(entry.rating || 5)}</span>
+                          </div>
+                        </div>
+
+                        <button
+                          type="button"
+                          onClick={() => {
+                            saveDailyRegisterList(prev => prev.filter(e => e.id !== entry.id));
+                          }}
+                          className="p-1.5 rounded-lg hover:bg-rose-500/20 text-white/40 hover:text-rose-300 transition cursor-pointer"
+                          title="Delete entry"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+
+                      <p className="text-xs text-white/80 leading-relaxed font-sans whitespace-pre-wrap bg-black/25 p-3 rounded-xl border border-white/5">
+                        {entry.notes}
+                      </p>
+                    </div>
+                  ))
+              )}
+            </div>
+
+            {/* Modal Footer */}
+            <div className="px-6 py-3.5 border-t border-white/10 flex items-center justify-between text-xs text-white/60 bg-white/[0.02]">
+              <span className="font-mono text-[11px]">
+                Showing {dailyRegisterEntries.length} entries • Stored persistently with Firebase cloud fallback
+              </span>
+              <button
+                type="button"
+                onClick={() => setDailySummaryOpen(false)}
+                className="px-4 py-1.5 rounded-xl bg-white/10 hover:bg-white/20 text-white font-semibold transition cursor-pointer"
+              >
+                Close Summary
+              </button>
+            </div>
           </div>
         </div>
       )}
@@ -6142,12 +6594,30 @@ export default function App() {
             {/* Occupied Warning & Collision Resolution Choices */}
             {placementModal.occupiedBy && (
               <div className="p-2.5 rounded-xl bg-amber-500/10 border border-amber-500/30 space-y-2">
-                <div className="flex items-center gap-2 text-amber-300 font-semibold text-[11px]">
-                  <AlertTriangle className="w-3.5 h-3.5 text-amber-400 shrink-0" />
-                  <span>Occupied by {placementModal.occupiedWidgetLabel}</span>
+                <div className="flex items-center justify-between text-amber-300 font-semibold text-[11px] flex-wrap gap-1">
+                  <div className="flex items-center gap-1.5 min-w-0">
+                    <AlertTriangle className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                    <span className="truncate max-w-[160px]">Occupied: {placementModal.occupiedWidgetLabel}</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const occKey = placementModal.occupiedBy!;
+                      updateConfig(p => ({
+                        ...p,
+                        [occKey]: { ...(p as any)[occKey], visible: false },
+                      }));
+                      setPlacementModal(null);
+                    }}
+                    className="px-2.5 py-1 rounded-lg bg-rose-500/25 hover:bg-rose-500/40 text-rose-300 border border-rose-500/40 text-[10px] font-bold transition cursor-pointer flex items-center gap-1 shrink-0 shadow-sm"
+                    title="Remove this widget from dashboard"
+                  >
+                    <Trash2 className="w-3 h-3 text-rose-400" />
+                    <span>Remove Widget</span>
+                  </button>
                 </div>
                 <p className="text-[10px] text-white/70 leading-relaxed">
-                  Choose how to place your widget without deleting or duplicating existing content:
+                  Choose an action below to reposition, swap, or remove any widget:
                 </p>
                 <div className="grid grid-cols-2 gap-1.5 pt-1">
                   <button
@@ -6178,11 +6648,11 @@ export default function App() {
 
             {/* Widget Selection Header */}
             <div className="flex items-center justify-between text-[10px] text-white/50 uppercase font-bold tracking-wider">
-              <span>Select Widget to Place Here</span>
-              <span>8 Available</span>
+              <span>Right-Click Widget Controls</span>
+              <span>{ALL_WIDGET_REGISTRY.length} Widgets</span>
             </div>
 
-            {/* List of 8 Widgets */}
+            {/* List of All Widgets with Direct Add / Remove */}
             <div className="space-y-1.5 max-h-56 overflow-y-auto pr-1">
               {ALL_WIDGET_REGISTRY.map(widget => {
                 const Icon = widget.icon;
@@ -6213,39 +6683,74 @@ export default function App() {
                           {widget.label}
                         </div>
                         <div className="text-[9px] text-white/50">
-                          {isVisible ? 'Active on dashboard' : 'Hidden • Ready to add'}
+                          {isVisible ? 'Active on dashboard' : 'Hidden • Click Add to show'}
                         </div>
                       </div>
                     </div>
 
                     <div className="flex items-center gap-1 shrink-0">
-                      {isVisible && !isCurrentOccupier ? (
-                        <button
-                          type="button"
-                          onClick={() => handlePlaceWidgetAtSelectedPosition(widget.id, 'exact')}
-                          className="px-2 py-1 rounded-lg bg-cyan-500/25 hover:bg-cyan-500/40 border border-cyan-400/40 text-[10px] font-semibold text-cyan-200 transition cursor-pointer"
-                          title="Move this widget to the clicked location"
-                        >
-                          Move Here
-                        </button>
+                      {isVisible ? (
+                        <>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              updateConfig(p => ({
+                                ...p,
+                                [widget.id]: { ...(p as any)[widget.id], visible: false },
+                              }));
+                            }}
+                            className="px-2 py-1 rounded-lg bg-rose-500/20 hover:bg-rose-500/35 border border-rose-500/40 text-[10px] font-semibold text-rose-300 transition cursor-pointer flex items-center gap-0.5"
+                            title="Remove this widget from the screen"
+                          >
+                            <Trash2 className="w-2.5 h-2.5" />
+                            <span>Remove</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handlePlaceWidgetAtSelectedPosition(widget.id, 'exact')}
+                            className="px-2 py-1 rounded-lg bg-cyan-500/25 hover:bg-cyan-500/40 border border-cyan-400/40 text-[10px] font-semibold text-cyan-200 transition cursor-pointer"
+                            title="Move this widget to the clicked location"
+                          >
+                            Move
+                          </button>
+                        </>
                       ) : (
                         <button
                           type="button"
                           onClick={() => handlePlaceWidgetAtSelectedPosition(widget.id, 'exact')}
-                          className={`px-2 py-1 rounded-lg border text-[10px] font-semibold transition cursor-pointer flex items-center gap-1 ${
-                            isCurrentOccupier
-                              ? 'bg-amber-400/20 text-amber-200 border-amber-400/40'
-                              : 'bg-emerald-500/30 hover:bg-emerald-500/45 text-emerald-200 border-emerald-400/50'
-                          }`}
+                          className="px-2.5 py-1 rounded-lg border text-[10px] font-semibold transition cursor-pointer flex items-center gap-1 bg-emerald-500/30 hover:bg-emerald-500/45 text-emerald-200 border-emerald-400/50"
                         >
                           <Plus className="w-3 h-3" />
-                          <span>{isCurrentOccupier ? 'Reposition' : 'Add Here'}</span>
+                          <span>Add</span>
                         </button>
                       )}
                     </div>
                   </div>
                 );
               })}
+            </div>
+
+            {/* Quick Responsive Layout Fit Controls */}
+            <div className="p-2 rounded-xl bg-white/[0.03] border border-white/10 space-y-1.5">
+              <span className="text-[10px] font-semibold uppercase tracking-wider text-white/60 block">
+                Responsive Viewport Fit
+              </span>
+              <div className="grid grid-cols-2 gap-1.5">
+                <button
+                  type="button"
+                  onClick={applyLaptopFitLayout}
+                  className="py-1.5 px-2 rounded-lg bg-cyan-500/20 hover:bg-cyan-500/30 text-cyan-200 border border-cyan-400/30 text-[10px] font-semibold transition cursor-pointer flex items-center justify-center gap-1"
+                >
+                  💻 Fit for Laptop
+                </button>
+                <button
+                  type="button"
+                  onClick={applyMobileFitLayout}
+                  className="py-1.5 px-2 rounded-lg bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-200 border border-emerald-400/30 text-[10px] font-semibold transition cursor-pointer flex items-center justify-center gap-1"
+                >
+                  📱 Fit for Mobile
+                </button>
+              </div>
             </div>
 
             {/* Mode & Grid Snapping Quick Controls */}

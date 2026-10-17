@@ -1000,3 +1000,143 @@ export function computePresetWidgetCoordinates(
 
   return coords as Record<DashboardWidgetKey, { x: number; y: number; width: number; height: number }>;
 }
+
+/**
+ * Calculates optimal responsive coordinates specifically tailored for laptop displays
+ * (1366x768 to 1920x1080 screens) ensuring all widgets fit without clipping.
+ */
+export function computeLaptopFitCoordinates(
+  screenWidth: number,
+  screenHeight: number
+): Record<DashboardWidgetKey, { x: number; y: number; width: number; height: number }> {
+  const sw = Math.max(1024, screenWidth);
+  const sh = Math.max(650, screenHeight);
+  const pad = 24;
+
+  // Center Hero Clock
+  const clockW = Math.min(560, sw * 0.45);
+  const clockH = Math.min(160, sh * 0.22);
+  const clockX = Math.round((sw - clockW) / 2);
+  const clockY = pad + 15;
+
+  // Exam Countdown (Flanking right or top right)
+  const cdW = Math.min(420, sw * 0.34);
+  const cdH = 160;
+  const cdX = sw - cdW - pad;
+  const cdY = clockY;
+
+  // Daily Register (Scratchpad) — Left main workspace
+  const regW = Math.min(440, sw * 0.35);
+  const regH = Math.min(320, sh * 0.44);
+  const regX = pad;
+  const regY = clockY + clockH + 16;
+
+  // Pomodoro Focus Timer — Center below clock
+  const pomoW = Math.min(340, sw * 0.28);
+  const pomoH = 220;
+  const pomoX = Math.round((sw - pomoW) / 2);
+  const pomoY = clockY + clockH + 16;
+
+  // Tasks & Habits — Right side below countdown
+  const taskW = Math.min(380, sw * 0.32);
+  const taskH = Math.min(260, sh * 0.36);
+  const taskX = sw - taskW - pad;
+  const taskY = cdY + cdH + 16;
+
+  // Motivation Quote Banner — Bottom dock center
+  const motW = Math.min(520, sw * 0.45);
+  const motH = 90;
+  const motX = Math.round((sw - motW) / 2);
+  const motY = sh - motH - pad;
+
+  // Centum Badge Name Widget — Above or below clock
+  const nameW = 380;
+  const nameH = 80;
+  const nameX = pad;
+  const nameY = clockY;
+
+  // Notification / Routine Schedule
+  const notifW = 360;
+  const notifH = 140;
+  const notifX = pad;
+  const notifY = regY + regH + 16;
+
+  // Calendar
+  const calW = 280;
+  const calH = 240;
+  const calX = sw - calW - pad;
+  const calY = sh - calH - pad;
+
+  return {
+    clock: { x: clockX, y: clockY, width: Math.round(clockW), height: Math.round(clockH) },
+    countdown: { x: Math.round(cdX), y: Math.round(cdY), width: Math.round(cdW), height: Math.round(cdH) },
+    nameWidget: { x: Math.round(nameX), y: Math.round(nameY), width: Math.round(nameW), height: Math.round(nameH) },
+    scratchpad: { x: Math.round(regX), y: Math.round(regY), width: Math.round(regW), height: Math.round(regH) },
+    pomodoro: { x: Math.round(pomoX), y: Math.round(pomoY), width: Math.round(pomoW), height: Math.round(pomoH) },
+    tasks: { x: Math.round(taskX), y: Math.round(taskY), width: Math.round(taskW), height: Math.round(taskH) },
+    motivation: { x: Math.round(motX), y: Math.round(motY), width: Math.round(motW), height: Math.round(motH) },
+    notification: { x: Math.round(notifX), y: Math.round(notifY), width: Math.round(notifW), height: Math.round(notifH) },
+    calendar: { x: Math.round(calX), y: Math.round(calY), width: Math.round(calW), height: Math.round(calH) },
+  };
+}
+
+/**
+ * Calculates responsive coordinates for mobile screens (viewport < 768px)
+ * ensuring full-width clean stack without clipping or horizontal scroll.
+ */
+export function computeMobileFitCoordinates(
+  screenWidth: number,
+  screenHeight: number
+): Record<DashboardWidgetKey, { x: number; y: number; width: number; height: number }> {
+  const pad = 12;
+  const usableW = Math.max(290, screenWidth - pad * 2);
+
+  let currentY = pad;
+
+  const clockH = 140;
+  const clock = { x: pad, y: currentY, width: usableW, height: clockH };
+  currentY += clockH + 12;
+
+  const cdH = 150;
+  const countdown = { x: pad, y: currentY, width: usableW, height: cdH };
+  currentY += cdH + 12;
+
+  const regH = 260;
+  const scratchpad = { x: pad, y: currentY, width: usableW, height: regH };
+  currentY += regH + 12;
+
+  const pomoH = 220;
+  const pomodoro = { x: pad, y: currentY, width: usableW, height: pomoH };
+  currentY += pomoH + 12;
+
+  const taskH = 220;
+  const tasks = { x: pad, y: currentY, width: usableW, height: taskH };
+  currentY += taskH + 12;
+
+  const motH = 95;
+  const motivation = { x: pad, y: currentY, width: usableW, height: motH };
+  currentY += motH + 12;
+
+  const nameH = 80;
+  const nameWidget = { x: pad, y: currentY, width: usableW, height: nameH };
+  currentY += nameH + 12;
+
+  const notifH = 130;
+  const notification = { x: pad, y: currentY, width: usableW, height: notifH };
+  currentY += notifH + 12;
+
+  const calH = 240;
+  const calendar = { x: pad, y: currentY, width: usableW, height: calH };
+
+  return {
+    clock,
+    countdown,
+    scratchpad,
+    pomodoro,
+    tasks,
+    motivation,
+    nameWidget,
+    notification,
+    calendar,
+  };
+}

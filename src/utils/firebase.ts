@@ -148,7 +148,7 @@ export async function logOutUser(): Promise<void> {
 /**
  * Save user dashboard data to Firestore under /users/{uid}/dashboard/data
  */
-export async function saveUserDashboard(uid: string, dashboardData: { config: any; tasks: any[]; updatedAt: string }): Promise<boolean> {
+export async function saveUserDashboard(uid: string, dashboardData: { config: any; tasks: any[]; dailyRegister?: any[]; updatedAt: string }): Promise<boolean> {
   if (!uid) return false;
   const path = `users/${uid}/dashboard/data`;
   try {
@@ -157,8 +157,9 @@ export async function saveUserDashboard(uid: string, dashboardData: { config: an
       userId: uid,
       config: dashboardData.config,
       tasks: dashboardData.tasks,
+      dailyRegister: dashboardData.dailyRegister || dashboardData.config?.dailyRegister || [],
       updatedAt: dashboardData.updatedAt || new Date().toISOString(),
-    });
+    }, { merge: true });
     return true;
   } catch (err) {
     handleFirestoreError(err, OperationType.WRITE, path);

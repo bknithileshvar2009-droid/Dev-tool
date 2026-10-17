@@ -129,7 +129,7 @@ const ALL_WIDGET_KEYS: { id: DashboardWidgetKey; label: string; icon: any }[] = 
   { id: 'calendar', label: 'Monthly Calendar', icon: Calendar },
   { id: 'motivation', label: 'Daily Motivation', icon: Sparkles },
   { id: 'pomodoro', label: 'Pomodoro Focus Timer', icon: Zap },
-  { id: 'scratchpad', label: 'Scratchpad / Quick Notes', icon: StickyNote },
+  { id: 'scratchpad', label: 'Daily Register & Notes', icon: StickyNote },
 ];
 
 export default function VisualCustomizationStudio({
@@ -148,7 +148,8 @@ export default function VisualCustomizationStudio({
 
   // Sub-navigation inside Appearance tab
   const [appearanceSubTab, setAppearanceSubTab] = useState<'themes' | 'animation' | 'wallpapers' | 'clocks'>('themes');
-  const [themeFilter, setThemeFilter] = useState<'all' | 'superhero' | 'dark' | 'light' | 'cinematic' | 'nature' | 'space'>('all');
+  const [themeFilter, setThemeFilter] = useState<'all' | 'dark' | 'light' | 'cinematic' | 'nature' | 'space' | 'minimal'>('all');
+  const [clockCategoryFilter, setClockCategoryFilter] = useState<'all' | 'shapes' | 'retro' | 'flip' | 'digital' | 'analog' | 'specialized'>('all');
   const [layoutCategoryFilter, setLayoutCategoryFilter] = useState<string>('all');
 
   // Widget Styles State
@@ -167,17 +168,17 @@ export default function VisualCustomizationStudio({
 
   // Staging State (Preview Before Commit)
   const [stagedThemeId, setStagedThemeId] = useState<string>(
-    currentConfig.activeThemeId || currentConfig.activeWallpaper || 'hero-doctor-doom'
+    currentConfig.activeThemeId || currentConfig.activeWallpaper || 'obsidian-glass'
   );
   const [stagedWallpaperUrl, setStagedWallpaperUrl] = useState<string>(
-    currentConfig.wallpaperUrl || 'https://images.unsplash.com/photo-1518709268805-4e9042af9f23?auto=format&fit=crop&w=2400&q=85'
+    currentConfig.wallpaperUrl || 'https://images.unsplash.com/photo-1518495973542-4542c06a5843?auto=format&fit=crop&w=2400&q=85'
   );
   const [stagedVideoUrl, setStagedVideoUrl] = useState<string>(currentConfig.videoUrl || '');
-  const [stagedCanvasTheme, setStagedCanvasTheme] = useState<CanvasThemeType>(currentConfig.canvasTheme || 'doom-animated');
-  const [stagedBgDimmer, setStagedBgDimmer] = useState<number>(currentConfig.bgDimmer ?? 40);
-  const [stagedBgBlur, setStagedBgBlur] = useState<number>(currentConfig.bgBlur ?? 1);
-  const [stagedBgSaturation, setStagedBgSaturation] = useState<number>(currentConfig.bgSaturation ?? 115);
-  const [stagedBgBrightness, setStagedBgBrightness] = useState<number>(currentConfig.bgBrightness ?? 95);
+  const [stagedCanvasTheme, setStagedCanvasTheme] = useState<CanvasThemeType>(currentConfig.canvasTheme || 'minimal');
+  const [stagedBgDimmer, setStagedBgDimmer] = useState<number>(currentConfig.bgDimmer ?? 35);
+  const [stagedBgBlur, setStagedBgBlur] = useState<number>(currentConfig.bgBlur ?? 0);
+  const [stagedBgSaturation, setStagedBgSaturation] = useState<number>(currentConfig.bgSaturation ?? 100);
+  const [stagedBgBrightness, setStagedBgBrightness] = useState<number>(currentConfig.bgBrightness ?? 100);
   const [stagedScaling, setStagedScaling] = useState<'cover' | 'contain' | 'fill'>(currentConfig.wallpaperScaling || 'cover');
 
   // Animation Controls Staging
@@ -189,16 +190,10 @@ export default function VisualCustomizationStudio({
   );
   const [stagedAnimSpeed, setStagedAnimSpeed] = useState<number>(currentConfig.animationControls?.speed ?? 1.0);
   const [stagedEnergyColor, setStagedEnergyColor] = useState<string>(
-    currentConfig.animationControls?.energyColor || '#10b981'
+    currentConfig.animationControls?.energyColor || '#06b6d4'
   );
   const [stagedEnergyIntensity, setStagedEnergyIntensity] = useState<number>(
     currentConfig.animationControls?.energyIntensity ?? 70
-  );
-  const [stagedFocalPosition, setStagedFocalPosition] = useState<'left' | 'center' | 'right' | 'split'>(
-    currentConfig.animationControls?.focalPosition || 'left'
-  );
-  const [stagedCharacterScale, setStagedCharacterScale] = useState<number>(
-    currentConfig.animationControls?.characterScale ?? 100
   );
 
   // Widget Dynamic Styles Staging
@@ -334,8 +329,6 @@ export default function VisualCustomizationStudio({
     setStagedAnimIntensity(theme.animationIntensity ? (theme.animationIntensity > 1.2 ? 'high' : theme.animationIntensity < 0.8 ? 'low' : 'medium') : 'medium');
     setStagedAnimSpeed(theme.animationSpeed ?? 1.0);
     setStagedEnergyColor(theme.energyColor || theme.accentColor);
-    setStagedFocalPosition(theme.characterPosition || 'left');
-    setStagedCharacterScale(theme.characterScale ?? 100);
 
     // Apply coordinated global widget styling default
     if (theme.defaultWidgetStyle) {
@@ -360,6 +353,18 @@ export default function VisualCustomizationStudio({
       fontBody: theme.fontBody,
     }));
   };
+
+  const filteredClocks = useMemo(() => {
+    return STUDIO_CLOCK_DESIGNS.filter(clock => {
+      const matchesSearch =
+        searchQuery === '' ||
+        clock.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        clock.description.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        clock.badge.toLowerCase().includes(searchQuery.toLowerCase());
+      const matchesCat = clockCategoryFilter === 'all' || clock.category === clockCategoryFilter;
+      return matchesSearch && matchesCat;
+    });
+  }, [searchQuery, clockCategoryFilter]);
 
   // Helper to get active editing style (global or per-widget override)
   const currentEditingStyle = useMemo(() => {
@@ -433,9 +438,8 @@ export default function VisualCustomizationStudio({
         intensity: stagedAnimIntensity,
         speed: stagedAnimSpeed,
         energyColor: stagedEnergyColor,
-        energyIntensity: stagedEnergyIntensity,
-        focalPosition: stagedFocalPosition,
-        characterScale: stagedCharacterScale,
+        focalPosition: 'center',
+        characterScale: 100,
         dimmer: stagedBgDimmer,
         overlayOpacity: 70,
       },
@@ -634,10 +638,10 @@ export default function VisualCustomizationStudio({
                 <div className="flex items-center justify-between gap-3 pb-3 border-b border-white/10">
                   <div className="flex items-center gap-1.5 p-1 rounded-xl bg-white/5 border border-white/10 text-xs">
                     {[
-                      { id: 'themes', label: 'Character Themes' },
-                      { id: 'animation', label: 'Animation & Atmosphere' },
+                      { id: 'themes', label: 'Themes' },
+                      { id: 'animation', label: 'Atmosphere & Glow' },
                       { id: 'wallpapers', label: 'Wallpapers & Video' },
-                      { id: 'clocks', label: 'Clock Architecture' },
+                      { id: 'clocks', label: 'Clock Designs (58+ Styles)' },
                     ].map(st => (
                       <button
                         key={st.id}
@@ -655,7 +659,7 @@ export default function VisualCustomizationStudio({
 
                   {appearanceSubTab === 'themes' && (
                     <div className="flex items-center gap-1 overflow-x-auto text-xs">
-                      {(['all', 'superhero', 'dark', 'light', 'cinematic'] as const).map(cat => (
+                      {(['all', 'dark', 'light', 'cinematic', 'nature', 'space', 'minimal'] as const).map(cat => (
                         <button
                           key={cat}
                           onClick={() => setThemeFilter(cat)}
@@ -838,20 +842,20 @@ export default function VisualCustomizationStudio({
 
                         <div className="space-y-1.5">
                           <label className="text-[11px] font-medium text-white/70">
-                            Character Focal Anchor:
+                            Atmospheric Flow Intensity:
                           </label>
-                          <div className="grid grid-cols-4 gap-1.5">
-                            {(['left', 'center', 'right', 'split'] as const).map(pos => (
+                          <div className="grid grid-cols-3 gap-1.5">
+                            {(['low', 'medium', 'high'] as const).map(lvl => (
                               <button
-                                key={pos}
-                                onClick={() => setStagedFocalPosition(pos)}
+                                key={lvl}
+                                onClick={() => setStagedAnimIntensity(lvl)}
                                 className={`py-1.5 rounded-lg text-xs font-bold uppercase transition cursor-pointer border ${
-                                  stagedFocalPosition === pos
+                                  stagedAnimIntensity === lvl
                                     ? 'bg-emerald-500/25 border-emerald-400 text-emerald-300'
                                     : 'bg-white/5 border-white/10 text-white/60 hover:text-white'
                                 }`}
                               >
-                                {pos}
+                                {lvl}
                               </button>
                             ))}
                           </div>
@@ -948,26 +952,68 @@ export default function VisualCustomizationStudio({
                   </div>
                 )}
 
-                {/* Sub-Tab Content: Clock Architecture */}
+                {/* Sub-Tab Content: Clock Architecture (58+ Designs) */}
                 {appearanceSubTab === 'clocks' && (
-                  <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
-                    {STUDIO_CLOCK_DESIGNS.map(arch => (
-                      <div
-                        key={arch.id}
-                        onClick={() => setStagedClockArch(arch.id)}
-                        className={`p-3.5 rounded-2xl border transition cursor-pointer flex flex-col justify-between ${
-                          stagedClockArch === arch.id
-                            ? 'bg-emerald-950/30 border-emerald-400 shadow-[0_0_20px_rgba(16,185,129,0.2)]'
-                            : 'bg-white/[0.02] hover:bg-white/[0.05] border-white/10'
-                        }`}
-                      >
-                        <div className="flex justify-between items-start mb-2">
-                          <h4 className="text-xs font-bold text-white">{arch.name}</h4>
-                          <span className="text-[10px] font-mono text-emerald-400 uppercase">{arch.badge}</span>
+                  <div className="space-y-4">
+                    {/* Clock Category Filters */}
+                    <div className="flex items-center gap-1.5 overflow-x-auto pb-1 text-xs no-scrollbar">
+                      {[
+                        { id: 'all', label: 'All 58+ Designs' },
+                        { id: 'shapes', label: 'Shapes (Hex, Round, Box)' },
+                        { id: 'retro', label: 'Retro & 80s' },
+                        { id: 'flip', label: 'Flip & Mechanical' },
+                        { id: 'digital', label: 'Digital Modern' },
+                        { id: 'analog', label: 'Analog Dials' },
+                        { id: 'specialized', label: 'Specialized & Gauges' },
+                      ].map(cat => (
+                        <button
+                          key={cat.id}
+                          onClick={() => setClockCategoryFilter(cat.id as any)}
+                          className={`px-3 py-1.5 rounded-xl uppercase tracking-wider text-[10px] font-bold transition shrink-0 cursor-pointer ${
+                            clockCategoryFilter === cat.id
+                              ? 'bg-emerald-500/30 text-emerald-200 border border-emerald-400/50 shadow-[0_0_12px_rgba(16,185,129,0.2)]'
+                              : 'bg-white/5 text-white/50 hover:text-white border border-white/5'
+                          }`}
+                        >
+                          {cat.label}
+                        </button>
+                      ))}
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
+                      {filteredClocks.map(arch => (
+                        <div
+                          key={arch.id}
+                          onClick={() => setStagedClockArch(arch.id)}
+                          className={`p-3.5 rounded-2xl border transition cursor-pointer flex flex-col justify-between group ${
+                            stagedClockArch === arch.id
+                              ? 'bg-emerald-950/40 border-emerald-400 shadow-[0_0_20px_rgba(16,185,129,0.25)] ring-1 ring-emerald-400/50'
+                              : 'bg-white/[0.02] hover:bg-white/[0.05] border-white/10 hover:border-white/20'
+                          }`}
+                        >
+                          <div className="flex justify-between items-start mb-2">
+                            <div>
+                              <h4 className="text-xs font-bold text-white group-hover:text-emerald-300 transition">
+                                {arch.name}
+                              </h4>
+                              <p className="text-[11px] text-white/50 line-clamp-2 mt-0.5">
+                                {arch.description}
+                              </p>
+                            </div>
+                            <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300 font-bold border border-emerald-500/30 uppercase shrink-0 ml-2">
+                              {arch.badge}
+                            </span>
+                          </div>
+
+                          <div className="mt-2 pt-2 border-t border-white/5 flex items-center justify-between">
+                            <span className="text-[10px] font-mono text-white/40">Preview:</span>
+                            <span className="text-xs font-bold font-mono text-emerald-300">
+                              {arch.previewTime}
+                            </span>
+                          </div>
                         </div>
-                        <p className="text-[11px] text-white/50">{arch.description}</p>
-                      </div>
-                    ))}
+                      ))}
+                    </div>
                   </div>
                 )}
               </div>
@@ -1673,32 +1719,162 @@ export default function VisualCustomizationStudio({
                   </div>
                 </div>
 
-                {/* Font Families Grid */}
-                <div className="space-y-2">
-                  <label className="text-xs font-bold text-white uppercase tracking-wider">
-                    Clock & Display Font Family
-                  </label>
-                  <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2.5">
-                    {STUDIO_FONTS.slice(0, 16).map(f => (
-                      <button
-                        key={f.id}
-                        onClick={() => {
-                          setStagedTypography(prev => ({
-                            ...prev,
-                            fontClock: f.id,
-                            fontHeading: f.id,
-                          }));
-                        }}
-                        className={`p-2.5 rounded-xl border text-left transition cursor-pointer ${
-                          stagedTypography.fontClock === f.id
-                            ? 'bg-emerald-950/30 border-emerald-400 text-emerald-300 shadow-[0_0_15px_rgba(16,185,129,0.2)]'
-                            : 'bg-white/[0.02] hover:bg-white/[0.05] border-white/10 text-white/80'
-                        }`}
-                      >
-                        <span className="block text-xs font-bold truncate">{f.name}</span>
-                        <span className="text-[10px] text-white/40 font-mono capitalize">{f.category}</span>
-                      </button>
-                    ))}
+                {/* Viewable Font Families Grid with Real Rendering */}
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <label className="text-xs font-bold text-white uppercase tracking-wider">
+                      Clock & Typography Font Family ({STUDIO_FONTS.length} Viewable Fonts)
+                    </label>
+                    <span className="text-[11px] text-white/50 font-mono">Click to preview in live font style</span>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                    {STUDIO_FONTS.map(f => {
+                      const isSelected = stagedTypography.fontClock === f.id;
+                      return (
+                        <button
+                          key={f.id}
+                          onClick={() => {
+                            setStagedTypography(prev => ({
+                              ...prev,
+                              fontClock: f.id,
+                              fontHeading: f.id,
+                              fontCountdown: f.id,
+                            }));
+                          }}
+                          className={`p-3.5 rounded-2xl border text-left transition cursor-pointer flex flex-col justify-between group ${
+                            isSelected
+                              ? 'bg-emerald-950/40 border-emerald-400 text-emerald-300 shadow-[0_0_20px_rgba(16,185,129,0.25)] ring-1 ring-emerald-400/50'
+                              : 'bg-white/[0.02] hover:bg-white/[0.06] border-white/10 hover:border-white/25 text-white/85'
+                          }`}
+                        >
+                          <div className="flex items-center justify-between mb-2">
+                            <span className="text-xs font-bold">{f.name}</span>
+                            <span className="text-[9px] px-1.5 py-0.5 rounded bg-white/5 text-emerald-400 font-mono uppercase border border-white/10">
+                              {f.category}
+                            </span>
+                          </div>
+
+                          {/* Viewable live sample rendered in its actual font typography */}
+                          <div
+                            className="py-2 px-2.5 rounded-xl bg-black/40 border border-white/5 text-sm sm:text-base text-white tracking-wide truncate"
+                            style={{ fontFamily: f.fontFamily }}
+                          >
+                            {f.samplePreview}
+                          </div>
+
+                          <p className="text-[10px] text-white/45 mt-2 line-clamp-1">
+                            {f.description}
+                          </p>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* Text Styling & Glow Controls */}
+                <div className="p-4 rounded-2xl bg-white/[0.02] border border-white/10 space-y-4">
+                  <h4 className="text-xs font-bold text-white uppercase tracking-wider">
+                    Text Glow & Architectural Text Styling
+                  </h4>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                    {/* Glow Preset Color */}
+                    <div className="space-y-1.5">
+                      <label className="text-[11px] text-white/60">Luminescent Glow:</label>
+                      <div className="flex flex-wrap gap-1.5">
+                        {[
+                          { id: 'none', label: 'None', color: 'transparent' },
+                          { id: '#00f0ff', label: 'Cyan', color: '#00f0ff' },
+                          { id: '#10b981', label: 'Emerald', color: '#10b981' },
+                          { id: '#f59e0b', label: 'Amber', color: '#f59e0b' },
+                          { id: '#ec4899', label: 'Magenta', color: '#ec4899' },
+                          { id: '#a855f7', label: 'Purple', color: '#a855f7' },
+                        ].map(g => (
+                          <button
+                            key={g.id}
+                            type="button"
+                            onClick={() => {
+                              updateCurrentStyle({
+                                glowColor: g.color === 'transparent' ? undefined : g.color,
+                                glowIntensity: g.color === 'transparent' ? 0 : 40,
+                              });
+                            }}
+                            className="px-2.5 py-1 rounded-lg text-[10px] font-bold border border-white/10 hover:border-white/30 transition cursor-pointer flex items-center gap-1 bg-white/5"
+                          >
+                            {g.color !== 'transparent' && (
+                              <span className="w-2 h-2 rounded-full" style={{ backgroundColor: g.color }} />
+                            )}
+                            <span>{g.label}</span>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Letter Spacing */}
+                    <div className="space-y-1.5">
+                      <label className="text-[11px] text-white/60">Letter Tracking / Spacing:</label>
+                      <div className="flex gap-1.5">
+                        {[
+                          { val: -1, label: 'Tight (-1)' },
+                          { val: 0, label: 'Normal' },
+                          { val: 2, label: 'Spaced (+2)' },
+                          { val: 4, label: 'Wide (+4)' },
+                        ].map(ls => (
+                          <button
+                            key={ls.val}
+                            type="button"
+                            onClick={() => {
+                              setStagedTypography(prev => ({
+                                ...prev,
+                                elements: {
+                                  ...prev.elements,
+                                  clockMain: {
+                                    ...prev.elements.clockMain,
+                                    letterSpacing: ls.val,
+                                  },
+                                },
+                              }));
+                            }}
+                            className="px-2 py-1 rounded-lg text-[10px] font-semibold bg-white/5 hover:bg-white/15 text-white border border-white/10 transition cursor-pointer"
+                          >
+                            {ls.label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Text Transform Case */}
+                    <div className="space-y-1.5">
+                      <label className="text-[11px] text-white/60">Text Letter Case:</label>
+                      <div className="flex gap-1.5">
+                        {[
+                          { val: 'none', label: 'Normal' },
+                          { val: 'uppercase', label: 'ALL CAPS' },
+                          { val: 'lowercase', label: 'lowercase' },
+                        ].map(tc => (
+                          <button
+                            key={tc.val}
+                            type="button"
+                            onClick={() => {
+                              setStagedTypography(prev => ({
+                                ...prev,
+                                elements: {
+                                  ...prev.elements,
+                                  clockMain: {
+                                    ...prev.elements.clockMain,
+                                    textTransform: tc.val as any,
+                                  },
+                                },
+                              }));
+                            }}
+                            className="px-2.5 py-1 rounded-lg text-[10px] font-semibold bg-white/5 hover:bg-white/15 text-white border border-white/10 transition cursor-pointer"
+                          >
+                            {tc.label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -1834,8 +2010,8 @@ export default function VisualCustomizationStudio({
                   </span>
                 </div>
                 <div className="flex justify-between">
-                  <span>Focal Anchor:</span>
-                  <span className="text-white capitalize">{stagedFocalPosition}</span>
+                  <span>Atmosphere:</span>
+                  <span className="text-white capitalize">{stagedCanvasTheme}</span>
                 </div>
               </div>
             </div>
