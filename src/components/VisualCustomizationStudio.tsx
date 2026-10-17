@@ -129,6 +129,7 @@ const ALL_WIDGET_KEYS: { id: DashboardWidgetKey; label: string; icon: any }[] = 
   { id: 'calendar', label: 'Monthly Calendar', icon: Calendar },
   { id: 'motivation', label: 'Daily Motivation', icon: Sparkles },
   { id: 'pomodoro', label: 'Pomodoro Focus Timer', icon: Zap },
+  { id: 'scratchpad', label: 'Scratchpad / Quick Notes', icon: StickyNote },
 ];
 
 export default function VisualCustomizationStudio({
@@ -267,6 +268,7 @@ export default function VisualCustomizationStudio({
     calendar: currentConfig.calendar?.visible !== false,
     motivation: currentConfig.motivation?.visible !== false,
     pomodoro: currentConfig.pomodoro?.visible !== false,
+    scratchpad: (currentConfig as any).scratchpad?.visible !== false,
   });
 
   // Typography Staging
@@ -497,6 +499,13 @@ export default function VisualCustomizationStudio({
         ...(stagedLayoutMode === 'grid' && computedGridCoordinates.pomodoro
           ? computedGridCoordinates.pomodoro
           : stagedFreeformLayout.pomodoro || {}),
+      },
+      scratchpad: {
+        ...(currentConfig as any).scratchpad,
+        visible: stagedVisibility.scratchpad,
+        ...(stagedLayoutMode === 'grid' && (computedGridCoordinates as any).scratchpad
+          ? (computedGridCoordinates as any).scratchpad
+          : (stagedFreeformLayout as any).scratchpad || {}),
       },
       typography: stagedTypography,
       customColors: {

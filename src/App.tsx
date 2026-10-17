@@ -60,9 +60,10 @@ import {
   CornerDownRight,
   Pin,
   Copy,
-  Music,
   Minimize2,
   ChevronUp,
+  ChevronDown,
+  FileText,
 } from 'lucide-react';
 import { MOTIVATION_QUOTES, MotivationQuote } from './utils/quotes';
 import {
@@ -75,9 +76,6 @@ import {
   onAuthStateChanged,
   User,
   SyncStatus,
-  recordDailyCheckin,
-  getInitialCheckinStatus,
-  listenAndIncrementVisitorCount,
 } from './utils/firebase';
 import VisualCustomizationStudio from './components/VisualCustomizationStudio';
 import AnimatedCharacterBackdrop from './components/AnimatedCharacterBackdrop';
@@ -428,6 +426,14 @@ interface DashboardConfig {
     width: number;
     height: number;
   };
+  scratchpad: {
+    visible: boolean;
+    glassBg: boolean;
+    x: number | null;
+    y: number | null;
+    width: number;
+    height: number;
+  };
   activeThemeId?: string;
   bgSaturation?: number;
   bgBrightness?: number;
@@ -588,6 +594,14 @@ const DEFAULT_CONFIG: DashboardConfig = {
     width: 360,
     height: 240,
   },
+  scratchpad: {
+    visible: true,
+    glassBg: true,
+    x: null,
+    y: null,
+    width: 380,
+    height: 300,
+  },
 };
 
 export default function App() {
@@ -600,6 +614,7 @@ export default function App() {
         return {
           ...DEFAULT_CONFIG,
           ...parsed,
+          scratchpad: parsed.scratchpad ? { ...DEFAULT_CONFIG.scratchpad, ...parsed.scratchpad } : DEFAULT_CONFIG.scratchpad,
           routineMode: parsed.routineMode || 'school',
           animationIntensity: parsed.animationIntensity ?? 1.0,
           isWallpaperStatic: parsed.isWallpaperStatic ?? false,
@@ -668,7 +683,7 @@ export default function App() {
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [zenMode, setZenMode] = useState(false);
   const [isFocusModeActive, setIsFocusModeActive] = useState(false);
-  const [focusedWidget, setFocusedWidget] = useState<'nameWidget' | 'clock' | 'countdown' | 'tasks' | 'notification' | 'calendar' | 'motivation' | 'pomodoro' | null>(null);
+  const [focusedWidget, setFocusedWidget] = useState<DashboardWidgetKey | null>(null);
   const [urlInput, setUrlInput] = useState('');
 
   // Task Completion Animation State
@@ -747,51 +762,8 @@ export default function App() {
   // Live Time
   const [currentTime, setCurrentTime] = useState(new Date());
 
-  // Daily Attendance & Study Streak State
-  const [checkinInfo, setCheckinInfo] = useState<{
-    isCheckedInToday: boolean;
-    streak: number;
-    lastDate: string | null;
-  }>(() => getInitialCheckinStatus());
-  const [isCheckinLoading, setIsCheckinLoading] = useState(false);
-  const [checkinToast, setCheckinToast] = useState<string | null>(null);
-
-  const handleMarkDailyAttendance = useCallback(async () => {
-    if (isCheckinLoading) return;
-    setIsCheckinLoading(true);
-    try {
-      const result = await recordDailyCheckin(currentUser?.uid, currentUser?.displayName || 'Student');
-      setCheckinInfo({
-        isCheckedInToday: true,
-        streak: result.streak,
-        lastDate: result.date,
-      });
-      setCheckinToast(`Attendance Marked! 🔥 ${result.streak} Day Streak`);
-      setTimeout(() => setCheckinToast(null), 3500);
-      playWebAudioChime('task');
-    } catch (err) {
-      console.warn('Checkin error:', err);
-    } finally {
-      setIsCheckinLoading(false);
-    }
-  }, [currentUser, isCheckinLoading]);
-
-  // Live Visitor / View Counter Telemetry State
-  const [visitorCount, setVisitorCount] = useState<number>(() => {
-    return parseInt(localStorage.getItem('flocus_total_views') || '142', 10);
-  });
-
-  useEffect(() => {
-    const unsubscribe = listenAndIncrementVisitorCount((count) => {
-      setVisitorCount(count);
-    });
-    return () => {
-      unsubscribe();
-    };
-  }, []);
-
-  // Sticky Scratchpad State
-  const [scratchpadOpen, setScratchpadOpen] = useState(false);
+  // Scratchpad / Quick Notes Widget State
+  const [scratchpadCollapsed, setScratchpadCollapsed] = useState(false);
   const [scratchpadText, setScratchpadText] = useState<string>(() => {
     try {
       return localStorage.getItem('flocus_scratchpad_notes') || '';
@@ -828,9 +800,6 @@ export default function App() {
     handleScratchpadChange('');
   }, [handleScratchpadChange]);
 
-  // Floating Spotify Playlist Popover Toggle
-  const [spotifyPopoverOpen, setSpotifyPopoverOpen] = useState(false);
-
   // Canvas ref
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
@@ -843,6 +812,7 @@ export default function App() {
   const calendarRef = useRef<HTMLDivElement | null>(null);
   const motivationRef = useRef<HTMLDivElement | null>(null);
   const pomodoroRef = useRef<HTMLDivElement | null>(null);
+  const scratchpadRef = useRef<HTMLDivElement | null>(null);
   const dashboardRef = useRef<HTMLDivElement | null>(null);
   const [placementModal, setPlacementModal] = useState<{
     isOpen: boolean;
@@ -870,7 +840,7 @@ export default function App() {
   // Interaction tracking (drag/resize)
   const dragResizeState = useRef<{
     type: 'drag' | 'resize' | null;
-    widget: 'nameWidget' | 'clock' | 'countdown' | 'tasks' | 'notification' | 'calendar' | 'motivation' | 'pomodoro' | null;
+    widget: DashboardWidgetKey | null;
     handle?: string;
     startX: number;
     startY: number;
@@ -937,12 +907,12 @@ export default function App() {
   }, []);
 
   // Transparency Controls (Per-Widget & Global)
-  const toggleWidgetTransparency = useCallback((widgetKey: 'clock' | 'countdown' | 'notification' | 'calendar' | 'tasks' | 'motivation' | 'pomodoro' | 'nameWidget') => {
+  const toggleWidgetTransparency = useCallback((widgetKey: DashboardWidgetKey) => {
     updateConfig(p => ({
       ...p,
       [widgetKey]: {
-        ...p[widgetKey],
-        glassBg: !p[widgetKey]?.glassBg,
+        ...(p as any)[widgetKey],
+        glassBg: !(p as any)[widgetKey]?.glassBg,
       },
     }));
   }, [updateConfig]);
@@ -959,6 +929,7 @@ export default function App() {
       motivation: { ...p.motivation, glassBg: !transparent },
       pomodoro: { ...p.pomodoro, glassBg: !transparent },
       nameWidget: { ...p.nameWidget, glassBg: !transparent },
+      scratchpad: { ...p.scratchpad, glassBg: !transparent },
     }));
   }, [updateConfig]);
 
@@ -971,7 +942,8 @@ export default function App() {
       !config.tasks.glassBg &&
       !config.motivation.glassBg &&
       !config.nameWidget.glassBg &&
-      !config.pomodoro?.glassBg
+      !config.pomodoro?.glassBg &&
+      !config.scratchpad?.glassBg
     );
   }, [config]);
 
@@ -992,6 +964,7 @@ export default function App() {
     { id: 'calendar', label: 'Exam Study Calendar', defaultW: 380, defaultH: 340, icon: CalendarIcon, category: 'Calendar' },
     { id: 'motivation', label: 'Daily Intention & Motivation', defaultW: 440, defaultH: 140, icon: Sparkles, category: 'Mindset' },
     { id: 'pomodoro', label: 'Pomodoro Focus Timer', defaultW: 360, defaultH: 240, icon: Zap, category: 'Focus' },
+    { id: 'scratchpad', label: 'Scratchpad / Quick Notes', defaultW: 380, defaultH: 300, icon: FileText, category: 'Notes' },
   ], []);
 
   const hexToRgba = useCallback((hex: string, alpha: number): string => {
@@ -1107,8 +1080,7 @@ export default function App() {
       target.closest('.no-canvas-click') ||
       target.closest('.task-item-action') ||
       target.closest('.resize-handle') ||
-      target.closest('#scratchpad-drawer') ||
-      target.closest('#unified-bottom-dock')
+      target.closest('#scratchpad-widget')
     ) {
       return;
     }
@@ -1138,7 +1110,7 @@ export default function App() {
 
     // Check DOM hierarchy for data-widget-id or specific widget container id
     const widgetDom = target.closest(
-      '#motivation-widget, #name-widget, #clock-widget, #countdown-widget, #notification-widget, #calendar-widget, #tasks-widget, #pomodoro-widget, [data-widget-id], .dashboard-widget'
+      '#motivation-widget, #name-widget, #clock-widget, #countdown-widget, #notification-widget, #calendar-widget, #tasks-widget, #pomodoro-widget, #scratchpad-widget, [data-widget-id], .dashboard-widget'
     ) as HTMLElement | null;
 
     if (widgetDom) {
@@ -1159,7 +1131,8 @@ export default function App() {
           domId === 'notification-widget' ? 'notification' :
           domId === 'calendar-widget' ? 'calendar' :
           domId === 'motivation-widget' ? 'motivation' :
-          domId === 'pomodoro-widget' ? 'pomodoro' : null;
+          domId === 'pomodoro-widget' ? 'pomodoro' :
+          domId === 'scratchpad-widget' ? 'scratchpad' : null;
 
         if (mappedId) {
           const found = ALL_WIDGET_REGISTRY.find(w => w.id === mappedId);
@@ -2051,6 +2024,14 @@ export default function App() {
         calendar: { ...prev.calendar, ...coords.calendar },
         motivation: { ...prev.motivation, ...coords.motivation },
         pomodoro: { ...prev.pomodoro, ...coords.pomodoro },
+        scratchpad: prev.scratchpad ? { ...prev.scratchpad, ...coords.scratchpad } : {
+          visible: true,
+          glassBg: true,
+          x: coords.scratchpad?.x ?? 50,
+          y: coords.scratchpad?.y ?? 550,
+          width: 380,
+          height: 300,
+        },
       }));
       return;
     }
@@ -2071,6 +2052,8 @@ export default function App() {
     const motH = config.motivation.height || 140;
     const pomoW = config.pomodoro?.width || 360;
     const pomoH = config.pomodoro?.height || 240;
+    const spW = config.scratchpad?.width || 380;
+    const spH = config.scratchpad?.height || 300;
 
     if (sw >= 1400) {
       // 1. Top section: Title header and Clock hero
@@ -2101,6 +2084,9 @@ export default function App() {
       const availableLeft = sh - motY - motH - bottomReserved - gapY;
       const calY = Math.min(sh - calH - bottomReserved, motY + motH + gapY + Math.max(0, Math.round((availableLeft - calH) / 2)));
 
+      const spX = Math.max(20, Math.round((sw - spW) / 2));
+      const spY = Math.min(sh - spH - 20, Math.max(topEnd + gapY, sh - spH - 30));
+
       updateConfig(prev => ({
         ...prev,
         nameWidget: { ...prev.nameWidget, x: nameX, y: nameY },
@@ -2111,6 +2097,7 @@ export default function App() {
         calendar: { ...prev.calendar, x: calX, y: calY },
         motivation: { ...prev.motivation, x: motX, y: motY },
         pomodoro: { ...prev.pomodoro, x: pomoX, y: pomoY },
+        scratchpad: { ...prev.scratchpad, x: prev.scratchpad?.x ?? spX, y: prev.scratchpad?.y ?? spY, width: spW, height: spH },
       }));
     } else {
       const nameX = Math.max(10, Math.round((sw - nameW) / 2));
@@ -2131,6 +2118,8 @@ export default function App() {
       const calY = pomoY + pomoH + stepGap;
       const motX = Math.max(10, Math.round((sw - motW) / 2));
       const motY = calY + calH + stepGap;
+      const spX = Math.max(10, Math.round((sw - spW) / 2));
+      const spY = motY + motH + stepGap;
 
       updateConfig(prev => ({
         ...prev,
@@ -2142,6 +2131,7 @@ export default function App() {
         calendar: { ...prev.calendar, x: calX, y: calY },
         motivation: { ...prev.motivation, x: motX, y: motY },
         pomodoro: { ...prev.pomodoro, x: pomoX, y: pomoY },
+        scratchpad: { ...prev.scratchpad, x: prev.scratchpad?.x ?? spX, y: prev.scratchpad?.y ?? spY, width: spW, height: spH },
       }));
     }
   }, [
@@ -2163,6 +2153,8 @@ export default function App() {
     config.motivation.height,
     config.pomodoro?.width,
     config.pomodoro?.height,
+    config.scratchpad?.width,
+    config.scratchpad?.height,
     updateConfig,
   ]);
 
@@ -2177,7 +2169,9 @@ export default function App() {
       config.calendar.x === null ||
       config.motivation.x === null ||
       config.pomodoro?.x === null ||
-      config.pomodoro?.y === null
+      config.pomodoro?.y === null ||
+      config.scratchpad?.x === null ||
+      config.scratchpad?.y === null
     ) {
       recenterWidgets();
     }
@@ -2192,6 +2186,8 @@ export default function App() {
     config.motivation.x,
     config.pomodoro?.x,
     config.pomodoro?.y,
+    config.scratchpad?.x,
+    config.scratchpad?.y,
     recenterWidgets,
   ]);
 
@@ -2245,7 +2241,9 @@ export default function App() {
       // Global shortcut for Scratchpad (Alt+N)
       if (e.altKey && e.key.toLowerCase() === 'n') {
         e.preventDefault();
-        setScratchpadOpen(prev => !prev);
+        setScratchpadCollapsed(prev => !prev);
+        const textarea = scratchpadRef.current?.querySelector('textarea');
+        if (textarea) textarea.focus();
         return;
       }
 
@@ -2286,8 +2284,6 @@ export default function App() {
         setCommandMenuOpen(false);
         setDrawerOpen(false);
         setZenMode(false);
-        setScratchpadOpen(false);
-        setSpotifyPopoverOpen(false);
         setPlacementModal(null);
         setContextMenu(null);
         if (isFocusModeActive) {
@@ -2448,7 +2444,7 @@ export default function App() {
   }, [config.canvasTheme, config.wallpaperUrl, config.animationIntensity, config.isWallpaperStatic, config.personalization.reducedMotion]);
 
   // Pointer event listeners for Drag & Corner Resize
-  const getWidgetRef = (widgetName: 'nameWidget' | 'clock' | 'countdown' | 'tasks' | 'notification' | 'calendar' | 'motivation' | 'pomodoro') => {
+  const getWidgetRef = (widgetName: DashboardWidgetKey) => {
     switch (widgetName) {
       case 'nameWidget':
         return nameWidgetRef.current;
@@ -2466,12 +2462,14 @@ export default function App() {
         return motivationRef.current;
       case 'pomodoro':
         return pomodoroRef.current;
+      case 'scratchpad':
+        return scratchpadRef.current;
     }
   };
 
   const handlePointerDown = (
     e: React.PointerEvent<HTMLDivElement>,
-    widgetName: 'nameWidget' | 'clock' | 'countdown' | 'tasks' | 'notification' | 'calendar' | 'motivation' | 'pomodoro'
+    widgetName: DashboardWidgetKey
   ) => {
     setFocusedWidget(widgetName);
     if (!config.optionalFeatures.widgetCustomization) return;
@@ -2613,7 +2611,7 @@ export default function App() {
 
   const handleWheelZoom = (
     e: React.WheelEvent<HTMLDivElement>,
-    widget: 'nameWidget' | 'clock' | 'countdown' | 'tasks' | 'notification' | 'calendar' | 'motivation' | 'pomodoro'
+    widget: DashboardWidgetKey
   ) => {
     if (!config.optionalFeatures.widgetCustomization) return;
     if (!e.ctrlKey && !e.metaKey) return;
@@ -2622,7 +2620,7 @@ export default function App() {
     const minW = widget === 'nameWidget' ? 280 : widget === 'tasks' ? 260 : 260;
     const minH = widget === 'nameWidget' ? 70 : widget === 'tasks' ? 200 : 100;
     updateConfig(prev => {
-      const current = prev[widget];
+      const current = (prev as any)[widget];
       const newW = Math.max(minW, Math.min(window.innerWidth * 0.9, Math.round(current.width * factor)));
       const newH = Math.max(minH, Math.min(window.innerHeight * 0.8, Math.round(current.height * factor)));
       return {
@@ -2982,77 +2980,7 @@ export default function App() {
         activeThemeId={config.activeThemeId}
       />
 
-      {/* ================= TOP-LEFT ATTENDANCE BADGE & LIVE VISITOR COUNTER ================= */}
-      <div
-        id="top-telemetry-bar"
-        className="absolute top-4 left-4 sm:top-6 sm:left-6 z-40 flex items-center gap-2.5 flex-wrap pointer-events-auto transition-all duration-300"
-      >
-        {/* Daily Registration / Study Check-In Badge */}
-        <button
-          type="button"
-          onClick={handleMarkDailyAttendance}
-          disabled={isCheckinLoading}
-          title={
-            checkinInfo.isCheckedInToday
-              ? `Attendance recorded for today! Consecutive streak: ${checkinInfo.streak} day${checkinInfo.streak === 1 ? '' : 's'}.`
-              : 'Click to mark your daily study attendance and increment your streak'
-          }
-          className={`flex items-center gap-2 px-3 py-1.5 sm:px-3.5 sm:py-2 rounded-full backdrop-blur-xl border text-xs font-medium transition-all duration-300 shadow-lg cursor-pointer ${
-            checkinInfo.isCheckedInToday
-              ? 'bg-emerald-500/15 border-emerald-500/40 text-emerald-300 shadow-[0_0_15px_rgba(16,185,129,0.25)] hover:bg-emerald-500/25'
-              : 'bg-cyan-500/15 border-cyan-400/40 text-cyan-300 hover:bg-cyan-500/25 hover:border-cyan-400/60 shadow-[0_0_15px_rgba(6,182,212,0.2)] animate-pulse'
-          }`}
-        >
-          {checkinInfo.isCheckedInToday ? (
-            <>
-              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 flex-shrink-0" />
-              <span className="font-semibold tracking-wide">Checked In ✓</span>
-              <span className="text-white/30">•</span>
-              <span className="flex items-center gap-1 text-amber-300 font-bold">
-                <Flame className="w-3.5 h-3.5 text-amber-400 animate-bounce flex-shrink-0" />
-                {checkinInfo.streak} Day Streak
-              </span>
-            </>
-          ) : (
-            <>
-              <Pin className="w-3.5 h-3.5 text-cyan-300 rotate-45 flex-shrink-0" />
-              <span className="font-semibold tracking-wide">📌 Mark Daily Attendance</span>
-              {checkinInfo.streak > 0 && (
-                <>
-                  <span className="text-white/30">•</span>
-                  <span className="flex items-center gap-1 text-amber-300/90 font-bold">
-                    <Flame className="w-3 h-3 text-amber-400 flex-shrink-0" />
-                    {checkinInfo.streak}d streak
-                  </span>
-                </>
-              )}
-            </>
-          )}
-        </button>
 
-        {/* Live Visitor / View Counter Badge */}
-        <div
-          title="Live Visitor Telemetry connected to Firebase Realtime Database"
-          className="flex items-center gap-2 px-3 py-1.5 sm:px-3.5 sm:py-2 rounded-full bg-black/50 backdrop-blur-xl border border-white/10 text-xs text-white/80 shadow-lg hover:border-white/20 transition-all duration-200"
-        >
-          {/* Animated Green Pulse Dot */}
-          <span className="relative flex h-2 w-2">
-            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-            <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
-          </span>
-          <Eye className="w-3.5 h-3.5 text-cyan-400 flex-shrink-0" />
-          <span className="font-mono text-white/90">
-            Total Visits: <span className="font-bold text-white tracking-wider">{visitorCount.toLocaleString()}</span>
-          </span>
-        </div>
-
-        {/* Transient toast feedback for check-in */}
-        {checkinToast && (
-          <div className="text-xs px-3 py-1 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 animate-fade-in shadow-md font-medium">
-            {checkinToast}
-          </div>
-        )}
-      </div>
 
       {/* ================= FLOATING ACTION CONTROLS (TOP RIGHT CORNER) ================= */}
       <div
@@ -3133,196 +3061,7 @@ export default function App() {
         </button>
       </div>
 
-      {/* ================= EXPANDABLE FLOATING NOTEPAD (DRAWER/MODAL) ================= */}
-      {scratchpadOpen && (
-        <>
-          {/* Backdrop dismiss overlay */}
-          <div
-            onClick={() => setScratchpadOpen(false)}
-            className="fixed inset-0 z-40 bg-black/50 backdrop-blur-[2px] transition-opacity"
-          />
 
-          <div
-            id="scratchpad-drawer"
-            className="fixed bottom-[64px] sm:bottom-[68px] left-1/2 -translate-x-1/2 z-50 w-[calc(100vw-24px)] sm:w-[520px] max-w-[95vw] h-[380px] bg-[#070b12]/95 backdrop-blur-2xl border border-cyan-500/40 rounded-2xl shadow-[0_20px_50px_rgba(0,0,0,0.85),0_0_30px_rgba(6,182,212,0.25)] flex flex-col overflow-hidden animate-in slide-in-from-bottom-4 duration-300 pointer-events-auto"
-          >
-            {/* Header */}
-            <div className="flex items-center justify-between px-4 py-3 border-b border-white/10 bg-black/50">
-              <div className="flex items-center gap-2">
-                <span className="text-base">📝</span>
-                <span className="font-bold text-sm tracking-wide text-white font-['Plus_Jakarta_Sans']">
-                  Scratchpad & Rough Work
-                </span>
-                <span
-                  className={`text-[11px] font-mono px-2 py-0.5 rounded-full border transition-all duration-300 flex items-center gap-1.5 ${
-                    scratchpadSavedPulse
-                      ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40 scale-105'
-                      : 'bg-white/5 text-white/50 border-white/10'
-                  }`}
-                >
-                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
-                  {scratchpadSavedPulse ? 'Saved ✓' : 'Auto-saved'}
-                </span>
-              </div>
-
-              <div className="flex items-center gap-1.5">
-                <button
-                  type="button"
-                  onClick={handleCopyScratchpad}
-                  title="Copy scratchpad notes to clipboard"
-                  className="px-2.5 py-1 rounded-lg bg-white/5 hover:bg-white/15 text-white/80 hover:text-white text-xs font-medium border border-white/10 transition flex items-center gap-1 cursor-pointer"
-                >
-                  <Copy className="w-3.5 h-3.5 text-cyan-400" />
-                  <span>{scratchpadCopyFeedback ? 'Copied! ✓' : 'Copy All'}</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={handleClearScratchpad}
-                  title="Clear scratchpad contents"
-                  className="px-2.5 py-1 rounded-lg bg-white/5 hover:bg-rose-500/20 text-white/80 hover:text-rose-300 text-xs font-medium border border-white/10 hover:border-rose-500/30 transition flex items-center gap-1 cursor-pointer"
-                >
-                  <Trash2 className="w-3.5 h-3.5 text-rose-400" />
-                  <span>Clear</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setScratchpadOpen(false)}
-                  title="Minimize Scratchpad (Esc or Alt+N)"
-                  className="p-1 rounded-lg hover:bg-white/15 text-white/60 hover:text-white transition cursor-pointer ml-1"
-                >
-                  <Minimize2 className="w-4 h-4" />
-                </button>
-              </div>
-            </div>
-
-            {/* Notepad Multi-line Textarea */}
-            <div className="flex-1 p-3 flex flex-col relative bg-transparent">
-              <textarea
-                value={scratchpadText}
-                onChange={(e) => handleScratchpadChange(e.target.value)}
-                placeholder="Type temporary notes, rough math calculations, problem steps, or equations here... Auto-saves with every keystroke."
-                autoFocus
-                className="w-full h-full resize-none bg-black/40 border border-white/10 rounded-xl p-3 text-xs sm:text-sm font-mono text-cyan-100 placeholder:text-white/30 focus:outline-none focus:border-cyan-500/50 focus:ring-1 focus:ring-cyan-500/30 selection:bg-cyan-500/30 leading-relaxed overflow-y-auto"
-              />
-            </div>
-
-            {/* Bottom Info Strip */}
-            <div className="px-4 py-2 bg-black/60 border-t border-white/5 flex items-center justify-between text-[11px] text-white/40 font-mono">
-              <span>Press <kbd className="px-1 py-0.5 rounded bg-white/10 text-cyan-300 text-[10px]">Esc</kbd> or <kbd className="px-1 py-0.5 rounded bg-white/10 text-cyan-300 text-[10px]">Alt+N</kbd> to minimize</span>
-              <span>{scratchpadText.length} chars • {scratchpadText ? scratchpadText.split('\n').length : 0} lines</span>
-            </div>
-          </div>
-        </>
-      )}
-
-      {/* ================= OPTIONAL FLOATING SPOTIFY EXPANDED POPOVER ================= */}
-      {spotifyPopoverOpen && (
-        <>
-          <div
-            onClick={() => setSpotifyPopoverOpen(false)}
-            className="fixed inset-0 z-40 bg-transparent"
-          />
-          <div
-            className="fixed bottom-[64px] sm:bottom-[68px] right-3 sm:right-auto sm:left-1/2 sm:translate-x-[20px] md:translate-x-[60px] z-50 w-[330px] max-w-[92vw] h-[160px] rounded-2xl overflow-hidden bg-black/95 backdrop-blur-2xl border border-white/20 shadow-[0_20px_50px_rgba(0,0,0,0.9),0_0_25px_rgba(16,185,129,0.2)] flex flex-col animate-in fade-in slide-in-from-bottom-2 duration-200"
-          >
-            <div className="flex items-center justify-between px-3 py-1.5 bg-black/80 border-b border-white/10 text-xs">
-              <span className="font-semibold text-emerald-400 flex items-center gap-1.5">
-                <Music className="w-3.5 h-3.5" /> Spotify Focus Beats
-              </span>
-              <button
-                type="button"
-                onClick={() => setSpotifyPopoverOpen(false)}
-                className="p-1 rounded text-white/50 hover:text-white hover:bg-white/10 transition cursor-pointer"
-              >
-                <X className="w-3.5 h-3.5" />
-              </button>
-            </div>
-            <iframe
-              src="https://open.spotify.com/embed/playlist/605WnshSvUcVRN3qt85z0b?utm_source=generator&theme=0"
-              width="100%"
-              height="152"
-              frameBorder="0"
-              allow="autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture"
-              loading="lazy"
-              style={{ borderRadius: '0 0 16px 16px', border: 'none' }}
-              title="Spotify Focus Playlist Expanded"
-              className="w-full flex-1"
-            />
-          </div>
-        </>
-      )}
-
-      {/* ================= ULTRA-SLIM DUAL-UTILITY HORIZONTAL BOTTOM DOCK ================= */}
-      <div
-        id="unified-bottom-dock"
-        style={{
-          position: 'fixed',
-          bottom: '8px',
-          left: '50%',
-          transform: 'translateX(-50%)',
-          width: 'calc(100% - 16px)',
-          maxWidth: '600px',
-          maxHeight: '50px',
-          zIndex: 50,
-        }}
-        className="h-[48px] sm:h-[50px] rounded-full bg-[#050812]/85 backdrop-blur-2xl border border-cyan-500/25 shadow-[0_8px_32px_rgba(0,0,0,0.8),0_0_15px_rgba(6,182,212,0.15)] px-2 sm:px-3 flex flex-row items-center justify-between gap-2 pointer-events-auto transition-all duration-300"
-      >
-        {/* Left Side: Slim Scratchpad Trigger Pill */}
-        <button
-          type="button"
-          onClick={() => setScratchpadOpen(prev => !prev)}
-          title="Open Scratchpad / Rough Work (Click or press Alt+N)"
-          className="flex items-center gap-1.5 sm:gap-2 px-2.5 sm:px-3 py-1.5 rounded-full bg-white/5 hover:bg-white/10 border border-white/10 hover:border-cyan-400/40 text-left transition-all duration-200 group cursor-pointer shrink-0"
-        >
-          <span className="text-sm">📝</span>
-          <span className="text-xs text-white/90 group-hover:text-cyan-200 font-medium">
-            Scratchpad
-          </span>
-          <span
-            className={`w-2 h-2 rounded-full transition-all duration-300 ${
-              scratchpadSavedPulse
-                ? 'bg-emerald-400 scale-125 shadow-[0_0_8px_rgba(52,211,153,0.8)]'
-                : 'bg-emerald-500/80'
-            }`}
-            title="Auto-saved ✓"
-          />
-          <span className="text-[10px] text-white/40 hidden sm:inline ml-0.5">
-            {scratchpadText.trim() ? '✓' : '(Alt+N)'}
-          </span>
-        </button>
-
-        {/* Right Side: Ultra-Compact Spotify Music Pill */}
-        <div className="flex items-center h-[38px] max-w-[50%] sm:max-w-[300px] flex-1 justify-end gap-1.5">
-          <div className="w-full h-[38px] rounded-full overflow-hidden border border-white/10 bg-black/70 shadow-inner flex items-center relative">
-            <iframe
-              src="https://open.spotify.com/embed/playlist/605WnshSvUcVRN3qt85z0b?utm_source=generator&theme=0"
-              width="100%"
-              height="80"
-              frameBorder="0"
-              allow="autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture"
-              loading="lazy"
-              style={{
-                borderRadius: '9999px',
-                border: 'none',
-                height: '80px',
-                marginTop: '-21px',
-                background: 'transparent',
-              }}
-              title="Spotify Focus Playlist"
-              className="w-full scale-95"
-            />
-          </div>
-          {/* Quick Expand Toggle for Full Spotify View */}
-          <button
-            type="button"
-            onClick={() => setSpotifyPopoverOpen(prev => !prev)}
-            title={spotifyPopoverOpen ? 'Close playlist view' : 'Expand Spotify playlist'}
-            className="p-1.5 rounded-full bg-white/5 hover:bg-white/15 text-white/60 hover:text-cyan-300 transition shrink-0 cursor-pointer hidden xs:flex items-center justify-center border border-white/10"
-          >
-            <ChevronUp className={`w-3.5 h-3.5 transition-transform duration-200 ${spotifyPopoverOpen ? 'rotate-180 text-cyan-400' : ''}`} />
-          </button>
-        </div>
-      </div>
 
       {/* ================= FOCUS MODE OVERLAY BANNER ================= */}
       {isFocusModeActive && (
@@ -4308,6 +4047,128 @@ export default function App() {
               <div className="resize-handle resize-sw text-rose-400" data-handle="sw" />
               <div className="resize-handle resize-ne text-rose-400" data-handle="ne" />
               <div className="resize-handle resize-nw text-rose-400" data-handle="nw" />
+            </>
+          )}
+        </div>
+      )}
+
+      {/* ================= WIDGET 7: SCRATCHPAD / QUICK NOTES INDEPENDENT WIDGET ================= */}
+      {config.scratchpad?.visible && (
+        <div
+          ref={scratchpadRef}
+          id="scratchpad-widget"
+          data-widget-id="scratchpad"
+          onPointerDown={e => handlePointerDown(e, 'scratchpad')}
+          onWheel={e => handleWheelZoom(e, 'scratchpad')}
+          className={`dashboard-widget z-20 px-4 py-3.5 flex flex-col justify-between ${
+            config.optionalFeatures.widgetCustomization ? 'cursor-grab active:cursor-grabbing' : 'cursor-default'
+          } ${getWidgetMaterialClass(config.scratchpad?.glassBg ?? true)} ${focusedWidget === 'scratchpad' ? 'widget-focused' : ''} ${radiusClass}`}
+          style={{
+            width: config.scratchpad?.width || 380,
+            height: scratchpadCollapsed ? 54 : (config.scratchpad?.height || 300),
+            left: config.scratchpad?.x ?? 50,
+            top: config.scratchpad?.y ?? 550,
+            transition: 'height 0.2s ease, width 0.2s ease',
+            ...getWidgetComputedStyle('scratchpad'),
+          }}
+        >
+          {showHandles && (
+            <>
+              <div className="drag-pill absolute top-2 left-1/2 -translate-x-1/2 w-8 h-1 rounded-full bg-cyan-400/40 pointer-events-none" />
+              <button
+                type="button"
+                onClick={e => {
+                  e.stopPropagation();
+                  toggleWidgetTransparency('scratchpad');
+                }}
+                title={config.scratchpad?.glassBg ? 'Switch Scratchpad to Transparent' : 'Switch Scratchpad to Glass Card'}
+                className="no-drag absolute top-2 right-2 px-2 py-0.5 rounded-md bg-black/60 hover:bg-black/90 text-[9px] font-mono text-white/80 hover:text-white border border-white/20 transition cursor-pointer z-30 flex items-center gap-1 shadow-sm"
+              >
+                <span className={`w-1.5 h-1.5 rounded-full ${config.scratchpad?.glassBg ? 'bg-cyan-400' : 'bg-amber-400'}`} />
+                <span>{config.scratchpad?.glassBg ? 'Glass' : 'Transp.'}</span>
+              </button>
+            </>
+          )}
+
+          {/* Widget Header */}
+          <div className="flex items-center justify-between no-drag pb-2 border-b border-white/10">
+            <div className="flex items-center gap-2">
+              <span className="text-base select-none">📝</span>
+              <div className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-[0.14em] text-white font-['Plus_Jakarta_Sans']">
+                <span>Scratchpad / Quick Notes</span>
+              </div>
+              <span
+                className={`w-2 h-2 rounded-full transition-all duration-300 ${
+                  scratchpadSavedPulse
+                    ? 'bg-emerald-400 scale-125 shadow-[0_0_8px_rgba(52,211,153,0.8)]'
+                    : 'bg-emerald-500/70'
+                }`}
+                title={scratchpadSavedPulse ? 'Saved ✓' : 'Auto-saved to storage'}
+              />
+            </div>
+
+            <div className="flex items-center gap-1.5">
+              <button
+                type="button"
+                onClick={handleCopyScratchpad}
+                title="Copy all notes"
+                className="px-2 py-0.5 rounded-md bg-white/5 hover:bg-white/15 text-white/70 hover:text-white text-[10px] font-medium border border-white/10 transition cursor-pointer flex items-center gap-1"
+              >
+                <Copy className="w-3 h-3 text-cyan-400" />
+                <span>{scratchpadCopyFeedback ? 'Copied!' : 'Copy'}</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={handleClearScratchpad}
+                title="Clear scratchpad"
+                className="px-2 py-0.5 rounded-md bg-white/5 hover:bg-rose-500/20 text-white/70 hover:text-rose-300 text-[10px] font-medium border border-white/10 hover:border-rose-500/30 transition cursor-pointer flex items-center gap-1"
+              >
+                <Trash2 className="w-3 h-3 text-rose-400" />
+                <span>Clear</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setScratchpadCollapsed(prev => !prev)}
+                title={scratchpadCollapsed ? 'Expand Scratchpad' : 'Minimize Scratchpad'}
+                className="p-1 rounded-md bg-white/5 hover:bg-white/15 text-white/70 hover:text-white transition cursor-pointer ml-0.5"
+              >
+                {scratchpadCollapsed ? (
+                  <ChevronDown className="w-3.5 h-3.5 text-cyan-400" />
+                ) : (
+                  <Minimize2 className="w-3.5 h-3.5 text-white/70" />
+                )}
+              </button>
+            </div>
+          </div>
+
+          {/* Textarea Content (when expanded) */}
+          {!scratchpadCollapsed && (
+            <>
+              <div className="flex-1 py-2 flex flex-col relative no-drag min-h-0">
+                <textarea
+                  value={scratchpadText}
+                  onChange={e => handleScratchpadChange(e.target.value)}
+                  placeholder="Type temporary notes, rough math calculations, problem steps, or equations here... Auto-saves with every keystroke."
+                  className="w-full h-full min-h-[110px] resize-none bg-black/30 border border-white/10 rounded-xl p-2.5 text-xs font-mono text-cyan-100 placeholder:text-white/30 focus:outline-none focus:border-cyan-500/50 focus:ring-1 focus:ring-cyan-500/30 selection:bg-cyan-500/30 leading-relaxed overflow-y-auto"
+                />
+              </div>
+
+              {/* Card Footer Strip */}
+              <div className="pt-1.5 border-t border-white/5 flex items-center justify-between text-[10px] text-white/40 font-mono no-drag">
+                <span>Auto-saved to storage</span>
+                <span>{scratchpadText.length} chars • {scratchpadText ? scratchpadText.split('\n').length : 0} lines</span>
+              </div>
+            </>
+          )}
+
+          {showHandles && !scratchpadCollapsed && (
+            <>
+              <div className="resize-handle resize-se text-cyan-400" data-handle="se" />
+              <div className="resize-handle resize-sw text-cyan-400" data-handle="sw" />
+              <div className="resize-handle resize-ne text-cyan-400" data-handle="ne" />
+              <div className="resize-handle resize-nw text-cyan-400" data-handle="nw" />
             </>
           )}
         </div>
