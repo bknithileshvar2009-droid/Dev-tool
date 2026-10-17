@@ -273,6 +273,8 @@ body.zen-mode .dashboard-widget {
   background: transparent !important;
   border: 1px solid transparent !important;
   box-shadow: none !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
 }
 
 /* UI Controls & Drawer */
@@ -347,6 +349,7 @@ body.zen-mode .dashboard-widget {
 .font-audiowide { font-family: 'Audiowide', cursive !important; }
 .font-vt323 { font-family: 'VT323', monospace !important; }
 .font-doto { font-family: 'Doto', sans-serif !important; }
+.font-courier-prime { font-family: 'Courier Prime', monospace !important; }
 
 /* 30 Distinct Widget Appearance Styles */
 .widget-style-transparent {

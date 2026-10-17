@@ -70,6 +70,12 @@ import {
   STUDIO_PALETTES,
   INITIAL_PRESETS,
   SavedPreset,
+  ElementTypographyConfig,
+  DashboardTypographyConfig,
+  DEFAULT_ELEMENT_TYPOGRAPHY,
+  N0T0_TYPOGRAPHY_STYLES,
+  N0T0StyleOption,
+  CustomTextItem,
 } from './utils/visualStudioData';
 
 // Web Audio API Synthesizer for study alerts & task completions
@@ -297,7 +303,7 @@ export const DEFAULT_PERSONALIZATION: PersonalizationConfig = {
 interface DashboardConfig {
   activeWallpaper: string;
   wallpaperUrl: string;
-  canvasTheme: 'none' | 'aurora' | 'nebula' | 'cyberpunk' | 'matrix' | 'fireflies' | 'minimal';
+  canvasTheme: 'none' | 'aurora' | 'nebula' | 'cyberpunk' | 'matrix' | 'fireflies' | 'minimal' | 'starlight' | 'embers' | 'thunder' | 'digital-rain' | 'warp-speed';
   bgDimmer: number;
   bgBlur: number;
   animationIntensity: number;
@@ -334,6 +340,7 @@ interface DashboardConfig {
     showDate: boolean;
     showDay: boolean;
     glassBg: boolean;
+    visible?: boolean;
     x: number | null;
     y: number | null;
     width: number;
@@ -344,6 +351,7 @@ interface DashboardConfig {
     targetDate: string;
     showSeconds: boolean;
     glassBg: boolean;
+    visible?: boolean;
     x: number | null;
     y: number | null;
     width: number;
@@ -386,14 +394,8 @@ interface DashboardConfig {
   bgSaturation?: number;
   bgBrightness?: number;
   wallpaperScaling?: 'cover' | 'contain' | 'fill';
-  widgetStyle?: 'transparent' | 'minimal-flat' | 'subtle-dark-glass' | 'frosted-glass' | 'thin-outlined' | 'soft-shadow' | 'compact-info';
-  typography?: {
-    fontClock: string;
-    fontHeading: string;
-    fontBody: string;
-    fontCountdown: string;
-    fontLabels: string;
-  };
+  widgetStyle?: string;
+  typography?: DashboardTypographyConfig;
   customColors?: {
     accent: string;
     primaryText: string;
@@ -416,6 +418,8 @@ const DEFAULT_CONFIG: DashboardConfig = {
   widgetStyle: 'subtle-dark-glass',
   activeThemeId: 'obsidian-glass',
   typography: {
+    globalScale: 1.0,
+    elements: DEFAULT_ELEMENT_TYPOGRAPHY,
     fontClock: 'inter',
     fontHeading: 'inter',
     fontBody: 'inter',
@@ -460,6 +464,7 @@ const DEFAULT_CONFIG: DashboardConfig = {
     showDate: true,
     showDay: true,
     glassBg: false,
+    visible: true,
     x: null,
     y: null,
     width: 580,
@@ -470,6 +475,7 @@ const DEFAULT_CONFIG: DashboardConfig = {
     targetDate: '2027-03-03T00:00:00',
     showSeconds: true,
     glassBg: false,
+    visible: true,
     x: null,
     y: null,
     width: 460,
@@ -525,7 +531,14 @@ export default function App() {
           isWallpaperStatic: parsed.isWallpaperStatic ?? false,
           optionalFeatures: { ...DEFAULT_OPTIONAL_FEATURES, ...(parsed.optionalFeatures || {}) },
           personalization: { ...DEFAULT_PERSONALIZATION, ...(parsed.personalization || {}) },
-          typography: { ...DEFAULT_CONFIG.typography, ...(parsed.typography || {}) },
+          typography: {
+            ...DEFAULT_CONFIG.typography,
+            ...(parsed.typography || {}),
+            elements: {
+              ...DEFAULT_ELEMENT_TYPOGRAPHY,
+              ...(parsed.typography?.elements || {}),
+            },
+          },
           customColors: { ...DEFAULT_CONFIG.customColors, ...(parsed.customColors || {}) },
           widgetStyle: parsed.widgetStyle || DEFAULT_CONFIG.widgetStyle,
           activeThemeId: parsed.activeThemeId || DEFAULT_CONFIG.activeThemeId,
@@ -700,6 +713,72 @@ export default function App() {
     });
   }, []);
 
+  // Right-Click Context Menu State & Widget Management
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; visible: boolean } | null>(null);
+
+  const handleContextMenu = useCallback((e: React.MouseEvent) => {
+    const target = e.target as HTMLElement;
+    if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA') return;
+    e.preventDefault();
+    const menuWidth = 300;
+    const menuHeight = 480;
+    const x = Math.min(e.clientX, window.innerWidth - menuWidth - 10);
+    const y = Math.min(e.clientY, window.innerHeight - menuHeight - 10);
+    setContextMenu({ x: Math.max(10, x), y: Math.max(10, y), visible: true });
+  }, []);
+
+  useEffect(() => {
+    const handleGlobalClick = () => setContextMenu(null);
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setContextMenu(null);
+    };
+    window.addEventListener('click', handleGlobalClick);
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      window.removeEventListener('click', handleGlobalClick);
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, []);
+
+  // Transparency Controls (Per-Widget & Global)
+  const toggleWidgetTransparency = useCallback((widgetKey: 'clock' | 'countdown' | 'notification' | 'calendar' | 'tasks' | 'motivation' | 'pomodoro' | 'nameWidget') => {
+    updateConfig(p => ({
+      ...p,
+      [widgetKey]: {
+        ...p[widgetKey],
+        glassBg: !p[widgetKey]?.glassBg,
+      },
+    }));
+  }, [updateConfig]);
+
+  const setAllWidgetsTransparency = useCallback((transparent: boolean) => {
+    updateConfig(p => ({
+      ...p,
+      widgetStyle: transparent ? 'transparent' : (p.widgetStyle === 'transparent' ? 'subtle-dark-glass' : p.widgetStyle),
+      clock: { ...p.clock, glassBg: !transparent },
+      countdown: { ...p.countdown, glassBg: !transparent },
+      notification: { ...p.notification, glassBg: !transparent },
+      calendar: { ...p.calendar, glassBg: !transparent },
+      tasks: { ...p.tasks, glassBg: !transparent },
+      motivation: { ...p.motivation, glassBg: !transparent },
+      pomodoro: { ...p.pomodoro, glassBg: !transparent },
+      nameWidget: { ...p.nameWidget, glassBg: !transparent },
+    }));
+  }, [updateConfig]);
+
+  const areAllWidgetsTransparent = useMemo(() => {
+    return (
+      !config.clock.glassBg &&
+      !config.countdown.glassBg &&
+      !config.notification.glassBg &&
+      !config.calendar.glassBg &&
+      !config.tasks.glassBg &&
+      !config.motivation.glassBg &&
+      !config.nameWidget.glassBg &&
+      !config.pomodoro?.glassBg
+    );
+  }, [config]);
+
   // ================= 5. FIREBASE AUTH & REALTIME DATABASE SYNC =================
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async user => {
@@ -714,6 +793,14 @@ export default function App() {
               ...cloudData.config,
               optionalFeatures: { ...DEFAULT_OPTIONAL_FEATURES, ...(cloudData.config.optionalFeatures || {}) },
               personalization: { ...DEFAULT_PERSONALIZATION, ...(cloudData.config.personalization || {}) },
+              typography: {
+                ...DEFAULT_CONFIG.typography,
+                ...(cloudData.config.typography || {}),
+                elements: {
+                  ...DEFAULT_ELEMENT_TYPOGRAPHY,
+                  ...(cloudData.config.typography?.elements || {}),
+                },
+              },
             }));
             if (cloudData.tasks && Array.isArray(cloudData.tasks)) {
               setTasks(cloudData.tasks);
@@ -812,6 +899,14 @@ export default function App() {
           ...cloudData.config,
           optionalFeatures: { ...DEFAULT_OPTIONAL_FEATURES, ...(cloudData.config.optionalFeatures || {}) },
           personalization: { ...DEFAULT_PERSONALIZATION, ...(cloudData.config.personalization || {}) },
+          typography: {
+            ...DEFAULT_CONFIG.typography,
+            ...(cloudData.config.typography || {}),
+            elements: {
+              ...DEFAULT_ELEMENT_TYPOGRAPHY,
+              ...(cloudData.config.typography?.elements || {}),
+            },
+          },
         }));
         if (cloudData.tasks && Array.isArray(cloudData.tasks)) {
           setTasks(cloudData.tasks);
@@ -1835,10 +1930,94 @@ export default function App() {
   };
 
   const getWidgetMaterialClass = (glassBg: boolean) => {
-    if (config.widgetStyle) {
+    if (!glassBg) {
+      return 'widget-transparent';
+    }
+    if (config.widgetStyle && config.widgetStyle !== 'transparent') {
       return `widget-style-${config.widgetStyle}`;
     }
-    return glassBg ? 'widget-glass-card' : 'widget-transparent';
+    return 'widget-glass-card';
+  };
+
+  const getElementTypographyStyle = (
+    elementKey: keyof DashboardTypographyConfig['elements'],
+    baseStyles?: React.CSSProperties
+  ): React.CSSProperties => {
+    const typo = config.typography;
+    const globalScale = typo?.globalScale ?? 1.0;
+    const elConfig = typo?.elements?.[elementKey] || DEFAULT_ELEMENT_TYPOGRAPHY[elementKey];
+    if (!elConfig) return baseStyles || {};
+
+    const style: React.CSSProperties = { ...baseStyles };
+
+    if (elConfig.fontSize) {
+      style.fontSize = `${Math.round(elConfig.fontSize * globalScale)}px`;
+    }
+    if (elConfig.fontWeight) {
+      style.fontWeight = elConfig.fontWeight;
+    }
+    if (elConfig.letterSpacing !== undefined) {
+      style.letterSpacing = `${elConfig.letterSpacing}px`;
+    }
+    if (elConfig.lineHeight) {
+      style.lineHeight = elConfig.lineHeight;
+    }
+    if (elConfig.textAlign) {
+      style.textAlign = elConfig.textAlign;
+    }
+    if (elConfig.color) {
+      style.color = elConfig.color;
+    }
+    if (elConfig.opacity !== undefined) {
+      style.opacity = elConfig.opacity;
+    }
+    if (elConfig.textTransform) {
+      style.textTransform = elConfig.textTransform;
+    }
+    if (elConfig.isItalic) {
+      style.fontStyle = 'italic';
+    }
+    if (elConfig.isUnderline) {
+      style.textDecoration = 'underline';
+    }
+
+    const shadows: string[] = [];
+    if (elConfig.textShadow === 'soft') {
+      shadows.push('0 2px 8px rgba(0,0,0,0.6)');
+    } else if (elConfig.textShadow === 'crisp') {
+      shadows.push('0 2px 0 rgba(0,0,0,0.9)');
+    } else if (elConfig.textShadow === 'deep') {
+      shadows.push('0 6px 20px rgba(0,0,0,0.9)');
+    } else if (elConfig.textShadow === 'outline') {
+      shadows.push('-1px -1px 0 rgba(0,0,0,0.9), 1px -1px 0 rgba(0,0,0,0.9), -1px 1px 0 rgba(0,0,0,0.9), 1px 1px 0 rgba(0,0,0,0.9)');
+    } else if (elConfig.textShadow === 'neon-glow' || elConfig.textGlow) {
+      const glowC = elConfig.glowColor || config.clock.color || '#06b6d4';
+      const intensity = elConfig.glowIntensity || 14;
+      shadows.push(`0 0 ${intensity}px ${glowC}`);
+    }
+
+    if (shadows.length > 0) {
+      style.textShadow = shadows.join(', ');
+    }
+
+    return style;
+  };
+
+  const getElementFontClass = (elementKey: keyof DashboardTypographyConfig['elements']) => {
+    const typo = config.typography;
+    const elConfig = typo?.elements?.[elementKey] || DEFAULT_ELEMENT_TYPOGRAPHY[elementKey];
+    const fontId = elConfig?.fontFamily || (
+      elementKey === 'clockMain' ? typo?.fontClock :
+      elementKey === 'clockDate' ? typo?.fontHeading :
+      elementKey === 'countdownNumber' ? (typo?.fontCountdown || typo?.fontClock) :
+      elementKey === 'countdownLabel' ? typo?.fontLabels :
+      elementKey === 'widgetTitle' ? typo?.fontHeading :
+      elementKey === 'buttonLabel' ? typo?.fontLabels :
+      typo?.fontBody
+    ) || 'inter';
+
+    const found = STUDIO_FONTS.find(f => f.id === fontId);
+    return found ? found.cssClass : 'font-inter';
   };
 
   const getFontFamilyClass = (element: 'clock' | 'heading' | 'body' | 'countdown' | 'labels') => {
@@ -2013,7 +2192,11 @@ export default function App() {
   const radiusClass = config.personalization.widgetRadius === 'normal' ? 'rounded-2xl' : config.personalization.widgetRadius === 'pill' ? 'rounded-[32px]' : 'rounded-[24px]';
 
   return (
-    <div className={`relative w-screen h-screen overflow-hidden select-none bg-[#030407] text-slate-100 ${!config.optionalFeatures.widgetCustomization ? 'cursor-default' : ''}`}>
+    <div
+      onContextMenu={handleContextMenu}
+      onClick={() => setContextMenu(null)}
+      className={`relative w-screen h-screen overflow-hidden select-none bg-[#030407] text-slate-100 ${!config.optionalFeatures.widgetCustomization ? 'cursor-default' : ''}`}
+    >
       {/* ================= BACKDROP WALLPAPER & CANVAS ================= */}
       {config.wallpaperUrl && (
         <img
@@ -2145,9 +2328,7 @@ export default function App() {
           onWheel={e => handleWheelZoom(e, 'motivation')}
           className={`dashboard-widget z-20 px-5 py-4 flex flex-col justify-between ${
             config.optionalFeatures.widgetCustomization ? 'cursor-grab active:cursor-grabbing' : 'cursor-default'
-          } ${
-            config.motivation.glassBg ? 'widget-glass-card' : 'widget-transparent'
-          } ${focusedWidget === 'motivation' ? 'widget-focused' : ''} ${radiusClass}`}
+          } ${getWidgetMaterialClass(config.motivation.glassBg)} ${focusedWidget === 'motivation' ? 'widget-focused' : ''} ${radiusClass}`}
           style={{
             width: config.motivation.width || 440,
             height: config.motivation.height || 140,
@@ -2155,7 +2336,23 @@ export default function App() {
             top: config.motivation.y ?? 24,
           }}
         >
-          {showHandles && <div className="drag-pill absolute top-2 left-1/2 -translate-x-1/2 w-8 h-1 rounded-full bg-amber-400/40 pointer-events-none" />}
+          {showHandles && (
+            <>
+              <div className="drag-pill absolute top-2 left-1/2 -translate-x-1/2 w-8 h-1 rounded-full bg-amber-400/40 pointer-events-none" />
+              <button
+                type="button"
+                onClick={e => {
+                  e.stopPropagation();
+                  toggleWidgetTransparency('motivation');
+                }}
+                title={config.motivation.glassBg ? 'Switch Motivation to Transparent' : 'Switch Motivation to Glass Card'}
+                className="no-drag absolute top-2 right-2 px-2 py-0.5 rounded-md bg-black/60 hover:bg-black/90 text-[9px] font-mono text-white/80 hover:text-white border border-white/20 transition cursor-pointer z-30 flex items-center gap-1 shadow-sm"
+              >
+                <span className={`w-1.5 h-1.5 rounded-full ${config.motivation.glassBg ? 'bg-cyan-400' : 'bg-amber-400'}`} />
+                <span>{config.motivation.glassBg ? 'Glass' : 'Transp.'}</span>
+              </button>
+            </>
+          )}
 
           <div className="flex items-center justify-between no-drag">
             <div className="flex items-center gap-1.5 text-[10px] uppercase font-bold tracking-widest text-amber-300/90 font-['Plus_Jakarta_Sans']">
@@ -2210,9 +2407,7 @@ export default function App() {
           onWheel={e => handleWheelZoom(e, 'nameWidget')}
           className={`dashboard-widget z-20 px-6 py-4 flex flex-col justify-center items-center ${
             config.optionalFeatures.widgetCustomization ? 'cursor-grab active:cursor-grabbing' : 'cursor-default'
-          } text-center ${
-            config.nameWidget.glassBg ? 'widget-glass-card' : 'widget-transparent'
-          } ${focusedWidget === 'nameWidget' ? 'widget-focused' : ''} ${radiusClass}`}
+          } text-center ${getWidgetMaterialClass(config.nameWidget.glassBg)} ${focusedWidget === 'nameWidget' ? 'widget-focused' : ''} ${radiusClass}`}
           style={{
             width: config.nameWidget.width || 480,
             height: config.nameWidget.height || 100,
@@ -2220,7 +2415,23 @@ export default function App() {
             top: config.nameWidget.y ?? 20,
           }}
         >
-          {showHandles && <div className="drag-pill absolute top-2 left-1/2 -translate-x-1/2 w-8 h-1 rounded-full bg-cyan-400/40 pointer-events-none" />}
+          {showHandles && (
+            <>
+              <div className="drag-pill absolute top-2 left-1/2 -translate-x-1/2 w-8 h-1 rounded-full bg-cyan-400/40 pointer-events-none" />
+              <button
+                type="button"
+                onClick={e => {
+                  e.stopPropagation();
+                  toggleWidgetTransparency('nameWidget');
+                }}
+                title={config.nameWidget.glassBg ? 'Switch Name Banner to Transparent' : 'Switch Name Banner to Glass Card'}
+                className="no-drag absolute top-2 right-2 px-2 py-0.5 rounded-md bg-black/60 hover:bg-black/90 text-[9px] font-mono text-white/80 hover:text-white border border-white/20 transition cursor-pointer z-30 flex items-center gap-1 shadow-sm"
+              >
+                <span className={`w-1.5 h-1.5 rounded-full ${config.nameWidget.glassBg ? 'bg-cyan-400' : 'bg-amber-400'}`} />
+                <span>{config.nameWidget.glassBg ? 'Glass' : 'Transp.'}</span>
+              </button>
+            </>
+          )}
 
           <div className="w-full flex flex-col items-center pointer-events-none">
             <div className="flex items-center gap-2">
@@ -2261,28 +2472,39 @@ export default function App() {
       )}
 
       {/* ================= WIDGET 1: FLOCUS CLOCK WIDGET ================= */}
-      <div
-        ref={clockRef}
-        id="clock-widget"
-        onPointerDown={e => handlePointerDown(e, 'clock')}
-        onWheel={e => handleWheelZoom(e, 'clock')}
-        className={`dashboard-widget z-20 px-6 sm:px-8 py-5 sm:py-6 flex flex-col justify-center ${
-          config.optionalFeatures.widgetCustomization ? 'cursor-grab active:cursor-grabbing' : 'cursor-default'
-        } ${getClockArchClass()} ${
-          config.clock.glassBg && config.clock.architecture === 'minimal'
-            ? 'widget-glass-card'
-            : !config.clock.glassBg && config.clock.architecture === 'minimal'
-            ? 'widget-transparent'
-            : ''
-        } ${focusedWidget === 'clock' ? 'widget-focused' : ''} ${radiusClass}`}
-        style={{
-          width: config.clock.width || 580,
-          height: config.clock.height || 180,
-          left: config.clock.x ?? 100,
-          top: config.clock.y ?? 130,
-        }}
-      >
-        {showHandles && <div className="drag-pill absolute top-2 left-1/2 -translate-x-1/2 w-8 h-1 rounded-full bg-white/40 pointer-events-none" />}
+      {config.clock.visible !== false && (
+        <div
+          ref={clockRef}
+          id="clock-widget"
+          onPointerDown={e => handlePointerDown(e, 'clock')}
+          onWheel={e => handleWheelZoom(e, 'clock')}
+          className={`dashboard-widget z-20 px-6 sm:px-8 py-5 sm:py-6 flex flex-col justify-center ${
+            config.optionalFeatures.widgetCustomization ? 'cursor-grab active:cursor-grabbing' : 'cursor-default'
+          } ${getClockArchClass()} ${getWidgetMaterialClass(config.clock.glassBg)} ${focusedWidget === 'clock' ? 'widget-focused' : ''} ${radiusClass}`}
+          style={{
+            width: config.clock.width || 580,
+            height: config.clock.height || 180,
+            left: config.clock.x ?? 100,
+            top: config.clock.y ?? 130,
+          }}
+        >
+          {showHandles && (
+            <>
+              <div className="drag-pill absolute top-2 left-1/2 -translate-x-1/2 w-8 h-1 rounded-full bg-white/40 pointer-events-none" />
+              <button
+                type="button"
+                onClick={e => {
+                  e.stopPropagation();
+                  toggleWidgetTransparency('clock');
+                }}
+                title={config.clock.glassBg ? 'Switch Clock to Transparent' : 'Switch Clock to Glass Card'}
+                className="no-drag absolute top-2 right-2 px-2 py-0.5 rounded-md bg-black/60 hover:bg-black/90 text-[9px] font-mono text-white/80 hover:text-white border border-white/20 transition cursor-pointer z-30 flex items-center gap-1 shadow-sm"
+              >
+                <span className={`w-1.5 h-1.5 rounded-full ${config.clock.glassBg ? 'bg-cyan-400' : 'bg-amber-400'}`} />
+                <span>{config.clock.glassBg ? 'Glass' : 'Transp.'}</span>
+              </button>
+            </>
+          )}
 
         <div id="clock-container" className="w-full flex flex-col items-center justify-center text-center pointer-events-none">
           <div
@@ -2343,9 +2565,10 @@ export default function App() {
           </>
         )}
       </div>
+      )}
 
       {/* ================= WIDGET 2: PUBLIC EXAM COUNTDOWN WIDGET ================= */}
-      {!isFocusModeActive && (
+      {!isFocusModeActive && config.countdown.visible !== false && (
         <div
           ref={countdownRef}
           id="countdown-widget"
@@ -2353,9 +2576,7 @@ export default function App() {
           onWheel={e => handleWheelZoom(e, 'countdown')}
           className={`dashboard-widget z-20 px-6 sm:px-8 py-6 flex flex-col justify-center ${
             config.optionalFeatures.widgetCustomization ? 'cursor-grab active:cursor-grabbing' : 'cursor-default'
-          } ${
-            config.countdown.glassBg ? 'widget-glass-card' : 'widget-transparent'
-          } ${focusedWidget === 'countdown' ? 'widget-focused' : ''} ${radiusClass}`}
+          } ${getWidgetMaterialClass(config.countdown.glassBg)} ${focusedWidget === 'countdown' ? 'widget-focused' : ''} ${radiusClass}`}
           style={{
             width: config.countdown.width || 460,
             height: config.countdown.height || 170,
@@ -2363,7 +2584,23 @@ export default function App() {
             top: config.countdown.y ?? 340,
           }}
         >
-          {showHandles && <div className="drag-pill absolute top-2 left-1/2 -translate-x-1/2 w-8 h-1 rounded-full bg-cyan-400/40 pointer-events-none" />}
+          {showHandles && (
+            <>
+              <div className="drag-pill absolute top-2 left-1/2 -translate-x-1/2 w-8 h-1 rounded-full bg-cyan-400/40 pointer-events-none" />
+              <button
+                type="button"
+                onClick={e => {
+                  e.stopPropagation();
+                  toggleWidgetTransparency('countdown');
+                }}
+                title={config.countdown.glassBg ? 'Switch Countdown to Transparent' : 'Switch Countdown to Glass Card'}
+                className="no-drag absolute top-2 right-2 px-2 py-0.5 rounded-md bg-black/60 hover:bg-black/90 text-[9px] font-mono text-white/80 hover:text-white border border-white/20 transition cursor-pointer z-30 flex items-center gap-1 shadow-sm"
+              >
+                <span className={`w-1.5 h-1.5 rounded-full ${config.countdown.glassBg ? 'bg-cyan-400' : 'bg-amber-400'}`} />
+                <span>{config.countdown.glassBg ? 'Glass' : 'Transp.'}</span>
+              </button>
+            </>
+          )}
 
           <div id="countdown-container" className="w-full flex flex-col items-center justify-center text-center pointer-events-none">
             <div className="flex items-center gap-2 mb-2 sm:mb-2.5">
@@ -2462,9 +2699,7 @@ export default function App() {
           onWheel={e => handleWheelZoom(e, 'notification')}
           className={`dashboard-widget z-20 px-5 sm:px-6 py-4 flex flex-col justify-between ${
             config.optionalFeatures.widgetCustomization ? 'cursor-grab active:cursor-grabbing' : 'cursor-default'
-          } ${
-            config.notification.glassBg ? 'widget-glass-card' : 'widget-transparent'
-          } ${focusedWidget === 'notification' ? 'widget-focused' : ''} ${radiusClass}`}
+          } ${getWidgetMaterialClass(config.notification.glassBg)} ${focusedWidget === 'notification' ? 'widget-focused' : ''} ${radiusClass}`}
           style={{
             width: config.notification.width || 460,
             height: config.notification.height || 170,
@@ -2472,7 +2707,23 @@ export default function App() {
             top: config.notification.y ?? 340,
           }}
         >
-          {showHandles && <div className="drag-pill absolute top-2 left-1/2 -translate-x-1/2 w-8 h-1 rounded-full bg-amber-400/40 pointer-events-none" />}
+          {showHandles && (
+            <>
+              <div className="drag-pill absolute top-2 left-1/2 -translate-x-1/2 w-8 h-1 rounded-full bg-amber-400/40 pointer-events-none" />
+              <button
+                type="button"
+                onClick={e => {
+                  e.stopPropagation();
+                  toggleWidgetTransparency('notification');
+                }}
+                title={config.notification.glassBg ? 'Switch Routine Alert to Transparent' : 'Switch Routine Alert to Glass Card'}
+                className="no-drag absolute top-2 right-2 px-2 py-0.5 rounded-md bg-black/60 hover:bg-black/90 text-[9px] font-mono text-white/80 hover:text-white border border-white/20 transition cursor-pointer z-30 flex items-center gap-1 shadow-sm"
+              >
+                <span className={`w-1.5 h-1.5 rounded-full ${config.notification.glassBg ? 'bg-cyan-400' : 'bg-amber-400'}`} />
+                <span>{config.notification.glassBg ? 'Glass' : 'Transp.'}</span>
+              </button>
+            </>
+          )}
 
           <div className="flex items-center justify-between no-drag">
             <div className="flex items-center gap-2">
@@ -2556,9 +2807,7 @@ export default function App() {
           onWheel={e => handleWheelZoom(e, 'calendar')}
           className={`dashboard-widget z-20 px-5 py-4 flex flex-col justify-between ${
             config.optionalFeatures.widgetCustomization ? 'cursor-grab active:cursor-grabbing' : 'cursor-default'
-          } ${
-            config.calendar.glassBg ? 'widget-glass-card' : 'widget-transparent'
-          } ${focusedWidget === 'calendar' ? 'widget-focused' : ''} ${radiusClass}`}
+          } ${getWidgetMaterialClass(config.calendar.glassBg)} ${focusedWidget === 'calendar' ? 'widget-focused' : ''} ${radiusClass}`}
           style={{
             width: config.calendar.width || 380,
             height: config.calendar.height || 340,
@@ -2566,7 +2815,23 @@ export default function App() {
             top: config.countdown.y ? config.countdown.y : 340,
           }}
         >
-          {showHandles && <div className="drag-pill absolute top-2 left-1/2 -translate-x-1/2 w-8 h-1 rounded-full bg-sky-400/40 pointer-events-none" />}
+          {showHandles && (
+            <>
+              <div className="drag-pill absolute top-2 left-1/2 -translate-x-1/2 w-8 h-1 rounded-full bg-sky-400/40 pointer-events-none" />
+              <button
+                type="button"
+                onClick={e => {
+                  e.stopPropagation();
+                  toggleWidgetTransparency('calendar');
+                }}
+                title={config.calendar.glassBg ? 'Switch Calendar to Transparent' : 'Switch Calendar to Glass Card'}
+                className="no-drag absolute top-2 right-2 px-2 py-0.5 rounded-md bg-black/60 hover:bg-black/90 text-[9px] font-mono text-white/80 hover:text-white border border-white/20 transition cursor-pointer z-30 flex items-center gap-1 shadow-sm"
+              >
+                <span className={`w-1.5 h-1.5 rounded-full ${config.calendar.glassBg ? 'bg-cyan-400' : 'bg-amber-400'}`} />
+                <span>{config.calendar.glassBg ? 'Glass' : 'Transp.'}</span>
+              </button>
+            </>
+          )}
 
           <div className="flex items-center justify-between mb-2 no-drag">
             <div className="flex items-center gap-1.5">
@@ -2682,9 +2947,7 @@ export default function App() {
           onWheel={e => handleWheelZoom(e, 'tasks')}
           className={`dashboard-widget z-20 px-5 sm:px-6 py-5 flex flex-col ${
             config.optionalFeatures.widgetCustomization ? 'cursor-grab active:cursor-grabbing' : 'cursor-default'
-          } ${
-            config.tasks.glassBg ? 'widget-glass-card' : 'widget-transparent'
-          } ${focusedWidget === 'tasks' ? 'widget-focused' : ''} ${radiusClass}`}
+          } ${getWidgetMaterialClass(config.tasks.glassBg)} ${focusedWidget === 'tasks' ? 'widget-focused' : ''} ${radiusClass}`}
           style={{
             width: config.tasks.width || 360,
             height: config.tasks.height || 340,
@@ -2692,7 +2955,23 @@ export default function App() {
             top: config.tasks.y ?? 340,
           }}
         >
-          {showHandles && <div className="drag-pill absolute top-2 left-1/2 -translate-x-1/2 w-8 h-1 rounded-full bg-emerald-400/40 pointer-events-none" />}
+          {showHandles && (
+            <>
+              <div className="drag-pill absolute top-2 left-1/2 -translate-x-1/2 w-8 h-1 rounded-full bg-emerald-400/40 pointer-events-none" />
+              <button
+                type="button"
+                onClick={e => {
+                  e.stopPropagation();
+                  toggleWidgetTransparency('tasks');
+                }}
+                title={config.tasks.glassBg ? 'Switch Tasks to Transparent' : 'Switch Tasks to Glass Card'}
+                className="no-drag absolute top-2 right-2 px-2 py-0.5 rounded-md bg-black/60 hover:bg-black/90 text-[9px] font-mono text-white/80 hover:text-white border border-white/20 transition cursor-pointer z-30 flex items-center gap-1 shadow-sm"
+              >
+                <span className={`w-1.5 h-1.5 rounded-full ${config.tasks.glassBg ? 'bg-cyan-400' : 'bg-amber-400'}`} />
+                <span>{config.tasks.glassBg ? 'Glass' : 'Transp.'}</span>
+              </button>
+            </>
+          )}
 
           <div className="flex items-center justify-between mb-3 no-drag">
             <div className="flex items-center gap-2">
@@ -2805,9 +3084,7 @@ export default function App() {
           onWheel={e => handleWheelZoom(e, 'pomodoro')}
           className={`dashboard-widget z-20 px-5 sm:px-6 py-4 flex flex-col justify-between ${
             config.optionalFeatures.widgetCustomization ? 'cursor-grab active:cursor-grabbing' : 'cursor-default'
-          } ${
-            config.pomodoro?.glassBg ? 'widget-glass-card' : 'widget-transparent'
-          } ${focusedWidget === 'pomodoro' ? 'widget-focused' : ''} ${radiusClass} ${
+          } ${getWidgetMaterialClass(config.pomodoro?.glassBg ?? true)} ${focusedWidget === 'pomodoro' ? 'widget-focused' : ''} ${radiusClass} ${
             isPomoRunning ? (pomoMode === 'focus' ? 'pomo-glow-active' : 'pomo-break-active') : ''
           }`}
           style={{
@@ -2818,11 +3095,25 @@ export default function App() {
           }}
         >
           {showHandles && (
-            <div
-              className={`drag-pill absolute top-2 left-1/2 -translate-x-1/2 w-8 h-1 rounded-full ${
-                pomoMode === 'focus' ? 'bg-rose-400/40' : 'bg-emerald-400/40'
-              } pointer-events-none`}
-            />
+            <>
+              <div
+                className={`drag-pill absolute top-2 left-1/2 -translate-x-1/2 w-8 h-1 rounded-full ${
+                  pomoMode === 'focus' ? 'bg-rose-400/40' : 'bg-emerald-400/40'
+                } pointer-events-none`}
+              />
+              <button
+                type="button"
+                onClick={e => {
+                  e.stopPropagation();
+                  toggleWidgetTransparency('pomodoro');
+                }}
+                title={config.pomodoro?.glassBg ? 'Switch Pomodoro to Transparent' : 'Switch Pomodoro to Glass Card'}
+                className="no-drag absolute top-2 right-2 px-2 py-0.5 rounded-md bg-black/60 hover:bg-black/90 text-[9px] font-mono text-white/80 hover:text-white border border-white/20 transition cursor-pointer z-30 flex items-center gap-1 shadow-sm"
+              >
+                <span className={`w-1.5 h-1.5 rounded-full ${config.pomodoro?.glassBg ? 'bg-cyan-400' : 'bg-amber-400'}`} />
+                <span>{config.pomodoro?.glassBg ? 'Glass' : 'Transp.'}</span>
+              </button>
+            </>
           )}
 
           {/* Widget Header */}
@@ -3676,6 +3967,8 @@ export default function App() {
                         bgBrightness: theme.bgBrightness,
                         widgetStyle: theme.widgetStyle,
                         typography: {
+                          globalScale: prev.typography?.globalScale ?? 1.0,
+                          elements: prev.typography?.elements ?? DEFAULT_ELEMENT_TYPOGRAPHY,
                           fontClock: theme.fontClock,
                           fontHeading: theme.fontHeading,
                           fontBody: theme.fontBody,
@@ -4626,9 +4919,65 @@ export default function App() {
         {activeTab === 'widgets' && config.optionalFeatures.widgetCustomization && (
           <div className="space-y-6">
             <div className="p-4 rounded-2xl bg-white/[0.03] border border-white/10 space-y-3">
-              <label className="text-[11px] font-semibold uppercase tracking-wider text-white/70 block">
-                Widget Visibility & Appearance
-              </label>
+              <div className="flex items-center justify-between">
+                <label className="text-[11px] font-semibold uppercase tracking-wider text-white/70 block">
+                  Widget Visibility & Appearance
+                </label>
+                <div className="flex items-center gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => setAllWidgetsTransparency(true)}
+                    className="px-2 py-0.5 rounded-lg bg-amber-400/15 hover:bg-amber-400/25 border border-amber-400/30 text-amber-300 text-[10px] font-medium transition cursor-pointer"
+                  >
+                    All Transparent
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setAllWidgetsTransparency(false)}
+                    className="px-2 py-0.5 rounded-lg bg-cyan-500/15 hover:bg-cyan-500/25 border border-cyan-500/30 text-cyan-300 text-[10px] font-medium transition cursor-pointer"
+                  >
+                    All Glass
+                  </button>
+                </div>
+              </div>
+
+              {/* Flocus Central Clock */}
+              <div className="flex items-center justify-between text-xs text-white/80 py-1 border-b border-white/5">
+                <span>Flocus Central Clock</span>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => updateConfig(p => ({ ...p, clock: { ...p.clock, glassBg: !p.clock.glassBg } }))}
+                    className="text-[10px] text-white/50 hover:text-white underline cursor-pointer"
+                  >
+                    {config.clock.glassBg ? 'Glass' : 'Transparent'}
+                  </button>
+                  <input
+                    type="checkbox"
+                    checked={config.clock.visible !== false}
+                    onChange={e => updateConfig(p => ({ ...p, clock: { ...p.clock, visible: e.target.checked } }))}
+                    className="w-4 h-4 rounded text-cyan-500"
+                  />
+                </div>
+              </div>
+
+              {/* Public Exam Countdown */}
+              <div className="flex items-center justify-between text-xs text-white/80 py-1 border-b border-white/5">
+                <span>Public Exam Countdown</span>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => updateConfig(p => ({ ...p, countdown: { ...p.countdown, glassBg: !p.countdown.glassBg } }))}
+                    className="text-[10px] text-white/50 hover:text-white underline cursor-pointer"
+                  >
+                    {config.countdown.glassBg ? 'Glass' : 'Transparent'}
+                  </button>
+                  <input
+                    type="checkbox"
+                    checked={config.countdown.visible !== false}
+                    onChange={e => updateConfig(p => ({ ...p, countdown: { ...p.countdown, visible: e.target.checked } }))}
+                    className="w-4 h-4 rounded text-cyan-500"
+                  />
+                </div>
+              </div>
 
               {/* BK Nithileshvar Badge */}
               <div className="flex items-center justify-between text-xs text-white/80 py-1 border-b border-white/5">
@@ -4784,20 +5133,153 @@ export default function App() {
         )}
       </div>
 
+      {/* ================= RIGHT-CLICK CONTEXT MENU ================= */}
+      {contextMenu && contextMenu.visible && (
+        <div
+          className="fixed z-50 w-72 rounded-2xl bg-[#090d16]/95 backdrop-blur-2xl border border-white/15 p-3 shadow-[0_20px_50px_rgba(0,0,0,0.85)] text-white text-xs space-y-2.5 animate-in fade-in zoom-in-95 duration-150"
+          style={{ left: contextMenu.x, top: contextMenu.y }}
+          onClick={e => e.stopPropagation()}
+        >
+          {/* Header */}
+          <div className="flex items-center justify-between pb-2 border-b border-white/10">
+            <div className="flex items-center gap-1.5">
+              <Sparkles className="w-3.5 h-3.5 text-cyan-400" />
+              <span className="font-bold tracking-wide uppercase text-[11px] text-white">Widget Manager</span>
+            </div>
+            <button
+              type="button"
+              onClick={() => setContextMenu(null)}
+              className="p-1 rounded-lg hover:bg-white/10 text-white/50 hover:text-white cursor-pointer"
+            >
+              <X className="w-3 h-3" />
+            </button>
+          </div>
+
+          {/* Quick Global Transparency Switch */}
+          <div className="p-2 rounded-xl bg-white/[0.04] border border-white/10 space-y-1.5">
+            <div className="flex items-center justify-between text-[10px] text-white/60 uppercase font-semibold">
+              <span>All Widgets Transparency</span>
+              <span className={areAllWidgetsTransparent ? 'text-amber-400' : 'text-cyan-400'}>
+                {areAllWidgetsTransparent ? 'Transparent' : 'Glass Cards'}
+              </span>
+            </div>
+            <div className="grid grid-cols-2 gap-1.5">
+              <button
+                type="button"
+                onClick={() => setAllWidgetsTransparency(true)}
+                className={`py-1.5 px-2 rounded-lg text-[10px] font-semibold border transition cursor-pointer flex items-center justify-center gap-1 ${
+                  areAllWidgetsTransparent
+                    ? 'bg-amber-400/25 border-amber-400 text-amber-300'
+                    : 'bg-white/5 hover:bg-white/10 border-white/10 text-white/70'
+                }`}
+              >
+                <span>Transparent</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setAllWidgetsTransparency(false)}
+                className={`py-1.5 px-2 rounded-lg text-[10px] font-semibold border transition cursor-pointer flex items-center justify-center gap-1 ${
+                  !areAllWidgetsTransparent
+                    ? 'bg-cyan-500/25 border-cyan-400 text-cyan-300'
+                    : 'bg-white/5 hover:bg-white/10 border-white/10 text-white/70'
+                }`}
+              >
+                <span>Glass Cards</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Individual Widgets List */}
+          <div className="space-y-1 max-h-56 overflow-y-auto pr-1">
+            {[
+              { id: 'clock', label: 'Flocus Clock', visible: config.clock.visible !== false, glass: config.clock.glassBg },
+              { id: 'countdown', label: 'Exam Countdown', visible: config.countdown.visible !== false, glass: config.countdown.glassBg },
+              { id: 'notification', label: 'Routine Alert', visible: config.notification.visible, glass: config.notification.glassBg },
+              { id: 'tasks', label: 'Quick Tasks', visible: config.tasks.visible, glass: config.tasks.glassBg },
+              { id: 'calendar', label: 'Exam Calendar', visible: config.calendar.visible, glass: config.calendar.glassBg },
+              { id: 'motivation', label: 'Daily Motivation', visible: config.motivation.visible, glass: config.motivation.glassBg },
+              { id: 'nameWidget', label: 'Centum Badge', visible: config.nameWidget.visible, glass: config.nameWidget.glassBg },
+              { id: 'pomodoro', label: 'Pomodoro Timer', visible: config.pomodoro?.visible ?? true, glass: config.pomodoro?.glassBg ?? true },
+            ].map(item => (
+              <div key={item.id} className="flex items-center justify-between p-1.5 rounded-lg bg-white/[0.02] hover:bg-white/[0.05] text-[11px]">
+                <label className="flex items-center gap-2 cursor-pointer flex-1">
+                  <input
+                    type="checkbox"
+                    checked={item.visible}
+                    onChange={e => {
+                      const v = e.target.checked;
+                      updateConfig(p => ({
+                        ...p,
+                        [item.id]: { ...(p as any)[item.id], visible: v },
+                      }));
+                    }}
+                    className="w-3.5 h-3.5 rounded text-cyan-500 cursor-pointer"
+                  />
+                  <span className={item.visible ? 'text-white font-medium' : 'text-white/40 line-through'}>
+                    {item.label}
+                  </span>
+                </label>
+
+                <button
+                  type="button"
+                  onClick={() => toggleWidgetTransparency(item.id as any)}
+                  className={`px-2 py-0.5 rounded text-[10px] font-mono transition cursor-pointer border ${
+                    item.glass
+                      ? 'bg-cyan-500/15 border-cyan-500/30 text-cyan-300 hover:bg-cyan-500/25'
+                      : 'bg-amber-400/15 border-amber-400/30 text-amber-300 hover:bg-amber-400/25'
+                  }`}
+                  title={item.glass ? 'Currently Glass (Click to make Transparent)' : 'Currently Transparent (Click to make Glass)'}
+                >
+                  {item.glass ? 'Glass' : 'Transp.'}
+                </button>
+              </div>
+            ))}
+          </div>
+
+          {/* Quick Actions Footer */}
+          <div className="pt-2 border-t border-white/10 space-y-1">
+            <button
+              type="button"
+              onClick={() => {
+                setContextMenu(null);
+                setStudioOpen(true);
+              }}
+              className="w-full py-1.5 px-2.5 rounded-lg bg-white/5 hover:bg-white/10 text-cyan-300 text-left text-[11px] font-medium flex items-center justify-between transition cursor-pointer"
+            >
+              <span>Design & Typography Studio</span>
+              <kbd className="text-[9px] bg-white/10 px-1 rounded text-white/60">V</kbd>
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setContextMenu(null);
+                recenterWidgets();
+              }}
+              className="w-full py-1.5 px-2.5 rounded-lg bg-white/5 hover:bg-white/10 text-white/80 hover:text-white text-left text-[11px] font-medium flex items-center justify-between transition cursor-pointer"
+            >
+              <span>Re-center All Widgets</span>
+              <kbd className="text-[9px] bg-white/10 px-1 rounded text-white/60">C</kbd>
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* ================= VISUAL CUSTOMIZATION STUDIO MODAL ================= */}
-      <VisualCustomizationStudio
-        isOpen={studioOpen}
-        onClose={() => setStudioOpen(false)}
-        currentConfig={config}
-        onApply={updates => {
-          updateConfig(prev => ({
-            ...prev,
-            ...updates,
-          }));
-        }}
-        savedPresets={savedPresets}
-        onUpdatePresets={handleUpdatePresets}
-      />
+      {studioOpen && (
+        <VisualCustomizationStudio
+          isOpen={studioOpen}
+          onClose={() => setStudioOpen(false)}
+          currentConfig={config}
+          onApply={updates => {
+            updateConfig(prev => ({
+              ...prev,
+              ...updates,
+            }));
+          }}
+          savedPresets={savedPresets}
+          onUpdatePresets={handleUpdatePresets}
+        />
+      )}
     </div>
   );
 }

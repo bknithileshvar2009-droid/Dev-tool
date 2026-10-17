@@ -19,6 +19,7 @@ import {
   Image as ImageIcon,
   Bookmark,
   Plus,
+  Minus,
   Trash2,
   Copy,
   Edit2,
@@ -40,6 +41,17 @@ import {
   Contrast,
   ArrowUpDown,
   History,
+  Undo,
+  Redo,
+  AlignLeft,
+  AlignCenter,
+  AlignRight,
+  AlignJustify,
+  Bold,
+  Italic,
+  Underline,
+  Target,
+  Award,
 } from 'lucide-react';
 import {
   STUDIO_THEMES,
@@ -62,6 +74,11 @@ import {
   SavedPreset,
   DEFAULT_STUDIO_CONFIG,
   CustomTextItem,
+  ElementTypographyConfig,
+  DashboardTypographyConfig,
+  DEFAULT_ELEMENT_TYPOGRAPHY,
+  N0T0StyleOption,
+  N0T0_TYPOGRAPHY_STYLES,
 } from '../utils/visualStudioData';
 
 interface VisualCustomizationStudioProps {
@@ -78,6 +95,8 @@ interface VisualCustomizationStudioProps {
 type StudioTab =
   | 'themes'
   | 'clocks'
+  | 'typography'
+  | 'n0t0'
   | 'fonts'
   | 'text-styles'
   | 'wallpapers'
@@ -98,8 +117,6 @@ export default function VisualCustomizationStudio({
   customNotes = [],
   onUpdateCustomNotes,
 }: VisualCustomizationStudioProps) {
-  if (!isOpen) return null;
-
   // Active studio tab
   const [activeTab, setActiveTab] = useState<StudioTab>('themes');
   const [searchQuery, setSearchQuery] = useState('');
@@ -107,6 +124,7 @@ export default function VisualCustomizationStudio({
   // Sub-category filters
   const [themeFilter, setThemeFilter] = useState<'all' | 'superhero' | 'dark' | 'light' | 'cinematic' | 'nature' | 'space'>('all');
   const [clockFilter, setClockFilter] = useState<'all' | 'digital' | 'superhero' | 'classic' | 'specialized' | 'minimal'>('all');
+  const [n0t0Category, setN0t0Category] = useState<'all' | 'minimal' | 'editorial' | 'terminal' | 'cyber' | 'brutalist'>('all');
   const [fontFilter, setFontFilter] = useState<string>('all');
   const [wallpaperCategory, setWallpaperCategory] = useState<'all' | 'superhero' | 'cinematic' | 'nature' | 'minimal'>('all');
   const [layoutCategory, setLayoutCategory] = useState<string>('all');
@@ -174,8 +192,76 @@ export default function VisualCustomizationStudio({
   const [stagedWidgetOpacity, setStagedWidgetOpacity] = useState<number>(85);
   const [applyStyleTarget, setApplyStyleTarget] = useState<'all' | 'clock' | 'countdown' | 'tasks'>('all');
 
+  // Widget Transparency Staging (Transparent vs Glass Cards)
+  const [stagedWidgetTransparency, setStagedWidgetTransparency] = useState<{
+    clock: boolean;
+    countdown: boolean;
+    notification: boolean;
+    calendar: boolean;
+    tasks: boolean;
+    motivation: boolean;
+    pomodoro: boolean;
+    nameWidget: boolean;
+  }>(() => ({
+    clock: !currentConfig.clock.glassBg,
+    countdown: !currentConfig.countdown.glassBg,
+    notification: !currentConfig.notification.glassBg,
+    calendar: !currentConfig.calendar.glassBg,
+    tasks: !currentConfig.tasks.glassBg,
+    motivation: !currentConfig.motivation.glassBg,
+    pomodoro: !(currentConfig.pomodoro?.glassBg ?? true),
+    nameWidget: !currentConfig.nameWidget.glassBg,
+  }));
+
+  const setAllStagedTransparency = (transparent: boolean) => {
+    setStagedWidgetTransparency({
+      clock: transparent,
+      countdown: transparent,
+      notification: transparent,
+      calendar: transparent,
+      tasks: transparent,
+      motivation: transparent,
+      pomodoro: transparent,
+      nameWidget: transparent,
+    });
+    if (transparent) {
+      setStagedWidgetStyle('transparent');
+    } else if (stagedWidgetStyle === 'transparent') {
+      setStagedWidgetStyle('subtle-dark-glass');
+    }
+  };
+
   // Clock architecture
   const [stagedClockArch, setStagedClockArch] = useState<string>(currentConfig.clock?.architecture || 'minimal');
+
+  // Advanced Element Typography System Staging
+  const [stagedTypography, setStagedTypography] = useState<DashboardTypographyConfig>(() => ({
+    globalScale: currentConfig.typography?.globalScale ?? 1.0,
+    elements: {
+      ...DEFAULT_ELEMENT_TYPOGRAPHY,
+      ...(currentConfig.typography?.elements || {}),
+    },
+    fontClock: currentConfig.typography?.fontClock || 'inter',
+    fontHeading: currentConfig.typography?.fontHeading || 'inter',
+    fontBody: currentConfig.typography?.fontBody || 'inter',
+    fontCountdown: currentConfig.typography?.fontCountdown || 'inter',
+    fontLabels: currentConfig.typography?.fontLabels || 'inter',
+    activeN0T0StyleId: currentConfig.typography?.activeN0T0StyleId,
+  }));
+
+  const [selectedTypographyElement, setSelectedTypographyElement] =
+    useState<keyof DashboardTypographyConfig['elements']>('clockMain');
+  const [undoStack, setUndoStack] = useState<DashboardTypographyConfig[]>([]);
+  const [redoStack, setRedoStack] = useState<DashboardTypographyConfig[]>([]);
+
+  // Interactive sample testing text
+  const [sampleHeadingText, setSampleHeadingText] = useState('CHEMISTRY CENTUM TARGET');
+  const [sampleWidgetTitle, setSampleWidgetTitle] = useState("TODAY'S STUDY GOALS");
+  const [sampleQuoteText, setSampleQuoteText] = useState('Excellence is an art won by training and habituation.');
+  const [sampleCustomText, setSampleCustomText] = useState('Solve 2026 Model Paper Line-by-Line');
+  const [sampleClockTime, setSampleClockTime] = useState('10:42:00');
+  const [sampleCountdownDays, setSampleCountdownDays] = useState('137');
+  const [previewMode, setPreviewMode] = useState<'dashboard' | 'clock' | 'countdown' | 'timetable' | 'sandbox'>('dashboard');
 
   // Typography settings (independent for each element!)
   const [stagedFontClock, setStagedFontClock] = useState<string>(currentConfig.typography?.fontClock || 'inter');
@@ -190,6 +276,269 @@ export default function VisualCustomizationStudio({
   const [clockFontWeight, setClockFontWeight] = useState<string>('400');
   const [clockUppercase, setClockUppercase] = useState<boolean>(false);
   const [headingLetterSpacing, setHeadingLetterSpacing] = useState<number>(2);
+
+  // Active element config helper
+  const activeElementConfig: ElementTypographyConfig = useMemo(() => {
+    return stagedTypography.elements[selectedTypographyElement] || DEFAULT_ELEMENT_TYPOGRAPHY[selectedTypographyElement] || {};
+  }, [stagedTypography, selectedTypographyElement]);
+
+  const updateSelectedElement = (updates: Partial<ElementTypographyConfig>) => {
+    setStagedTypography(prev => {
+      setUndoStack(u => [...u.slice(-20), prev]);
+      setRedoStack([]);
+      const cur = prev.elements[selectedTypographyElement] || DEFAULT_ELEMENT_TYPOGRAPHY[selectedTypographyElement] || {};
+      const newEl = { ...cur, ...updates };
+      const newElements = { ...prev.elements, [selectedTypographyElement]: newEl };
+
+      let fontClock = prev.fontClock;
+      let fontHeading = prev.fontHeading;
+      let fontBody = prev.fontBody;
+      let fontCountdown = prev.fontCountdown;
+      let fontLabels = prev.fontLabels;
+
+      if (selectedTypographyElement === 'clockMain' && updates.fontFamily) {
+        fontClock = updates.fontFamily;
+        setStagedFontClock(updates.fontFamily);
+      } else if (selectedTypographyElement === 'widgetTitle' && updates.fontFamily) {
+        fontHeading = updates.fontFamily;
+        setStagedFontHeading(updates.fontFamily);
+      } else if (selectedTypographyElement === 'widgetBody' && updates.fontFamily) {
+        fontBody = updates.fontFamily;
+        setStagedFontBody(updates.fontFamily);
+      } else if (selectedTypographyElement === 'countdownNumber' && updates.fontFamily) {
+        fontCountdown = updates.fontFamily;
+        setStagedFontCountdown(updates.fontFamily);
+      } else if (selectedTypographyElement === 'countdownLabel' && updates.fontFamily) {
+        fontLabels = updates.fontFamily;
+        setStagedFontLabels(updates.fontFamily);
+      }
+
+      return {
+        ...prev,
+        fontClock,
+        fontHeading,
+        fontBody,
+        fontCountdown,
+        fontLabels,
+        elements: newElements,
+      };
+    });
+  };
+
+  const handleGlobalScaleChange = (scale: number) => {
+    setStagedTypography(prev => {
+      setUndoStack(u => [...u.slice(-20), prev]);
+      setRedoStack([]);
+      return {
+        ...prev,
+        globalScale: Math.round(scale * 100) / 100,
+      };
+    });
+  };
+
+  const handleUndo = () => {
+    if (undoStack.length === 0) return;
+    const prev = undoStack[undoStack.length - 1];
+    setUndoStack(u => u.slice(0, -1));
+    setRedoStack(r => [...r, stagedTypography]);
+    setStagedTypography(prev);
+    if (prev.fontClock) setStagedFontClock(prev.fontClock);
+    if (prev.fontHeading) setStagedFontHeading(prev.fontHeading);
+    if (prev.fontBody) setStagedFontBody(prev.fontBody);
+  };
+
+  const handleRedo = () => {
+    if (redoStack.length === 0) return;
+    const next = redoStack[redoStack.length - 1];
+    setRedoStack(r => r.slice(0, -1));
+    setUndoStack(u => [...u, stagedTypography]);
+    setStagedTypography(next);
+    if (next.fontClock) setStagedFontClock(next.fontClock);
+    if (next.fontHeading) setStagedFontHeading(next.fontHeading);
+    if (next.fontBody) setStagedFontBody(next.fontBody);
+  };
+
+  const handleResetElement = () => {
+    const def = DEFAULT_ELEMENT_TYPOGRAPHY[selectedTypographyElement];
+    if (def) {
+      updateSelectedElement({ ...def });
+    }
+  };
+
+  const handleResetTypographyOnly = () => {
+    setStagedTypography(prev => {
+      setUndoStack(u => [...u.slice(-20), prev]);
+      setRedoStack([]);
+      return {
+        globalScale: 1.0,
+        elements: { ...DEFAULT_ELEMENT_TYPOGRAPHY },
+        fontClock: 'inter',
+        fontHeading: 'inter',
+        fontBody: 'inter',
+        fontCountdown: 'inter',
+        fontLabels: 'inter',
+        activeN0T0StyleId: undefined,
+      };
+    });
+    setStagedFontClock('inter');
+    setStagedFontHeading('inter');
+    setStagedFontBody('inter');
+    setStagedFontCountdown('inter');
+    setStagedFontLabels('inter');
+  };
+
+  const handleApplyN0T0Style = (style: N0T0StyleOption) => {
+    setStagedTypography(prev => {
+      setUndoStack(u => [...u.slice(-20), prev]);
+      setRedoStack([]);
+      const cfg = style.config;
+      const updated = { ...prev.elements };
+
+      Object.keys(updated).forEach(k => {
+        const key = k as keyof DashboardTypographyConfig['elements'];
+        updated[key] = {
+          ...updated[key],
+          fontFamily: cfg.fontFamily,
+          fontWeight: cfg.fontWeight,
+          letterSpacing: Math.min(cfg.letterSpacing, 4),
+          lineHeight: cfg.lineHeight,
+          textShadow: cfg.textShadow || 'none',
+          textGlow: cfg.textGlow,
+          glowColor: cfg.glowColor,
+          glowIntensity: cfg.glowIntensity,
+        };
+      });
+
+      if (updated.clockMain) {
+        updated.clockMain = {
+          ...updated.clockMain,
+          fontSize: cfg.clockSize || 64,
+          letterSpacing: cfg.letterSpacing,
+          textTransform: cfg.textTransform || 'none',
+        };
+      }
+      if (updated.clockDate) {
+        updated.clockDate = {
+          ...updated.clockDate,
+          fontSize: cfg.dateSize || 13,
+        };
+      }
+      if (updated.countdownNumber) {
+        updated.countdownNumber = {
+          ...updated.countdownNumber,
+          fontSize: cfg.countdownSize || 48,
+        };
+      }
+      if (updated.countdownLabel) {
+        updated.countdownLabel = {
+          ...updated.countdownLabel,
+          fontSize: cfg.labelSize || 11,
+          textTransform: 'uppercase',
+        };
+      }
+
+      if (cfg.elementOverrides) {
+        Object.entries(cfg.elementOverrides).forEach(([k, ov]) => {
+          const key = k as keyof DashboardTypographyConfig['elements'];
+          if (updated[key]) {
+            updated[key] = { ...updated[key], ...ov };
+          }
+        });
+      }
+
+      return {
+        ...prev,
+        activeN0T0StyleId: style.id,
+        fontClock: cfg.fontFamily,
+        fontHeading: cfg.fontFamily,
+        fontBody: cfg.fontFamily,
+        fontCountdown: cfg.fontFamily,
+        fontLabels: cfg.fontFamily,
+        elements: updated,
+      };
+    });
+
+    setStagedFontClock(style.config.fontFamily);
+    setStagedFontHeading(style.config.fontFamily);
+    setStagedFontBody(style.config.fontFamily);
+    recordRecent(style.id);
+  };
+
+  const getInlineFontStyle = (cfg?: ElementTypographyConfig): React.CSSProperties => {
+    if (!cfg) return {};
+    const globalScale = stagedTypography.globalScale ?? 1.0;
+    const style: React.CSSProperties = {};
+
+    const fontId = cfg.fontFamily || stagedFontClock || 'inter';
+    const familyMap: Record<string, string> = {
+      inter: "'Inter', -apple-system, BlinkMacSystemFont, sans-serif",
+      roboto: "'Roboto', sans-serif",
+      poppins: "'Poppins', sans-serif",
+      montserrat: "'Montserrat', sans-serif",
+      outfit: "'Outfit', sans-serif",
+      space: "'Space Grotesk', sans-serif",
+      orbitron: "'Orbitron', sans-serif",
+      rajdhani: "'Rajdhani', sans-serif",
+      oxanium: "'Oxanium', sans-serif",
+      'exo-2': "'Exo 2', sans-serif",
+      sora: "'Sora', sans-serif",
+      manrope: "'Manrope', sans-serif",
+      'dm-sans': "'DM Sans', sans-serif",
+      'plus-jakarta': "'Plus Jakarta Sans', sans-serif",
+      'ibm-plex-sans': "'IBM Plex Sans', sans-serif",
+      'mono-jb': "'JetBrains Mono', monospace",
+      'mono-ibm': "'IBM Plex Mono', monospace",
+      'space-mono': "'Space Mono', monospace",
+      'fira-code': "'Fira Code', monospace",
+      'source-code': "'Source Code Pro', monospace",
+      'bebas-neue': "'Bebas Neue', sans-serif",
+      oswald: "'Oswald', sans-serif",
+      archivo: "'Archivo', sans-serif",
+      lato: "'Lato', sans-serif",
+      anton: "'Anton', sans-serif",
+      audiowide: "'Audiowide', cursive",
+      vt323: "'VT323', monospace",
+      doto: "'Doto', sans-serif",
+      'courier-prime': "'Courier Prime', monospace",
+      system: "system-ui, -apple-system, BlinkMacSystemFont, sans-serif",
+      monospace: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+    };
+    if (familyMap[fontId]) style.fontFamily = familyMap[fontId];
+
+    if (cfg.fontSize) {
+      style.fontSize = `${Math.round(cfg.fontSize * globalScale)}px`;
+    }
+    if (cfg.fontWeight) style.fontWeight = cfg.fontWeight;
+    if (cfg.letterSpacing !== undefined) style.letterSpacing = `${cfg.letterSpacing}px`;
+    if (cfg.lineHeight !== undefined) style.lineHeight = cfg.lineHeight;
+    if (cfg.textAlign) style.textAlign = cfg.textAlign;
+    if (cfg.color) style.color = cfg.color;
+    if (cfg.opacity !== undefined) style.opacity = cfg.opacity;
+    if (cfg.textTransform) style.textTransform = cfg.textTransform;
+    if (cfg.isItalic) style.fontStyle = 'italic';
+    if (cfg.isUnderline) style.textDecoration = 'underline';
+
+    const shadows: string[] = [];
+    if (cfg.textShadow === 'soft') {
+      shadows.push('0 2px 8px rgba(0, 0, 0, 0.6)');
+    } else if (cfg.textShadow === 'crisp') {
+      shadows.push('0 2px 0 rgba(0, 0, 0, 0.9)');
+    } else if (cfg.textShadow === 'deep') {
+      shadows.push('0 8px 24px rgba(0, 0, 0, 0.85)');
+    } else if (cfg.textShadow === 'outline') {
+      shadows.push('-1px -1px 0 rgba(0,0,0,0.9), 1px -1px 0 rgba(0,0,0,0.9), -1px 1px 0 rgba(0,0,0,0.9), 1px 1px 0 rgba(0,0,0,0.9)');
+    }
+
+    if (cfg.textGlow) {
+      const glowColor = cfg.glowColor || cfg.color || stagedAccentColor || '#06b6d4';
+      const intensity = cfg.glowIntensity || 12;
+      shadows.push(`0 0 ${intensity}px ${glowColor}`);
+    }
+
+    if (shadows.length > 0) style.textShadow = shadows.join(', ');
+
+    return style;
+  };
 
   // Colours
   const [stagedAccentColor, setStagedAccentColor] = useState<string>(currentConfig.customColors?.accent || currentConfig.clock?.color || '#06b6d4');
@@ -370,10 +719,40 @@ export default function VisualCustomizationStudio({
       widgetStyle: stagedWidgetStyle,
       clock: {
         ...currentConfig.clock,
+        glassBg: !stagedWidgetTransparency.clock,
         color: stagedAccentColor,
         architecture: stagedClockArch,
       },
+      countdown: {
+        ...currentConfig.countdown,
+        glassBg: !stagedWidgetTransparency.countdown,
+      },
+      notification: {
+        ...currentConfig.notification,
+        glassBg: !stagedWidgetTransparency.notification,
+      },
+      calendar: {
+        ...currentConfig.calendar,
+        glassBg: !stagedWidgetTransparency.calendar,
+      },
+      tasks: {
+        ...currentConfig.tasks,
+        glassBg: !stagedWidgetTransparency.tasks,
+      },
+      motivation: {
+        ...currentConfig.motivation,
+        glassBg: !stagedWidgetTransparency.motivation,
+      },
+      pomodoro: {
+        ...currentConfig.pomodoro,
+        glassBg: !stagedWidgetTransparency.pomodoro,
+      },
+      nameWidget: {
+        ...currentConfig.nameWidget,
+        glassBg: !stagedWidgetTransparency.nameWidget,
+      },
       typography: {
+        ...stagedTypography,
         fontClock: stagedFontClock,
         fontHeading: stagedFontHeading,
         fontBody: stagedFontBody,
@@ -494,6 +873,8 @@ export default function VisualCustomizationStudio({
     return f ? f.cssClass : 'font-inter';
   };
 
+  if (!isOpen) return null;
+
   return (
     <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-xl flex items-center justify-center p-2 sm:p-5 overflow-hidden">
       <div className="w-full max-w-7xl h-[94vh] rounded-3xl bg-[#070a12] border border-white/15 shadow-[0_30px_90px_rgba(0,0,0,0.95)] flex flex-col overflow-hidden">
@@ -574,8 +955,10 @@ export default function VisualCustomizationStudio({
             {[
               { id: 'themes', label: 'Avengers & Themes (30)', icon: Shield },
               { id: 'clocks', label: 'Clock Designs (35)', icon: ClockIcon },
-              { id: 'fonts', label: 'Typography Fonts (26)', icon: Type },
-              { id: 'text-styles', label: 'Text & Font Stylers', icon: SlidersHorizontal },
+              { id: 'typography', label: 'Advanced Typography Studio', icon: Type },
+              { id: 'n0t0', label: '15 N0T0 Minimalist Styles', icon: Sparkles },
+              { id: 'fonts', label: 'Typography Fonts (27)', icon: SlidersHorizontal },
+              { id: 'text-styles', label: 'Text & Font Stylers', icon: Sliders },
               { id: 'wallpapers', label: 'Wallpapers (36)', icon: ImageIcon },
               { id: 'effects', label: 'Background FX (12)', icon: Flame },
               { id: 'widgets', label: 'Widget Styles (30)', icon: Layers },
@@ -799,9 +1182,803 @@ export default function VisualCustomizationStudio({
                           </p>
                         </div>
 
-                        <div className="mt-3 pt-2 border-t border-white/5 flex items-center justify-between text-[10px] text-white/40">
-                          <span className="capitalize">{clk.category}</span>
-                          <span className="text-cyan-400 font-mono group-hover:underline">Preview & Apply</span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* ================= ADVANCED TYPOGRAPHY STUDIO ================= */}
+            {activeTab === 'typography' && (
+              <div className="space-y-6">
+                {/* Header & Global Toolbar */}
+                <div className="p-4 rounded-2xl bg-white/[0.03] border border-white/10 space-y-4">
+                  <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <h3 className="text-sm font-bold text-white uppercase tracking-wider flex items-center gap-2">
+                          <Type className="w-4 h-4 text-cyan-400" />
+                          <span>Advanced Typography & Font Studio</span>
+                        </h3>
+                        <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full bg-cyan-500/20 text-cyan-300 border border-cyan-400/30">
+                          Independent Element Tuning
+                        </span>
+                      </div>
+                      <p className="text-xs text-white/50 mt-0.5">
+                        Customize font family, sizing, weights, tracking, letter-casing, shadows, and glows for each dashboard element independently.
+                      </p>
+                    </div>
+
+                    {/* Global Scale & History Controls */}
+                    <div className="flex items-center flex-wrap gap-2">
+                      <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-black/40 border border-white/10 text-xs">
+                        <span className="text-white/60 text-[11px] font-medium">Global Scale:</span>
+                        <button
+                          type="button"
+                          onClick={() => handleGlobalScaleChange(Math.max(0.7, (stagedTypography.globalScale ?? 1.0) - 0.05))}
+                          className="w-5 h-5 rounded bg-white/10 hover:bg-white/20 text-white flex items-center justify-center cursor-pointer transition"
+                          title="Decrease Global Scale"
+                        >
+                          <Minus className="w-3 h-3" />
+                        </button>
+                        <span className="font-mono text-cyan-300 font-bold min-w-[38px] text-center">
+                          {Math.round((stagedTypography.globalScale ?? 1.0) * 100)}%
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => handleGlobalScaleChange(Math.min(1.6, (stagedTypography.globalScale ?? 1.0) + 0.05))}
+                          className="w-5 h-5 rounded bg-white/10 hover:bg-white/20 text-white flex items-center justify-center cursor-pointer transition"
+                          title="Increase Global Scale"
+                        >
+                          <Plus className="w-3 h-3" />
+                        </button>
+
+                        <div className="hidden sm:flex items-center gap-1 ml-1 border-l border-white/10 pl-1.5">
+                          {[0.85, 1.0, 1.15, 1.3].map(scale => (
+                            <button
+                              key={scale}
+                              type="button"
+                              onClick={() => handleGlobalScaleChange(scale)}
+                              className={`px-1.5 py-0.5 rounded text-[10px] font-mono cursor-pointer transition ${
+                                Math.abs((stagedTypography.globalScale ?? 1.0) - scale) < 0.02
+                                  ? 'bg-cyan-500 text-black font-bold'
+                                  : 'text-white/40 hover:text-white hover:bg-white/10'
+                              }`}
+                            >
+                              {scale}x
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+
+                      {/* Undo / Redo */}
+                      <div className="flex items-center gap-1">
+                        <button
+                          type="button"
+                          onClick={handleUndo}
+                          disabled={undoStack.length === 0}
+                          className="p-1.5 rounded-xl bg-white/5 hover:bg-white/10 disabled:opacity-30 disabled:cursor-not-allowed text-white/80 hover:text-white border border-white/10 transition cursor-pointer flex items-center gap-1 text-xs"
+                          title="Undo Typography Change"
+                        >
+                          <Undo className="w-3.5 h-3.5" />
+                          <span className="hidden sm:inline text-[11px]">Undo</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={handleRedo}
+                          disabled={redoStack.length === 0}
+                          className="p-1.5 rounded-xl bg-white/5 hover:bg-white/10 disabled:opacity-30 disabled:cursor-not-allowed text-white/80 hover:text-white border border-white/10 transition cursor-pointer flex items-center gap-1 text-xs"
+                          title="Redo Typography Change"
+                        >
+                          <Redo className="w-3.5 h-3.5" />
+                          <span className="hidden sm:inline text-[11px]">Redo</span>
+                        </button>
+                      </div>
+
+                      {/* Reset Actions */}
+                      <div className="flex items-center gap-1">
+                        <button
+                          type="button"
+                          onClick={handleResetElement}
+                          className="px-2.5 py-1.5 rounded-xl bg-white/5 hover:bg-white/10 text-white/70 hover:text-white border border-white/10 transition cursor-pointer text-[11px] flex items-center gap-1"
+                          title="Reset Selected Element"
+                        >
+                          <RotateCcw className="w-3 h-3 text-amber-400" />
+                          <span>Reset Element</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={handleResetTypographyOnly}
+                          className="px-2.5 py-1.5 rounded-xl bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 border border-rose-500/20 transition cursor-pointer text-[11px]"
+                          title="Reset Entire Dashboard Typography"
+                        >
+                          Reset All
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Element Selector Tabs (12 Distinct Elements) */}
+                  <div>
+                    <label className="text-[11px] font-bold uppercase tracking-wider text-white/60 mb-2 block">
+                      Select Dashboard Element to Style:
+                    </label>
+                    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-1.5">
+                      {[
+                        { key: 'clockMain', label: 'Main Clock', sub: 'Hours & Minutes' },
+                        { key: 'clockDate', label: 'Date & Day', sub: 'Calendar Header' },
+                        { key: 'countdownNumber', label: 'Exam Countdown', sub: 'Days & Numbers' },
+                        { key: 'countdownLabel', label: 'Countdown Label', sub: 'Exam Badge' },
+                        { key: 'widgetTitle', label: 'Widget Title', sub: 'Card Headings' },
+                        { key: 'widgetBody', label: 'Widget Body', sub: 'Descriptions' },
+                        { key: 'timetableSubject', label: 'Timetable Subject', sub: 'Routine Classes' },
+                        { key: 'timetableTime', label: 'Timetable Time', sub: 'Period Intervals' },
+                        { key: 'taskText', label: 'Quick Task Text', sub: 'Checklist Items' },
+                        { key: 'motivationText', label: 'Motivational Quote', sub: 'Daily Affirmation' },
+                        { key: 'customText', label: 'Sticky Notes', sub: 'Custom Elements' },
+                        { key: 'buttonLabel', label: 'Buttons & Badges', sub: 'Interactive Tags' },
+                      ].map(el => {
+                        const isSelected = selectedTypographyElement === el.key;
+                        const elCfg = stagedTypography.elements[el.key as keyof DashboardTypographyConfig['elements']] || {};
+                        const currentSize = elCfg.fontSize || DEFAULT_ELEMENT_TYPOGRAPHY[el.key]?.fontSize || 14;
+
+                        return (
+                          <button
+                            key={el.key}
+                            type="button"
+                            onClick={() => setSelectedTypographyElement(el.key as keyof DashboardTypographyConfig['elements'])}
+                            className={`p-2 rounded-xl text-left transition cursor-pointer border flex flex-col justify-between ${
+                              isSelected
+                                ? 'bg-cyan-500/20 border-cyan-400 text-white shadow-[0_0_15px_rgba(6,182,212,0.25)]'
+                                : 'bg-black/40 border-white/10 text-white/70 hover:text-white hover:bg-white/5'
+                            }`}
+                          >
+                            <div className="flex items-center justify-between w-full">
+                              <span className="text-xs font-bold truncate">{el.label}</span>
+                              <span className="text-[10px] font-mono text-cyan-300">
+                                {currentSize}px
+                              </span>
+                            </div>
+                            <span className="text-[10px] text-white/40 truncate mt-0.5">{el.sub}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Main Controls Grid for Selected Element */}
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                  {/* Card 1: Font Family, Weight, Casing & Alignment */}
+                  <div className="p-4 rounded-2xl bg-white/[0.03] border border-white/10 space-y-4">
+                    <div className="flex items-center justify-between pb-2 border-b border-white/10">
+                      <h4 className="text-xs font-bold uppercase tracking-wider text-cyan-300 flex items-center gap-1.5">
+                        <Type className="w-3.5 h-3.5" />
+                        <span>Font Family & Typography Style</span>
+                      </h4>
+                      <span className="text-[10px] font-mono text-white/40 capitalize">
+                        Target: {selectedTypographyElement}
+                      </span>
+                    </div>
+
+                    {/* Font Family Selector with 27 Fonts */}
+                    <div className="space-y-1.5">
+                      <div className="flex justify-between items-center text-xs">
+                        <label className="text-white/70 font-medium">Font Family</label>
+                        <span className="text-cyan-400 font-mono text-[11px]">
+                          {activeElementConfig.fontFamily || 'inter'}
+                        </span>
+                      </div>
+                      <select
+                        value={activeElementConfig.fontFamily || 'inter'}
+                        onChange={e => updateSelectedElement({ fontFamily: e.target.value })}
+                        className="w-full bg-black/60 border border-white/15 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-cyan-400 cursor-pointer"
+                      >
+                        {STUDIO_FONTS.map(f => (
+                          <option key={f.id} value={f.id} className="bg-slate-900 text-white">
+                            {f.name} — {f.category} ({f.description})
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    {/* Font Weight */}
+                    <div className="space-y-1.5">
+                      <div className="flex justify-between items-center text-xs">
+                        <label className="text-white/70 font-medium">Font Weight</label>
+                        <span className="text-cyan-400 font-mono text-[11px]">
+                          {activeElementConfig.fontWeight || '400'}
+                        </span>
+                      </div>
+                      <div className="grid grid-cols-5 sm:grid-cols-9 gap-1 text-[11px] font-mono">
+                        {[
+                          { val: '100', label: '100' },
+                          { val: '200', label: '200' },
+                          { val: '300', label: '300' },
+                          { val: '400', label: '400' },
+                          { val: '500', label: '500' },
+                          { val: '600', label: '600' },
+                          { val: '700', label: '700' },
+                          { val: '800', label: '800' },
+                          { val: '900', label: '900' },
+                        ].map(w => {
+                          const isW = (activeElementConfig.fontWeight || '400') === w.val;
+                          return (
+                            <button
+                              key={w.val}
+                              type="button"
+                              onClick={() => updateSelectedElement({ fontWeight: w.val })}
+                              className={`py-1 rounded-lg transition cursor-pointer text-center ${
+                                isW
+                                  ? 'bg-cyan-500 text-black font-bold shadow-[0_0_10px_rgba(6,182,212,0.4)]'
+                                  : 'bg-black/40 text-white/60 hover:text-white hover:bg-white/10 border border-white/5'
+                              }`}
+                            >
+                              {w.label}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    {/* Text Casing & Alignment & Styles */}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2 border-t border-white/5">
+                      {/* Text Casing */}
+                      <div className="space-y-1.5">
+                        <label className="text-[11px] text-white/70 font-medium block">Text Casing</label>
+                        <div className="flex items-center gap-1 bg-black/40 p-1 rounded-xl border border-white/10">
+                          {[
+                            { val: 'none', label: 'Normal' },
+                            { val: 'uppercase', label: 'UPPER' },
+                            { val: 'lowercase', label: 'lower' },
+                            { val: 'capitalize', label: 'Title' },
+                          ].map(c => {
+                            const isC = (activeElementConfig.textTransform || 'none') === c.val;
+                            return (
+                              <button
+                                key={c.val}
+                                type="button"
+                                onClick={() => updateSelectedElement({ textTransform: c.val as any })}
+                                className={`flex-1 py-1 rounded-lg text-[10px] font-bold transition cursor-pointer text-center ${
+                                  isC
+                                    ? 'bg-cyan-500 text-black shadow-sm'
+                                    : 'text-white/60 hover:text-white hover:bg-white/10'
+                                }`}
+                              >
+                                {c.label}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+
+                      {/* Text Alignment */}
+                      <div className="space-y-1.5">
+                        <label className="text-[11px] text-white/70 font-medium block">Text Alignment</label>
+                        <div className="flex items-center gap-1 bg-black/40 p-1 rounded-xl border border-white/10">
+                          {[
+                            { val: 'left', icon: AlignLeft, label: 'Left' },
+                            { val: 'center', icon: AlignCenter, label: 'Center' },
+                            { val: 'right', icon: AlignRight, label: 'Right' },
+                            { val: 'justify', icon: AlignJustify, label: 'Justify' },
+                          ].map(a => {
+                            const Icon = a.icon;
+                            const isA = (activeElementConfig.textAlign || 'left') === a.val;
+                            return (
+                              <button
+                                key={a.val}
+                                type="button"
+                                onClick={() => updateSelectedElement({ textAlign: a.val as any })}
+                                className={`flex-1 py-1 rounded-lg text-xs flex items-center justify-center transition cursor-pointer ${
+                                  isA
+                                    ? 'bg-cyan-500 text-black shadow-sm'
+                                    : 'text-white/60 hover:text-white hover:bg-white/10'
+                                }`}
+                                title={a.label}
+                              >
+                                <Icon className="w-3.5 h-3.5" />
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Italic & Underline Toggles */}
+                    <div className="flex items-center gap-2 pt-1">
+                      <button
+                        type="button"
+                        onClick={() => updateSelectedElement({ isItalic: !activeElementConfig.isItalic })}
+                        className={`flex-1 py-1.5 px-3 rounded-xl border text-xs font-semibold flex items-center justify-center gap-1.5 transition cursor-pointer ${
+                          activeElementConfig.isItalic
+                            ? 'bg-cyan-500/20 text-cyan-300 border-cyan-400'
+                            : 'bg-black/40 text-white/60 border-white/10 hover:text-white'
+                        }`}
+                      >
+                        <Italic className="w-3.5 h-3.5" />
+                        <span>Italic Style</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => updateSelectedElement({ isUnderline: !activeElementConfig.isUnderline })}
+                        className={`flex-1 py-1.5 px-3 rounded-xl border text-xs font-semibold flex items-center justify-center gap-1.5 transition cursor-pointer ${
+                          activeElementConfig.isUnderline
+                            ? 'bg-cyan-500/20 text-cyan-300 border-cyan-400'
+                            : 'bg-black/40 text-white/60 border-white/10 hover:text-white'
+                        }`}
+                      >
+                        <Underline className="w-3.5 h-3.5" />
+                        <span>Underline Style</span>
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Card 2: Font Sizing, Letter Spacing & Line Height */}
+                  <div className="p-4 rounded-2xl bg-white/[0.03] border border-white/10 space-y-4">
+                    <div className="flex items-center justify-between pb-2 border-b border-white/10">
+                      <h4 className="text-xs font-bold uppercase tracking-wider text-amber-300 flex items-center gap-1.5">
+                        <Sliders className="w-3.5 h-3.5" />
+                        <span>Font Size & Geometry Spacing</span>
+                      </h4>
+                      <span className="text-[10px] text-amber-300/80 font-mono">
+                        Global Scale: {stagedTypography.globalScale ?? 1.0}x
+                      </span>
+                    </div>
+
+                    {/* Font Size with Slider, Numeric Input & (-) / (+) Buttons */}
+                    <div className="space-y-2">
+                      <div className="flex justify-between items-center text-xs">
+                        <label className="text-white/70 font-medium">Font Size</label>
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-white/40 text-[10px]">Computed:</span>
+                          <span className="text-amber-300 font-mono font-bold text-xs">
+                            {Math.round((activeElementConfig.fontSize || 14) * (stagedTypography.globalScale ?? 1.0))}px
+                          </span>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-2">
+                        {/* Minus Button */}
+                        <button
+                          type="button"
+                          onClick={() => updateSelectedElement({ fontSize: Math.max(8, (activeElementConfig.fontSize || 14) - 1) })}
+                          className="w-8 h-8 rounded-xl bg-white/5 hover:bg-white/15 text-white flex items-center justify-center border border-white/10 transition cursor-pointer shrink-0"
+                          title="Decrease Font Size (−)"
+                        >
+                          <Minus className="w-3.5 h-3.5" />
+                        </button>
+
+                        {/* Slider */}
+                        <input
+                          type="range"
+                          min={selectedTypographyElement === 'clockMain' ? '20' : '8'}
+                          max={selectedTypographyElement === 'clockMain' ? '140' : selectedTypographyElement === 'countdownNumber' ? '96' : '48'}
+                          value={activeElementConfig.fontSize || DEFAULT_ELEMENT_TYPOGRAPHY[selectedTypographyElement]?.fontSize || 14}
+                          onChange={e => updateSelectedElement({ fontSize: parseInt(e.target.value) || 14 })}
+                          className="flex-1 accent-amber-400"
+                        />
+
+                        {/* Plus Button */}
+                        <button
+                          type="button"
+                          onClick={() => updateSelectedElement({
+                            fontSize: Math.min(
+                              selectedTypographyElement === 'clockMain' ? 140 : selectedTypographyElement === 'countdownNumber' ? 96 : 48,
+                              (activeElementConfig.fontSize || 14) + 1
+                            )
+                          })}
+                          className="w-8 h-8 rounded-xl bg-white/5 hover:bg-white/15 text-white flex items-center justify-center border border-white/10 transition cursor-pointer shrink-0"
+                          title="Increase Font Size (+)"
+                        >
+                          <Plus className="w-3.5 h-3.5" />
+                        </button>
+
+                        {/* Direct Numeric Input */}
+                        <div className="flex items-center gap-1 bg-black/60 border border-white/15 rounded-xl px-2 py-1 w-20 shrink-0">
+                          <input
+                            type="number"
+                            min="8"
+                            max="160"
+                            value={activeElementConfig.fontSize || 14}
+                            onChange={e => {
+                              const val = parseInt(e.target.value);
+                              if (!isNaN(val) && val >= 8 && val <= 160) {
+                                updateSelectedElement({ fontSize: val });
+                              }
+                            }}
+                            className="w-full bg-transparent text-xs font-mono text-white text-right focus:outline-none"
+                          />
+                          <span className="text-[10px] text-white/40 font-mono">px</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Letter Spacing (Tracking) */}
+                    <div className="space-y-2">
+                      <div className="flex justify-between items-center text-xs">
+                        <label className="text-white/70 font-medium">Letter Spacing (Tracking)</label>
+                        <span className="text-amber-300 font-mono text-xs">
+                          {activeElementConfig.letterSpacing ?? 0}px
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="range"
+                          min="-3"
+                          max="16"
+                          step="0.5"
+                          value={activeElementConfig.letterSpacing ?? 0}
+                          onChange={e => updateSelectedElement({ letterSpacing: parseFloat(e.target.value) })}
+                          className="flex-1 accent-amber-400"
+                        />
+                        <div className="flex items-center gap-1 bg-black/60 border border-white/15 rounded-xl px-2 py-1 w-20 shrink-0">
+                          <input
+                            type="number"
+                            min="-3"
+                            max="16"
+                            step="0.5"
+                            value={activeElementConfig.letterSpacing ?? 0}
+                            onChange={e => {
+                              const val = parseFloat(e.target.value);
+                              if (!isNaN(val)) updateSelectedElement({ letterSpacing: val });
+                            }}
+                            className="w-full bg-transparent text-xs font-mono text-white text-right focus:outline-none"
+                          />
+                          <span className="text-[10px] text-white/40 font-mono">px</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Line Height */}
+                    <div className="space-y-2">
+                      <div className="flex justify-between items-center text-xs">
+                        <label className="text-white/70 font-medium">Line Height</label>
+                        <span className="text-amber-300 font-mono text-xs">
+                          {activeElementConfig.lineHeight ?? 1.2}
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="range"
+                          min="0.8"
+                          max="2.5"
+                          step="0.1"
+                          value={activeElementConfig.lineHeight ?? 1.2}
+                          onChange={e => updateSelectedElement({ lineHeight: parseFloat(e.target.value) })}
+                          className="flex-1 accent-amber-400"
+                        />
+                        <div className="flex items-center gap-1 bg-black/60 border border-white/15 rounded-xl px-2 py-1 w-20 shrink-0">
+                          <input
+                            type="number"
+                            min="0.8"
+                            max="2.5"
+                            step="0.1"
+                            value={activeElementConfig.lineHeight ?? 1.2}
+                            onChange={e => {
+                              const val = parseFloat(e.target.value);
+                              if (!isNaN(val)) updateSelectedElement({ lineHeight: val });
+                            }}
+                            className="w-full bg-transparent text-xs font-mono text-white text-right focus:outline-none"
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Card 3: Color, Opacity, Text Shadow & Glow */}
+                <div className="p-4 rounded-2xl bg-white/[0.03] border border-white/10 space-y-4">
+                  <div className="flex items-center justify-between pb-2 border-b border-white/10">
+                    <h4 className="text-xs font-bold uppercase tracking-wider text-purple-300 flex items-center gap-1.5">
+                      <Sparkles className="w-3.5 h-3.5" />
+                      <span>Text Color, Shadows & Glow Effects</span>
+                    </h4>
+                    <span className="text-[10px] text-white/40 font-mono">
+                      Specular Luminescence
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                    {/* Text Color Picker + Swatches */}
+                    <div className="space-y-2">
+                      <label className="text-xs font-medium text-white/70 block">Text Color</label>
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="color"
+                          value={activeElementConfig.color || '#ffffff'}
+                          onChange={e => updateSelectedElement({ color: e.target.value })}
+                          className="w-8 h-8 rounded-lg cursor-pointer bg-transparent border-0"
+                        />
+                        <input
+                          type="text"
+                          value={activeElementConfig.color || '#ffffff'}
+                          onChange={e => updateSelectedElement({ color: e.target.value })}
+                          className="flex-1 bg-black/60 border border-white/15 rounded-xl px-2.5 py-1.5 text-xs font-mono text-white focus:outline-none focus:border-cyan-400"
+                        />
+                      </div>
+                      <div className="flex items-center gap-1.5 pt-1">
+                        {['#ffffff', '#06b6d4', '#f59e0b', '#10b981', '#a855f7', '#f43f5e', '#38bdf8', '#94a3b8'].map(c => (
+                          <button
+                            key={c}
+                            type="button"
+                            onClick={() => updateSelectedElement({ color: c })}
+                            className="w-5 h-5 rounded-full border border-white/20 transition cursor-pointer hover:scale-110"
+                            style={{ backgroundColor: c }}
+                            title={c}
+                          />
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Text Opacity */}
+                    <div className="space-y-2">
+                      <div className="flex justify-between items-center text-xs">
+                        <label className="text-white/70 font-medium">Text Opacity</label>
+                        <span className="text-purple-300 font-mono font-bold text-xs">
+                          {Math.round((activeElementConfig.opacity ?? 1.0) * 100)}%
+                        </span>
+                      </div>
+                      <input
+                        type="range"
+                        min="0.1"
+                        max="1.0"
+                        step="0.05"
+                        value={activeElementConfig.opacity ?? 1.0}
+                        onChange={e => updateSelectedElement({ opacity: parseFloat(e.target.value) })}
+                        className="w-full accent-purple-400"
+                      />
+                      <div className="flex justify-between text-[10px] text-white/40 font-mono">
+                        <span>10% Faint</span>
+                        <span>100% Solid</span>
+                      </div>
+                    </div>
+
+                    {/* Text Shadow Presets */}
+                    <div className="space-y-2">
+                      <label className="text-xs font-medium text-white/70 block">Text Shadow</label>
+                      <select
+                        value={activeElementConfig.textShadow || 'none'}
+                        onChange={e => updateSelectedElement({ textShadow: e.target.value as any })}
+                        className="w-full bg-black/60 border border-white/15 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-cyan-400 cursor-pointer"
+                      >
+                        <option value="none">None (Clean Flat)</option>
+                        <option value="soft">Soft Ambient Shadow</option>
+                        <option value="crisp">Crisp High-Contrast</option>
+                        <option value="deep">Deep Cinematic Shadow</option>
+                        <option value="outline">Architectural Outline</option>
+                        <option value="neon-glow">Neon Glow Luminescence</option>
+                      </select>
+                    </div>
+
+                    {/* Text Glow Controls */}
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between">
+                        <label className="text-xs font-medium text-white/70">Text Glow Aura</label>
+                        <label className="relative inline-flex items-center cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={!!activeElementConfig.textGlow}
+                            onChange={e => updateSelectedElement({ textGlow: e.target.checked })}
+                            className="sr-only peer"
+                          />
+                          <div className="w-8 h-4 bg-white/20 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-3 after:w-3 after:transition-all peer-checked:bg-cyan-500" />
+                        </label>
+                      </div>
+
+                      {activeElementConfig.textGlow ? (
+                        <div className="space-y-1.5 pt-1">
+                          <div className="flex items-center gap-2">
+                            <input
+                              type="color"
+                              value={activeElementConfig.glowColor || activeElementConfig.color || stagedAccentColor || '#06b6d4'}
+                              onChange={e => updateSelectedElement({ glowColor: e.target.value })}
+                              className="w-6 h-6 rounded cursor-pointer bg-transparent border-0"
+                            />
+                            <div className="flex-1">
+                              <input
+                                type="range"
+                                min="4"
+                                max="36"
+                                value={activeElementConfig.glowIntensity || 14}
+                                onChange={e => updateSelectedElement({ glowIntensity: parseInt(e.target.value) })}
+                                className="w-full accent-cyan-400"
+                              />
+                            </div>
+                            <span className="text-[10px] font-mono text-cyan-300 w-8 text-right">
+                              {activeElementConfig.glowIntensity || 14}px
+                            </span>
+                          </div>
+                        </div>
+                      ) : (
+                        <p className="text-[10px] text-white/40 pt-1">
+                          Enable to render a luminous neon bloom behind letters
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Card 4: Live Interactive Sample Text Sandbox */}
+                <div className="p-4 rounded-2xl bg-white/[0.03] border border-white/10 space-y-4">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-2 border-b border-white/10">
+                    <div>
+                      <h4 className="text-xs font-bold uppercase tracking-wider text-emerald-300 flex items-center gap-1.5">
+                        <Eye className="w-3.5 h-3.5" />
+                        <span>Live Sample Text Sandbox & Real-Time Preview</span>
+                      </h4>
+                      <p className="text-[11px] text-white/50">
+                        Enter customized student subject titles, exam dates, or motivational affirmations to test typography live.
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3 text-xs">
+                    <div>
+                      <label className="text-white/60 text-[11px] mb-1 block">Sample Heading</label>
+                      <input
+                        type="text"
+                        value={sampleHeadingText}
+                        onChange={e => setSampleHeadingText(e.target.value)}
+                        className="w-full bg-black/50 border border-white/10 rounded-xl px-3 py-1.5 text-xs text-white focus:outline-none focus:border-cyan-400"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-white/60 text-[11px] mb-1 block">Sample Widget Title</label>
+                      <input
+                        type="text"
+                        value={sampleWidgetTitle}
+                        onChange={e => setSampleWidgetTitle(e.target.value)}
+                        className="w-full bg-black/50 border border-white/10 rounded-xl px-3 py-1.5 text-xs text-white focus:outline-none focus:border-cyan-400"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-white/60 text-[11px] mb-1 block">Sample Clock Digits</label>
+                      <input
+                        type="text"
+                        value={sampleClockTime}
+                        onChange={e => setSampleClockTime(e.target.value)}
+                        className="w-full bg-black/50 border border-white/10 rounded-xl px-3 py-1.5 text-xs text-white focus:outline-none focus:border-cyan-400 font-mono"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-white/60 text-[11px] mb-1 block">Sample Countdown Days</label>
+                      <input
+                        type="text"
+                        value={sampleCountdownDays}
+                        onChange={e => setSampleCountdownDays(e.target.value)}
+                        className="w-full bg-black/50 border border-white/10 rounded-xl px-3 py-1.5 text-xs text-white focus:outline-none focus:border-cyan-400 font-mono"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Sandbox Live Display Frame */}
+                  <div
+                    className="p-6 rounded-2xl border border-white/15 bg-black/60 shadow-xl overflow-hidden min-h-[140px] flex flex-col justify-center items-center text-center transition-all"
+                  >
+                    <div style={getInlineFontStyle(activeElementConfig)}>
+                      {selectedTypographyElement === 'clockMain'
+                        ? sampleClockTime
+                        : selectedTypographyElement === 'clockDate'
+                        ? 'WEDNESDAY, 17 OCTOBER 2026'
+                        : selectedTypographyElement === 'countdownNumber'
+                        ? `${sampleCountdownDays} DAYS`
+                        : selectedTypographyElement === 'countdownLabel'
+                        ? 'PUBLIC EXAM COUNTDOWN'
+                        : selectedTypographyElement === 'widgetTitle'
+                        ? sampleWidgetTitle
+                        : selectedTypographyElement === 'motivationText'
+                        ? `"${sampleQuoteText}"`
+                        : selectedTypographyElement === 'timetableSubject'
+                        ? 'PHYSICS & MATHEMATICS REVISION'
+                        : selectedTypographyElement === 'timetableTime'
+                        ? '08:30 AM – 10:15 AM'
+                        : selectedTypographyElement === 'taskText'
+                        ? 'Solve 2026 Model Paper Line-by-Line'
+                        : sampleHeadingText}
+                    </div>
+                    <span className="mt-3 text-[10px] font-mono text-white/40 tracking-widest uppercase">
+                      Element: {selectedTypographyElement} • Font: {activeElementConfig.fontFamily || 'inter'} ({activeElementConfig.fontWeight || '400'}) • Size: {activeElementConfig.fontSize || 14}px
+                    </span>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* ================= 15 N0T0 MINIMALIST TYPOGRAPHY STYLES ================= */}
+            {activeTab === 'n0t0' && (
+              <div className="space-y-4">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                  <div>
+                    <h3 className="text-sm font-bold text-white uppercase tracking-wider flex items-center gap-2">
+                      <Sparkles className="w-4 h-4 text-cyan-400" />
+                      <span>15 N0T0-Inspired Minimalist Typography Collection</span>
+                    </h3>
+                    <p className="text-xs text-white/50">
+                      Original minimalist productivity typography featuring editorial whitespace, crisp terminals, and high-legibility clock numerals.
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-1.5 overflow-x-auto text-xs">
+                    {(['all', 'minimal', 'editorial', 'terminal', 'cyber', 'brutalist'] as const).map(cat => (
+                      <button
+                        key={cat}
+                        onClick={() => setN0t0Category(cat)}
+                        className={`px-2.5 py-1 rounded-lg uppercase tracking-wider text-[10px] font-bold transition cursor-pointer ${
+                          n0t0Category === cat
+                            ? 'bg-cyan-500/30 text-cyan-200 border border-cyan-400/50'
+                            : 'bg-white/5 text-white/50 hover:text-white'
+                        }`}
+                      >
+                        {cat}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3.5">
+                  {N0T0_TYPOGRAPHY_STYLES.filter(s => n0t0Category === 'all' || s.category === n0t0Category).map(style => {
+                    const isSelected = stagedTypography.activeN0T0StyleId === style.id;
+
+                    return (
+                      <div
+                        key={style.id}
+                        onClick={() => handleApplyN0T0Style(style)}
+                        className={`group p-4 rounded-2xl border transition-all duration-200 cursor-pointer flex flex-col justify-between ${
+                          isSelected
+                            ? 'border-cyan-400 bg-cyan-500/15 shadow-[0_0_20px_rgba(6,182,212,0.25)]'
+                            : 'border-white/10 bg-white/[0.03] hover:bg-white/[0.06] hover:border-white/20'
+                        }`}
+                      >
+                        <div>
+                          <div className="flex items-center justify-between mb-2">
+                            <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full bg-white/10 text-cyan-300">
+                              {style.badge}
+                            </span>
+                            {isSelected && (
+                              <span className="p-0.5 rounded-full bg-cyan-400 text-black">
+                                <Check className="w-3 h-3 stroke-[3]" />
+                              </span>
+                            )}
+                          </div>
+
+                          {/* Live Clock Digits in this Typography Style */}
+                          <div
+                            className="p-3 rounded-xl bg-black/50 border border-white/5 mb-3 text-center"
+                          >
+                            <div
+                              className="text-2xl tracking-tight text-white transition leading-none py-1"
+                              style={{
+                                fontFamily: style.config.fontFamily ? `'${style.config.fontFamily}', sans-serif` : undefined,
+                                fontWeight: style.config.fontWeight,
+                                letterSpacing: `${style.config.letterSpacing}px`,
+                                textTransform: (style.config.textTransform as any) || 'none',
+                                color: stagedAccentColor,
+                              }}
+                            >
+                              {style.previewClock}
+                            </div>
+                            <div
+                              className="text-[11px] text-white/70 line-clamp-1 mt-1.5"
+                              style={{
+                                fontFamily: style.config.fontFamily ? `'${style.config.fontFamily}', sans-serif` : undefined,
+                                fontStyle: 'italic',
+                              }}
+                            >
+                              "{style.previewSample}"
+                            </div>
+                          </div>
+
+                          <h4 className="text-xs font-bold text-white mb-0.5">{style.name}</h4>
+                          <p className="text-[10px] text-cyan-300/80 font-medium mb-1 line-clamp-1">{style.tagline}</p>
+                          <p className="text-[11px] text-white/50 leading-relaxed line-clamp-2">
+                            {style.description}
+                          </p>
+                        </div>
+
+                        <div className="mt-3 pt-2.5 border-t border-white/5 flex items-center justify-between text-[10px] text-white/40">
+                          <span className="capitalize">{style.category}</span>
+                          <span className="text-cyan-400 font-mono group-hover:underline">Apply Typography</span>
                         </div>
                       </div>
                     );
@@ -1301,6 +2478,85 @@ export default function VisualCustomizationStudio({
             {/* ================= 7. 30 WIDGET APPEARANCE STYLES ================= */}
             {activeTab === 'widgets' && (
               <div className="space-y-4">
+                {/* Transparency Quick Controls */}
+                <div className="p-4 rounded-2xl bg-white/[0.04] border border-white/10 space-y-3">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                    <div>
+                      <h4 className="text-xs font-bold uppercase tracking-wider text-white flex items-center gap-2">
+                        <Sparkles className="w-3.5 h-3.5 text-cyan-400" />
+                        <span>Widget Transparency & Glass Material</span>
+                      </h4>
+                      <p className="text-[11px] text-white/50">
+                        Choose whether widgets render with blurred glass backgrounds or pure seamless transparency.
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setAllStagedTransparency(true)}
+                        className={`px-3 py-1.5 rounded-xl text-xs font-semibold border transition cursor-pointer flex items-center gap-1.5 ${
+                          Object.values(stagedWidgetTransparency).every(Boolean)
+                            ? 'bg-amber-400/25 border-amber-400 text-amber-300 shadow-[0_0_12px_rgba(251,191,36,0.2)]'
+                            : 'bg-white/5 hover:bg-white/10 border-white/10 text-white/70'
+                        }`}
+                      >
+                        <span>Make All Transparent</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setAllStagedTransparency(false)}
+                        className={`px-3 py-1.5 rounded-xl text-xs font-semibold border transition cursor-pointer flex items-center gap-1.5 ${
+                          Object.values(stagedWidgetTransparency).every(v => !v)
+                            ? 'bg-cyan-500/25 border-cyan-400 text-cyan-300 shadow-[0_0_12px_rgba(6,182,212,0.2)]'
+                            : 'bg-white/5 hover:bg-white/10 border-white/10 text-white/70'
+                        }`}
+                      >
+                        <span>Make All Glass</span>
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Individual widget transparency chips */}
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-1">
+                    {[
+                      { key: 'clock', label: 'Flocus Clock' },
+                      { key: 'countdown', label: 'Countdown' },
+                      { key: 'notification', label: 'Routine Alert' },
+                      { key: 'tasks', label: 'Quick Tasks' },
+                      { key: 'calendar', label: 'Calendar' },
+                      { key: 'motivation', label: 'Motivation' },
+                      { key: 'nameWidget', label: 'Centum Badge' },
+                      { key: 'pomodoro', label: 'Pomodoro' },
+                    ].map(item => {
+                      const isTrans = stagedWidgetTransparency[item.key as keyof typeof stagedWidgetTransparency];
+                      return (
+                        <button
+                          key={item.key}
+                          type="button"
+                          onClick={() => {
+                            setStagedWidgetTransparency(prev => ({
+                              ...prev,
+                              [item.key]: !prev[item.key as keyof typeof stagedWidgetTransparency],
+                            }));
+                          }}
+                          className={`p-2 rounded-xl border text-left transition cursor-pointer flex items-center justify-between ${
+                            isTrans
+                              ? 'bg-amber-400/15 border-amber-400/50 text-white'
+                              : 'bg-white/5 border-white/10 text-white/70 hover:bg-white/10'
+                          }`}
+                        >
+                          <span className="text-[11px] font-medium truncate">{item.label}</span>
+                          <span className={`text-[10px] font-mono px-1.5 py-0.2 rounded font-bold ${
+                            isTrans ? 'bg-amber-400 text-black' : 'bg-white/10 text-white/60'
+                          }`}>
+                            {isTrans ? 'Transp' : 'Glass'}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
                 <div>
                   <h3 className="text-sm font-bold text-white uppercase tracking-wider">
                     30 Widget Appearance Styles
@@ -1751,14 +3007,38 @@ export default function VisualCustomizationStudio({
 
           {/* RIGHT: Live Interactive Dashboard Studio Preview */}
           <div className="w-[340px] lg:w-[420px] border-l border-white/10 bg-black/60 hidden md:flex flex-col p-5 overflow-y-auto">
-            <div className="flex items-center justify-between pb-3 border-b border-white/10 mb-4">
+            <div className="flex items-center justify-between pb-3 border-b border-white/10 mb-3">
               <span className="text-xs font-bold uppercase tracking-wider text-cyan-400 flex items-center gap-1.5">
                 <Eye className="w-3.5 h-3.5" />
                 <span>Live Viewport Preview</span>
               </span>
               <span className="text-[10px] font-mono text-white/40">
-                1:1 Scale Simulation
+                1:1 Typography Scale
               </span>
+            </div>
+
+            {/* Preview Mode Selector Pills */}
+            <div className="grid grid-cols-5 gap-1 mb-3 text-[10px] font-mono">
+              {[
+                { id: 'dashboard', label: 'All' },
+                { id: 'clock', label: 'Clock' },
+                { id: 'countdown', label: 'Exam' },
+                { id: 'timetable', label: 'Routine' },
+                { id: 'sandbox', label: 'Sandbox' },
+              ].map(m => (
+                <button
+                  key={m.id}
+                  type="button"
+                  onClick={() => setPreviewMode(m.id as any)}
+                  className={`py-1 rounded-lg transition cursor-pointer text-center ${
+                    previewMode === m.id
+                      ? 'bg-cyan-500 text-black font-bold shadow-sm'
+                      : 'bg-white/5 text-white/60 hover:text-white hover:bg-white/10'
+                  }`}
+                >
+                  {m.label}
+                </button>
+              ))}
             </div>
 
             {/* Simulated Desktop Preview Frame */}
@@ -1780,37 +3060,174 @@ export default function VisualCustomizationStudio({
                 }}
               />
 
-              {/* Simulated Central Clock */}
-              <div className="relative z-10 my-auto text-center">
-                <div
-                  className={`text-3xl font-bold tracking-tight drop-shadow-md ${getFontClass(stagedFontClock)}`}
-                  style={{ color: stagedAccentColor }}
-                >
-                  {previewHoursStr}:{previewMinutesStr}
-                </div>
-                <div
-                  className={`text-[10px] uppercase tracking-widest mt-1 opacity-70 text-white ${getFontClass(stagedFontHeading)}`}
-                >
-                  {stagedClockArch} • {new Date().toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}
-                </div>
-              </div>
+              {/* View 1: Complete Dashboard */}
+              {previewMode === 'dashboard' && (
+                <>
+                  {/* Simulated Central Clock */}
+                  <div className="relative z-10 my-auto text-center">
+                    <div
+                      style={getInlineFontStyle(stagedTypography.elements.clockMain)}
+                      className="transition-all"
+                    >
+                      {previewHoursStr}:{previewMinutesStr}
+                    </div>
+                    <div
+                      style={getInlineFontStyle(stagedTypography.elements.clockDate)}
+                      className="mt-1 transition-all"
+                    >
+                      {stagedClockArch} • {new Date().toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}
+                    </div>
+                  </div>
 
-              {/* Simulated Widgets Row */}
-              <div className="relative z-10 grid grid-cols-2 gap-2 mt-auto">
-                <div
-                  className={`p-2.5 rounded-xl border text-[10px] text-white/90 ${stagedWidgetStyle}`}
-                >
-                  <div className="font-bold text-cyan-300">PUBLIC EXAM</div>
-                  <div className="text-xs font-mono">137 Days Left</div>
-                </div>
+                  {/* Simulated Widgets Row */}
+                  <div className="relative z-10 grid grid-cols-2 gap-2 mt-auto">
+                    <div
+                      className={`p-2.5 rounded-xl border text-[10px] text-white/90 overflow-hidden ${stagedWidgetStyle}`}
+                    >
+                      <div
+                        style={getInlineFontStyle(stagedTypography.elements.widgetTitle)}
+                        className="truncate text-cyan-300"
+                      >
+                        PUBLIC EXAM
+                      </div>
+                      <div
+                        style={getInlineFontStyle(stagedTypography.elements.countdownNumber)}
+                        className="truncate"
+                      >
+                        137 Days
+                      </div>
+                      <div
+                        style={getInlineFontStyle(stagedTypography.elements.countdownLabel)}
+                        className="truncate text-white/50 text-[9px]"
+                      >
+                        REMAINING
+                      </div>
+                    </div>
 
-                <div
-                  className={`p-2.5 rounded-xl border text-[10px] text-white/90 ${stagedWidgetStyle}`}
-                >
-                  <div className="font-bold text-emerald-300">STUDY TASKS</div>
-                  <div className="text-xs font-mono">2 / 3 Completed</div>
+                    <div
+                      className={`p-2.5 rounded-xl border text-[10px] text-white/90 overflow-hidden ${stagedWidgetStyle}`}
+                    >
+                      <div
+                        style={getInlineFontStyle(stagedTypography.elements.widgetTitle)}
+                        className="truncate text-emerald-300"
+                      >
+                        STUDY TASKS
+                      </div>
+                      <div
+                        style={getInlineFontStyle(stagedTypography.elements.taskText)}
+                        className="truncate"
+                      >
+                        Complete physics test
+                      </div>
+                      <div
+                        style={getInlineFontStyle(stagedTypography.elements.buttonLabel)}
+                        className="truncate text-[9px] text-cyan-400 mt-0.5"
+                      >
+                        2 / 3 COMPLETED
+                      </div>
+                    </div>
+                  </div>
+                </>
+              )}
+
+              {/* View 2: Clock Close-up */}
+              {previewMode === 'clock' && (
+                <div className="relative z-10 m-auto text-center w-full px-2">
+                  <div
+                    style={getInlineFontStyle(stagedTypography.elements.clockMain)}
+                    className="leading-none transition-all drop-shadow-lg"
+                  >
+                    {previewHoursStr}:{previewMinutesStr}:{previewSecondsStr}
+                  </div>
+                  <div
+                    style={getInlineFontStyle(stagedTypography.elements.clockDate)}
+                    className="mt-3 opacity-90 transition-all"
+                  >
+                    {new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}
+                  </div>
+                  <div className="mt-2 text-[10px] font-mono text-cyan-400/80 uppercase tracking-widest">
+                    Arch: {stagedClockArch} • Font: {stagedTypography.elements.clockMain?.fontFamily || stagedFontClock}
+                  </div>
                 </div>
-              </div>
+              )}
+
+              {/* View 3: Exam Countdown Close-up */}
+              {previewMode === 'countdown' && (
+                <div className="relative z-10 m-auto text-center w-full px-4 py-4 rounded-2xl bg-black/50 border border-white/10 backdrop-blur-md">
+                  <div
+                    style={getInlineFontStyle(stagedTypography.elements.countdownLabel)}
+                    className="mb-1 text-cyan-300 font-bold"
+                  >
+                    PUBLIC EXAMS BEGIN
+                  </div>
+                  <div
+                    style={getInlineFontStyle(stagedTypography.elements.countdownNumber)}
+                    className="leading-none py-1"
+                  >
+                    {sampleCountdownDays} DAYS
+                  </div>
+                  <div
+                    style={getInlineFontStyle(stagedTypography.elements.widgetBody)}
+                    className="mt-2 text-white/70 text-xs"
+                  >
+                    Target: Chemistry Centum & Advanced Mathematics
+                  </div>
+                </div>
+              )}
+
+              {/* View 4: Routine & Timetable Close-up */}
+              {previewMode === 'timetable' && (
+                <div className="relative z-10 m-auto w-full p-4 rounded-2xl bg-black/60 border border-white/10 backdrop-blur-md space-y-2">
+                  <div
+                    style={getInlineFontStyle(stagedTypography.elements.widgetTitle)}
+                    className="text-amber-300 font-bold"
+                  >
+                    TODAY'S STUDY TIMETABLE
+                  </div>
+                  <div className="space-y-1.5 pt-1">
+                    <div className="p-2 rounded-xl bg-white/5 border border-white/5 flex items-center justify-between">
+                      <span style={getInlineFontStyle(stagedTypography.elements.timetableSubject)}>
+                        Mathematics Calculus
+                      </span>
+                      <span style={getInlineFontStyle(stagedTypography.elements.timetableTime)} className="text-cyan-300">
+                        08:00 – 09:30
+                      </span>
+                    </div>
+                    <div className="p-2 rounded-xl bg-white/5 border border-white/5 flex items-center justify-between">
+                      <span style={getInlineFontStyle(stagedTypography.elements.timetableSubject)}>
+                        Physics Optics Lab
+                      </span>
+                      <span style={getInlineFontStyle(stagedTypography.elements.timetableTime)} className="text-amber-300">
+                        10:00 – 11:30
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* View 5: Selected Element Sandbox */}
+              {previewMode === 'sandbox' && (
+                <div className="relative z-10 m-auto text-center w-full p-4 rounded-2xl bg-black/60 border border-white/10 backdrop-blur-md">
+                  <div className="text-[10px] text-cyan-400 font-mono uppercase tracking-widest mb-2">
+                    Active Element: {selectedTypographyElement}
+                  </div>
+                  <div style={getInlineFontStyle(activeElementConfig)}>
+                    {selectedTypographyElement === 'clockMain'
+                      ? sampleClockTime
+                      : selectedTypographyElement === 'clockDate'
+                      ? 'WEDNESDAY, 17 OCTOBER 2026'
+                      : selectedTypographyElement === 'countdownNumber'
+                      ? `${sampleCountdownDays} DAYS`
+                      : selectedTypographyElement === 'countdownLabel'
+                      ? 'PUBLIC EXAM COUNTDOWN'
+                      : selectedTypographyElement === 'widgetTitle'
+                      ? sampleWidgetTitle
+                      : selectedTypographyElement === 'motivationText'
+                      ? `"${sampleQuoteText}"`
+                      : sampleHeadingText}
+                  </div>
+                </div>
+              )}
             </div>
 
             {/* Currently Staged Configuration Specs */}

@@ -933,6 +933,7 @@ export const STUDIO_FONTS: FontOption[] = [
   { id: 'lato', name: 'Lato', description: 'Warm transparent classical proportions', category: 'Modern Sans', cssClass: 'font-lato' },
   { id: 'system', name: 'System Default', description: 'Native OS font (San Francisco, Segoe UI, Roboto)', category: 'System', cssClass: 'font-system' },
   { id: 'monospace', name: 'Monospace Fallback', description: 'System-native monospace terminal stack', category: 'Monospace', cssClass: 'font-mono' },
+  { id: 'courier-prime', name: 'Courier Prime', description: 'Vintage mechanical typewriter monospace standard', category: 'Monospace', cssClass: 'font-courier-prime' },
 ];
 
 // ================= 4. 30+ WALLPAPERS & BACKGROUND STYLES =================
@@ -1747,3 +1748,495 @@ export interface CustomTextItem {
   y: number;
   visible: boolean;
 }
+
+// ================= 11. ADVANCED ELEMENT TYPOGRAPHY SYSTEM =================
+export interface ElementTypographyConfig {
+  fontFamily?: string;
+  fontSize?: number; // in px
+  fontWeight?: string; // 100 - 900
+  letterSpacing?: number; // in px (-3 to 16)
+  lineHeight?: number; // 0.8 to 2.5
+  textAlign?: 'left' | 'center' | 'right' | 'justify';
+  color?: string; // Hex color code
+  opacity?: number; // 0.1 to 1.0
+  textShadow?: 'none' | 'soft' | 'crisp' | 'deep' | 'outline' | 'neon-glow' | 'custom';
+  textGlow?: boolean;
+  glowColor?: string;
+  glowIntensity?: number; // 2 to 40 px
+  textTransform?: 'none' | 'uppercase' | 'lowercase' | 'capitalize';
+  isItalic?: boolean;
+  isUnderline?: boolean;
+}
+
+export interface DashboardTypographyConfig {
+  globalScale: number; // 0.7 to 1.6 (default 1.0)
+  elements: {
+    clockMain?: ElementTypographyConfig;
+    clockDate?: ElementTypographyConfig;
+    countdownNumber?: ElementTypographyConfig;
+    countdownLabel?: ElementTypographyConfig;
+    widgetTitle?: ElementTypographyConfig;
+    widgetBody?: ElementTypographyConfig;
+    timetableSubject?: ElementTypographyConfig;
+    timetableTime?: ElementTypographyConfig;
+    taskText?: ElementTypographyConfig;
+    motivationText?: ElementTypographyConfig;
+    customText?: ElementTypographyConfig;
+    buttonLabel?: ElementTypographyConfig;
+  };
+  fontClock?: string;
+  fontHeading?: string;
+  fontBody?: string;
+  fontCountdown?: string;
+  fontLabels?: string;
+  activeN0T0StyleId?: string;
+}
+
+export const DEFAULT_ELEMENT_TYPOGRAPHY: Record<string, ElementTypographyConfig> = {
+  clockMain: { fontFamily: 'inter', fontSize: 64, fontWeight: '400', letterSpacing: -1, lineHeight: 1.0, textAlign: 'center', opacity: 1.0, textTransform: 'none' },
+  clockDate: { fontFamily: 'inter', fontSize: 13, fontWeight: '500', letterSpacing: 0.5, lineHeight: 1.2, textAlign: 'center', opacity: 0.8, textTransform: 'none' },
+  countdownNumber: { fontFamily: 'inter', fontSize: 48, fontWeight: '700', letterSpacing: -1, lineHeight: 1.0, textAlign: 'center', opacity: 1.0, textTransform: 'none' },
+  countdownLabel: { fontFamily: 'plus-jakarta', fontSize: 11, fontWeight: '700', letterSpacing: 2, lineHeight: 1.2, textAlign: 'center', opacity: 0.9, textTransform: 'uppercase' },
+  widgetTitle: { fontFamily: 'plus-jakarta', fontSize: 11, fontWeight: '700', letterSpacing: 1.5, lineHeight: 1.2, textAlign: 'left', opacity: 0.9, textTransform: 'uppercase' },
+  widgetBody: { fontFamily: 'inter', fontSize: 12, fontWeight: '400', letterSpacing: 0, lineHeight: 1.4, textAlign: 'left', opacity: 0.85, textTransform: 'none' },
+  timetableSubject: { fontFamily: 'inter', fontSize: 13, fontWeight: '600', letterSpacing: 0, lineHeight: 1.3, textAlign: 'left', opacity: 0.95, textTransform: 'none' },
+  timetableTime: { fontFamily: 'mono-jb', fontSize: 11, fontWeight: '500', letterSpacing: 0.5, lineHeight: 1.2, textAlign: 'left', opacity: 0.75, textTransform: 'none' },
+  taskText: { fontFamily: 'inter', fontSize: 12, fontWeight: '400', letterSpacing: 0, lineHeight: 1.3, textAlign: 'left', opacity: 0.9, textTransform: 'none' },
+  motivationText: { fontFamily: 'inter', fontSize: 13, fontWeight: '500', letterSpacing: 0.2, lineHeight: 1.4, textAlign: 'center', opacity: 0.9, isItalic: true, textTransform: 'none' },
+  customText: { fontFamily: 'inter', fontSize: 13, fontWeight: '400', letterSpacing: 0, lineHeight: 1.4, textAlign: 'left', opacity: 0.9, textTransform: 'none' },
+  buttonLabel: { fontFamily: 'inter', fontSize: 11, fontWeight: '600', letterSpacing: 0.5, lineHeight: 1.2, textAlign: 'center', opacity: 0.85, textTransform: 'none' },
+};
+
+// ================= 12. 15 N0T0-INSPIRED MINIMALIST TYPOGRAPHY COLLECTION =================
+export interface N0T0StyleOption {
+  id: string;
+  name: string;
+  tagline: string;
+  category: 'minimal' | 'editorial' | 'terminal' | 'cyber' | 'brutalist';
+  badge: string;
+  previewClock: string;
+  previewSample: string;
+  description: string;
+  config: {
+    fontFamily: string;
+    fontWeight: string;
+    letterSpacing: number;
+    lineHeight: number;
+    textTransform?: 'none' | 'uppercase' | 'lowercase' | 'capitalize';
+    textShadow?: 'none' | 'soft' | 'crisp' | 'deep' | 'neon-glow' | 'outline' | 'custom';
+    textGlow?: boolean;
+    glowColor?: string;
+    glowIntensity?: number;
+    isItalic?: boolean;
+    isUnderline?: boolean;
+    clockSize?: number;
+    dateSize?: number;
+    countdownSize?: number;
+    labelSize?: number;
+    elementOverrides?: Record<string, Partial<ElementTypographyConfig>>;
+  };
+}
+
+export const N0T0_TYPOGRAPHY_STYLES: N0T0StyleOption[] = [
+  {
+    id: 'n0t0-ultra-minimal-thin',
+    name: 'Ultra-Minimal Thin',
+    tagline: 'Hairline ultra-light typography with expansive architectural letter tracking',
+    category: 'minimal',
+    badge: 'Ultra-Thin',
+    previewClock: '10:42',
+    previewSample: 'PURITY OF PURPOSE • DISTRACTION FREE',
+    description: 'Ultra-refined 200 weight letterforms inspired by high-end minimalist design studios and quiet architectural spaces.',
+    config: {
+      fontFamily: 'inter',
+      fontWeight: '200',
+      letterSpacing: 4,
+      lineHeight: 1.1,
+      textTransform: 'uppercase',
+      textShadow: 'none',
+      clockSize: 68,
+      dateSize: 12,
+      countdownSize: 46,
+      labelSize: 10,
+      elementOverrides: {
+        clockMain: { fontWeight: '200', letterSpacing: 3, textTransform: 'none' },
+        clockDate: { fontWeight: '300', letterSpacing: 2, textTransform: 'uppercase' },
+        countdownLabel: { fontWeight: '300', letterSpacing: 3, textTransform: 'uppercase' },
+        widgetTitle: { fontWeight: '300', letterSpacing: 2, textTransform: 'uppercase' },
+      },
+    },
+  },
+  {
+    id: 'n0t0-clean-editorial',
+    name: 'Clean Editorial',
+    tagline: 'Refined Swiss proportions, balanced rhythm, and delicate italic accents',
+    category: 'editorial',
+    badge: 'Editorial',
+    previewClock: '10:42:00',
+    previewSample: 'Excellence is an art won by training and habituation.',
+    description: 'Magazine-quality typesetting featuring generous line heights, organic geometry, and subtle editorial italic quotes.',
+    config: {
+      fontFamily: 'plus-jakarta',
+      fontWeight: '400',
+      letterSpacing: 0.5,
+      lineHeight: 1.45,
+      textTransform: 'none',
+      textShadow: 'soft',
+      clockSize: 62,
+      dateSize: 13,
+      countdownSize: 46,
+      labelSize: 11,
+      elementOverrides: {
+        clockMain: { fontFamily: 'plus-jakarta', fontWeight: '500', letterSpacing: -0.5 },
+        motivationText: { fontFamily: 'plus-jakarta', fontWeight: '400', isItalic: true },
+        widgetTitle: { fontFamily: 'plus-jakarta', fontWeight: '700', letterSpacing: 1.5, textTransform: 'uppercase' },
+      },
+    },
+  },
+  {
+    id: 'n0t0-large-minimal-digits',
+    name: 'Large Minimal Digits',
+    tagline: 'Dominant poster-scale numerals with compact tabular kerning',
+    category: 'minimal',
+    badge: 'Hero Scale',
+    previewClock: '10:42',
+    previewSample: 'PUBLIC EXAM COUNTDOWN • 137 DAYS LEFT',
+    description: 'Massive, commanding numbers that turn the dashboard into a high-impact focus beacon visible from across the room.',
+    config: {
+      fontFamily: 'bebas-neue',
+      fontWeight: '700',
+      letterSpacing: -1,
+      lineHeight: 0.9,
+      textTransform: 'none',
+      textShadow: 'crisp',
+      clockSize: 96,
+      dateSize: 14,
+      countdownSize: 64,
+      labelSize: 11,
+      elementOverrides: {
+        clockMain: { fontFamily: 'bebas-neue', fontSize: 96, letterSpacing: -1 },
+        countdownNumber: { fontFamily: 'bebas-neue', fontSize: 68, letterSpacing: -1 },
+        widgetTitle: { fontFamily: 'bebas-neue', fontSize: 14, letterSpacing: 2, textTransform: 'uppercase' },
+      },
+    },
+  },
+  {
+    id: 'n0t0-elegant-spaced',
+    name: 'Elegant Spaced Letters',
+    tagline: 'Generously tracked luxury typography with calm, confident negative space',
+    category: 'editorial',
+    badge: 'High Tracking',
+    previewClock: '1 0 : 4 2',
+    previewSample: 'S T U D Y   D A S H B O A R D',
+    description: 'Extreme letter-spacing creates an aura of calm mindfulness, perfect for long deep-work sessions.',
+    config: {
+      fontFamily: 'outfit',
+      fontWeight: '300',
+      letterSpacing: 7,
+      lineHeight: 1.3,
+      textTransform: 'uppercase',
+      textShadow: 'none',
+      clockSize: 58,
+      dateSize: 12,
+      countdownSize: 42,
+      labelSize: 10,
+      elementOverrides: {
+        clockMain: { fontFamily: 'outfit', fontWeight: '300', letterSpacing: 6 },
+        clockDate: { fontFamily: 'outfit', letterSpacing: 4, textTransform: 'uppercase' },
+        widgetTitle: { fontFamily: 'outfit', letterSpacing: 3, textTransform: 'uppercase' },
+      },
+    },
+  },
+  {
+    id: 'n0t0-monospaced-terminal',
+    name: 'Monospaced Terminal',
+    tagline: 'Fixed-pitch developer phosphor glyphs with tabular certainty',
+    category: 'terminal',
+    badge: 'Terminal Dev',
+    previewClock: '10:42:00',
+    previewSample: '[sys:ready] 100% focus • sprint in progress',
+    description: 'Authentic software engineer terminal font with sharp tabular alignment and optional emerald phosphor glow.',
+    config: {
+      fontFamily: 'mono-jb',
+      fontWeight: '500',
+      letterSpacing: 0,
+      lineHeight: 1.2,
+      textTransform: 'none',
+      textGlow: true,
+      glowColor: '#22c55e',
+      glowIntensity: 8,
+      clockSize: 58,
+      dateSize: 12,
+      countdownSize: 44,
+      labelSize: 11,
+      elementOverrides: {
+        clockMain: { fontFamily: 'mono-jb', fontWeight: '600', letterSpacing: 0 },
+        timetableTime: { fontFamily: 'mono-jb', fontWeight: '500' },
+        taskText: { fontFamily: 'mono-jb', fontSize: 11 },
+      },
+    },
+  },
+  {
+    id: 'n0t0-futuristic-technical',
+    name: 'Futuristic Technical',
+    tagline: 'Chiseled aerospace HUD display with biometric cyan telemetry glow',
+    category: 'cyber',
+    badge: 'Sci-Fi HUD',
+    previewClock: '[10:42:00]',
+    previewSample: 'CENTUM ASPIRANT • OPTIMAL REVISION ARC',
+    description: 'Inspired by spacecraft flight decks and Iron Man HUD interfaces, engineered for precision study sprints.',
+    config: {
+      fontFamily: 'orbitron',
+      fontWeight: '600',
+      letterSpacing: 3,
+      lineHeight: 1.15,
+      textTransform: 'uppercase',
+      textGlow: true,
+      glowColor: '#00f0ff',
+      glowIntensity: 14,
+      clockSize: 58,
+      dateSize: 12,
+      countdownSize: 44,
+      labelSize: 10,
+      elementOverrides: {
+        clockMain: { fontFamily: 'orbitron', fontWeight: '700', letterSpacing: 2 },
+        countdownLabel: { fontFamily: 'orbitron', letterSpacing: 3 },
+        widgetTitle: { fontFamily: 'orbitron', letterSpacing: 2 },
+      },
+    },
+  },
+  {
+    id: 'n0t0-condensed',
+    name: 'Condensed Typography',
+    tagline: 'Maximum vertical presence with compact horizontal footprint',
+    category: 'brutalist',
+    badge: 'Condensed',
+    previewClock: '10:42:00',
+    previewSample: 'CHEMISTRY • PHYSICS • MATHEMATICS',
+    description: 'Tall, narrow letterforms that fit substantial information into compact spaces with high aesthetic punch.',
+    config: {
+      fontFamily: 'oswald',
+      fontWeight: '600',
+      letterSpacing: 1,
+      lineHeight: 1.05,
+      textTransform: 'uppercase',
+      textShadow: 'soft',
+      clockSize: 72,
+      dateSize: 13,
+      countdownSize: 52,
+      labelSize: 11,
+      elementOverrides: {
+        clockMain: { fontFamily: 'oswald', fontWeight: '600', letterSpacing: 0 },
+        countdownNumber: { fontFamily: 'oswald', fontWeight: '700' },
+        widgetTitle: { fontFamily: 'oswald', letterSpacing: 1.5 },
+      },
+    },
+  },
+  {
+    id: 'n0t0-bold-geometric',
+    name: 'Bold Geometric',
+    tagline: 'Uncompromising heavyweight impact with brutalist architectural clarity',
+    category: 'brutalist',
+    badge: 'Heavy Impact',
+    previewClock: '10:42',
+    previewSample: 'DISCIPLINE EQUALS FREEDOM',
+    description: 'Extra-heavy 900 weight typography with tight negative space that commands focus and removes mental hesitation.',
+    config: {
+      fontFamily: 'anton',
+      fontWeight: '900',
+      letterSpacing: -2,
+      lineHeight: 0.92,
+      textTransform: 'uppercase',
+      textShadow: 'deep',
+      clockSize: 84,
+      dateSize: 13,
+      countdownSize: 58,
+      labelSize: 11,
+      elementOverrides: {
+        clockMain: { fontFamily: 'anton', letterSpacing: -2 },
+        countdownNumber: { fontFamily: 'anton', letterSpacing: -1 },
+      },
+    },
+  },
+  {
+    id: 'n0t0-outline-text',
+    name: 'Outline Text',
+    tagline: 'Hollow wireframe contour digits floating over dark atmospheric space',
+    category: 'cyber',
+    badge: 'Contour Wire',
+    previewClock: '10:42',
+    previewSample: 'WIREFRAME REVISION MATRIX',
+    description: 'Hollow, stroked typography treatments delivering a futuristic holographic presence without visual weight.',
+    config: {
+      fontFamily: 'oxanium',
+      fontWeight: '800',
+      letterSpacing: 2,
+      lineHeight: 1.1,
+      textTransform: 'uppercase',
+      textShadow: 'outline',
+      clockSize: 66,
+      dateSize: 13,
+      countdownSize: 48,
+      labelSize: 11,
+      elementOverrides: {
+        clockMain: { fontFamily: 'oxanium', textShadow: 'outline', letterSpacing: 2 },
+      },
+    },
+  },
+  {
+    id: 'n0t0-soft-minimal',
+    name: 'Soft Minimal',
+    tagline: 'Calm organic curves with natural warm humanistic legibility',
+    category: 'minimal',
+    badge: 'Warm Zen',
+    previewClock: '10:42',
+    previewSample: 'One steady step every day leads to mastery.',
+    description: 'Humanist geometric sans with gentle terminals and calm optical rhythm designed for prolonged screen reading.',
+    config: {
+      fontFamily: 'dm-sans',
+      fontWeight: '300',
+      letterSpacing: 0.5,
+      lineHeight: 1.4,
+      textTransform: 'none',
+      textShadow: 'none',
+      clockSize: 62,
+      dateSize: 13,
+      countdownSize: 44,
+      labelSize: 11,
+      elementOverrides: {
+        clockMain: { fontFamily: 'dm-sans', fontWeight: '400' },
+        widgetTitle: { fontFamily: 'dm-sans', fontWeight: '600', letterSpacing: 1 },
+      },
+    },
+  },
+  {
+    id: 'n0t0-stark-monochrome',
+    name: 'Stark Monochrome',
+    tagline: 'Strict high-contrast pure black and white OLED zero-distraction',
+    category: 'minimal',
+    badge: 'Pure OLED',
+    previewClock: '10:42',
+    previewSample: 'BLACK & WHITE • ZERO ILLUSION',
+    description: 'Zero hue distractions. Pure binary contrast engineered for students studying in pitch-black rooms or OLED screens.',
+    config: {
+      fontFamily: 'inter',
+      fontWeight: '700',
+      letterSpacing: 1,
+      lineHeight: 1.0,
+      textTransform: 'uppercase',
+      textShadow: 'none',
+      clockSize: 68,
+      dateSize: 13,
+      countdownSize: 50,
+      labelSize: 11,
+      elementOverrides: {
+        clockMain: { color: '#ffffff', fontWeight: '700' },
+        clockDate: { color: '#e2e8f0', letterSpacing: 1.5 },
+      },
+    },
+  },
+  {
+    id: 'n0t0-cinematic-hud',
+    name: 'Cinematic HUD Text',
+    tagline: 'Tactical military-spec sci-fi display with amber arc-reactor aura',
+    category: 'cyber',
+    badge: 'Tactical HUD',
+    previewClock: '10:42:00',
+    previewSample: 'TARGET: 03 MARCH PUBLIC EXAMS',
+    description: 'Square-jawed tactical military typography featuring warm amber HUD glows and crisp tabular target indicators.',
+    config: {
+      fontFamily: 'rajdhani',
+      fontWeight: '700',
+      letterSpacing: 3,
+      lineHeight: 1.1,
+      textTransform: 'uppercase',
+      textGlow: true,
+      glowColor: '#fbbf24',
+      glowIntensity: 12,
+      clockSize: 68,
+      dateSize: 14,
+      countdownSize: 50,
+      labelSize: 11,
+      elementOverrides: {
+        clockMain: { fontFamily: 'rajdhani', fontWeight: '700', letterSpacing: 2 },
+        countdownLabel: { fontFamily: 'rajdhani', letterSpacing: 2.5 },
+      },
+    },
+  },
+  {
+    id: 'n0t0-retro-digital',
+    name: 'Retro Digital',
+    tagline: 'Vintage 1980s quartz wristwatch display and arcade dot-matrix glyphs',
+    category: 'terminal',
+    badge: '80s Quartz',
+    previewClock: '10:42:00',
+    previewSample: 'SCORE 100/100 • STAGE CLEAR',
+    description: 'Nostalgic liquid crystal display aesthetics with distinct segmented character shapes and green arcade phosphor.',
+    config: {
+      fontFamily: 'vt323',
+      fontWeight: '400',
+      letterSpacing: 2,
+      lineHeight: 1.0,
+      textTransform: 'none',
+      textGlow: true,
+      glowColor: '#10b981',
+      glowIntensity: 10,
+      clockSize: 76,
+      dateSize: 18,
+      countdownSize: 56,
+      labelSize: 14,
+      elementOverrides: {
+        clockMain: { fontFamily: 'vt323', fontSize: 78, letterSpacing: 2 },
+        clockDate: { fontFamily: 'vt323', fontSize: 20 },
+      },
+    },
+  },
+  {
+    id: 'n0t0-typewriter',
+    name: 'Typewriter',
+    tagline: 'Mechanical ribbon strike monospace with quiet literary stillness',
+    category: 'editorial',
+    badge: 'Mechanical',
+    previewClock: '10:42:00',
+    previewSample: 'Chapter 4: The calculus of steady progress.',
+    description: 'Classic literary typewriter aesthetic conveying deliberate care, thoughtfulness, and academic depth.',
+    config: {
+      fontFamily: 'space-mono',
+      fontWeight: '400',
+      letterSpacing: 1.5,
+      lineHeight: 1.4,
+      textTransform: 'none',
+      textShadow: 'soft',
+      clockSize: 56,
+      dateSize: 12,
+      countdownSize: 42,
+      labelSize: 11,
+      elementOverrides: {
+        clockMain: { fontFamily: 'space-mono', letterSpacing: 1 },
+        motivationText: { fontFamily: 'space-mono', letterSpacing: 0.5 },
+      },
+    },
+  },
+  {
+    id: 'n0t0-custom-typography',
+    name: 'Custom Typography',
+    tagline: 'Student sandbox with complete freedom over individual element parameters',
+    category: 'minimal',
+    badge: 'Personalized',
+    previewClock: '10:42:00',
+    previewSample: 'Unique student personalized typographic signature',
+    description: 'Full creative freedom. Configure individual font family, weights, sizing, letter-spacing, and glows for every widget.',
+    config: {
+      fontFamily: 'inter',
+      fontWeight: '400',
+      letterSpacing: 0,
+      lineHeight: 1.2,
+      textTransform: 'none',
+      clockSize: 64,
+      dateSize: 13,
+      countdownSize: 48,
+      labelSize: 11,
+    },
+  },
+];
+
