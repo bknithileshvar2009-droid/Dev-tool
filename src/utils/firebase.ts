@@ -19,6 +19,7 @@ import {
   getDoc,
   setDoc,
   getDocFromServer,
+  onSnapshot,
 } from 'firebase/firestore';
 import firebaseConfig from '../../firebase-applet-config.json';
 
@@ -168,6 +169,32 @@ export async function loadUserDashboard(uid: string): Promise<any | null> {
   } catch (err) {
     handleFirestoreError(err, OperationType.GET, path);
   }
+}
+
+/**
+ * Real-time Auto-Sync Listener for User Dashboard
+ */
+export function subscribeToUserDashboard(
+  uid: string,
+  onData: (data: any) => void,
+  onError?: (error: unknown) => void
+): () => void {
+  if (!uid) return () => {};
+  const path = `users/${uid}/dashboard/data`;
+  const docRef = doc(db, 'users', uid, 'dashboard', 'data');
+  return onSnapshot(
+    docRef,
+    (snap) => {
+      if (snap.exists()) {
+        onData(snap.data());
+      }
+    },
+    (err) => {
+      console.warn('Firestore real-time auto sync listener warning:', err);
+      if (onError) onError(err);
+      handleFirestoreError(err, OperationType.GET, path);
+    }
+  );
 }
 
 export {

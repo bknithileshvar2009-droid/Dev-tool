@@ -6,7 +6,10 @@
   -moz-osx-font-smoothing: grayscale;
 }
 
-body {
+html,
+body,
+#root,
+#app {
   margin: 0;
   padding: 0;
   background-color: #030407;
@@ -14,9 +17,13 @@ body {
   overflow: hidden;
   width: 100vw;
   height: 100vh;
+  height: 100dvh;
+  min-height: 100vh;
+  min-height: 100dvh;
   user-select: none;
   -webkit-user-select: none;
   font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+  box-sizing: border-box;
 }
 
 .tabular-digits {
@@ -86,13 +93,7 @@ body:not(.fullscreen-locked):not(.zen-mode) .dashboard-widget:hover .drag-pill {
   opacity: 0.65;
 }
 
-/* Strict Fullscreen & Zen Lockdown */
-body.fullscreen-locked #floating-hud,
-body.fullscreen-locked #laptop-shortcut-bar,
-body.fullscreen-locked .resize-handle,
-body.fullscreen-locked .drag-pill,
-body.fullscreen-locked #drawer-menu,
-body.fullscreen-locked .widget-action-btn,
+/* Zen Mode Lockdown (Hides peripheral chrome) */
 body.zen-mode #floating-hud,
 body.zen-mode #laptop-shortcut-bar,
 body.zen-mode .resize-handle,
@@ -105,11 +106,48 @@ body.zen-mode .widget-action-btn {
   visibility: hidden !important;
 }
 
+/* Fullscreen Mode (F11 / F) Responsive View */
+body.fullscreen-locked .resize-handle,
+body.fullscreen-locked .drag-pill {
+  display: none !important;
+  opacity: 0 !important;
+  pointer-events: none !important;
+  visibility: hidden !important;
+}
+
+body.fullscreen-locked #laptop-shortcut-bar {
+  display: flex !important;
+  opacity: 1 !important;
+  visibility: visible !important;
+  pointer-events: auto !important;
+  position: absolute !important;
+  bottom: 0 !important;
+  margin-bottom: 0.75rem !important;
+  left: 1.5rem !important;
+  z-index: 40 !important;
+}
+
+/* Top-right control buttons / action bar completely hidden in fullscreen mode */
+:fullscreen #floating-hud,
+:-webkit-full-screen #floating-hud,
+html:fullscreen #floating-hud,
+html:-webkit-full-screen #floating-hud,
+body:fullscreen #floating-hud,
+body:-webkit-full-screen #floating-hud,
+#app:fullscreen #floating-hud,
+#app:-webkit-full-screen #floating-hud,
+body.fullscreen-locked #floating-hud,
+.is-fullscreen #floating-hud {
+  display: none !important;
+  opacity: 0 !important;
+  visibility: hidden !important;
+  pointer-events: none !important;
+}
+
 body.fullscreen-locked .dashboard-widget,
 body.zen-mode .dashboard-widget {
   cursor: default !important;
   border-color: transparent !important;
-  box-shadow: none !important;
 }
 
 /* 10 Architectural Clock Designs */

@@ -64,6 +64,7 @@ import {
   auth,
   saveUserDashboard,
   loadUserDashboard,
+  subscribeToUserDashboard,
   signInWithGoogle,
   logOutUser,
   onAuthStateChanged,
@@ -712,6 +713,13 @@ export default function App() {
   const [syncStatus, setSyncStatus] = useState<SyncStatus>('idle');
   const [authError, setAuthError] = useState<string | null>(null);
   const [authLoading, setAuthLoading] = useState(false);
+  const [autoSyncEnabled, setAutoSyncEnabled] = useState<boolean>(() => {
+    const saved = localStorage.getItem('flocus_auto_sync');
+    return saved !== null ? saved === 'true' : true;
+  });
+  const [lastSyncedTime, setLastSyncedTime] = useState<string | null>(null);
+  const isRemoteUpdateRef = useRef<boolean>(false);
+  const lastSyncedPayloadRef = useRef<string | null>(null);
 
   // Backup & Restore State
   const [backupPreview, setBackupPreview] = useState<{
@@ -1159,7 +1167,7 @@ export default function App() {
     setPlacementModal(null);
   }, [placementModal, config, updateConfig, ALL_WIDGET_REGISTRY]);
 
-  // ================= 5. FIREBASE AUTH & REALTIME DATABASE SYNC =================
+  // ================= 5. FIREBASE AUTH & REALTIME DATABASE AUTO-SYNC =================
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async user => {
       setCurrentUser(user);
@@ -1168,6 +1176,7 @@ export default function App() {
         try {
           const cloudData = await loadUserDashboard(user.uid);
           if (cloudData && cloudData.config) {
+            isRemoteUpdateRef.current = true;
             setConfig(prev => ({
               ...prev,
               ...cloudData.config,
@@ -1186,13 +1195,18 @@ export default function App() {
               setTasks(cloudData.tasks);
               localStorage.setItem('flocus_quick_tasks', JSON.stringify(cloudData.tasks));
             }
+            if (cloudData.updatedAt) {
+              setLastSyncedTime(new Date(cloudData.updatedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }));
+            }
           } else {
-            // First time cloud user: save local state to cloud!
+            // First time cloud user: auto-sync local state to cloud!
+            const nowIso = new Date().toISOString();
             await saveUserDashboard(user.uid, {
               config,
               tasks,
-              updatedAt: new Date().toISOString(),
+              updatedAt: nowIso,
             });
+            setLastSyncedTime(new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }));
           }
           setSyncStatus('saved');
         } catch (err) {
@@ -1207,10 +1221,51 @@ export default function App() {
     return () => unsubscribe();
   }, []);
 
-  // Auto-sync debounce to Firebase when authenticated
+  // Real-time bi-directional auto-sync listener from Firestore
+  useEffect(() => {
+    if (!currentUser || !autoSyncEnabled) return;
+
+    const unsubscribe = subscribeToUserDashboard(
+      currentUser.uid,
+      cloudData => {
+        if (!cloudData || !cloudData.config) return;
+        // Ignore remote echo if we just saved this payload
+        if (cloudData.updatedAt && lastSyncedPayloadRef.current === cloudData.updatedAt) return;
+
+        isRemoteUpdateRef.current = true;
+        setConfig(prev => ({
+          ...prev,
+          ...cloudData.config,
+          optionalFeatures: { ...DEFAULT_OPTIONAL_FEATURES, ...(cloudData.config.optionalFeatures || {}) },
+          personalization: { ...DEFAULT_PERSONALIZATION, ...(cloudData.config.personalization || {}) },
+        }));
+        if (cloudData.tasks && Array.isArray(cloudData.tasks)) {
+          setTasks(cloudData.tasks);
+          localStorage.setItem('flocus_quick_tasks', JSON.stringify(cloudData.tasks));
+        }
+        setSyncStatus('saved');
+        if (cloudData.updatedAt) {
+          setLastSyncedTime(new Date(cloudData.updatedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }));
+        }
+      },
+      err => {
+        console.warn('Real-time auto-sync notice:', err);
+      }
+    );
+
+    return () => unsubscribe();
+  }, [currentUser, autoSyncEnabled]);
+
+  // Debounced Auto-Sync to Firebase when config or tasks change
   const syncTimeoutRef = useRef<number | null>(null);
   useEffect(() => {
-    if (!currentUser) return;
+    if (!currentUser || !autoSyncEnabled) return;
+
+    // Skip auto-sync write if this state update was triggered by remote incoming snapshot
+    if (isRemoteUpdateRef.current) {
+      isRemoteUpdateRef.current = false;
+      return;
+    }
 
     if (syncTimeoutRef.current) {
       window.clearTimeout(syncTimeoutRef.current);
@@ -1218,23 +1273,37 @@ export default function App() {
 
     setSyncStatus('saving');
     syncTimeoutRef.current = window.setTimeout(async () => {
+      const nowIso = new Date().toISOString();
+      lastSyncedPayloadRef.current = nowIso;
       try {
         await saveUserDashboard(currentUser.uid, {
           config,
           tasks,
-          updatedAt: new Date().toISOString(),
+          updatedAt: nowIso,
         });
         setSyncStatus('saved');
+        setLastSyncedTime(new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }));
       } catch (err) {
-        console.warn('Cloud sync error:', err);
+        console.warn('Firebase auto-sync error:', err);
         setSyncStatus('error');
       }
-    }, 800);
+    }, 1000);
 
     return () => {
       if (syncTimeoutRef.current) window.clearTimeout(syncTimeoutRef.current);
     };
-  }, [config, tasks, currentUser]);
+  }, [config, tasks, currentUser, autoSyncEnabled]);
+
+  // Online network reconnect auto-sync trigger
+  useEffect(() => {
+    const handleOnline = () => {
+      if (currentUser && autoSyncEnabled) {
+        handleManualSyncNow();
+      }
+    };
+    window.addEventListener('online', handleOnline);
+    return () => window.removeEventListener('online', handleOnline);
+  }, [currentUser, autoSyncEnabled]);
 
   const handleManualSyncNow = async () => {
     if (!currentUser) {
@@ -1244,12 +1313,15 @@ export default function App() {
     }
     setSyncStatus('saving');
     try {
+      const nowIso = new Date().toISOString();
+      lastSyncedPayloadRef.current = nowIso;
       await saveUserDashboard(currentUser.uid, {
         config,
         tasks,
-        updatedAt: new Date().toISOString(),
+        updatedAt: nowIso,
       });
       setSyncStatus('saved');
+      setLastSyncedTime(new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }));
     } catch {
       setSyncStatus('error');
     }
@@ -1715,6 +1787,37 @@ export default function App() {
     const sw = window.innerWidth;
     const sh = window.innerHeight;
 
+    // Responsive dynamic gap: clamp(1rem, 2.5vh, 2.5rem)
+    const gapY = Math.max(16, Math.min(40, Math.round(sh * 0.025)));
+    const gapX = Math.max(16, Math.min(32, Math.round(sw * 0.015)));
+    const bottomReserved = Math.max(52, Math.round(sh * 0.065));
+
+    // If active layout mode is Grid with a selected 50-grid arrangement preset:
+    if (config.layoutMode === 'grid') {
+      const currentPreset =
+        STUDIO_LAYOUT_ARRANGEMENTS.find(p => p.id === (config.selectedGridPresetId || 'preset-grid-1')) ||
+        STUDIO_LAYOUT_ARRANGEMENTS[0];
+      const coords = computePresetWidgetCoordinates(
+        currentPreset,
+        sw,
+        sh,
+        gapY,
+        Math.round(Math.max(16, sw * 0.02))
+      );
+      updateConfig(prev => ({
+        ...prev,
+        clock: { ...prev.clock, ...coords.clock },
+        countdown: { ...prev.countdown, ...coords.countdown },
+        nameWidget: { ...prev.nameWidget, ...coords.nameWidget },
+        tasks: { ...prev.tasks, ...coords.tasks },
+        notification: { ...prev.notification, ...coords.notification },
+        calendar: { ...prev.calendar, ...coords.calendar },
+        motivation: { ...prev.motivation, ...coords.motivation },
+        pomodoro: { ...prev.pomodoro, ...coords.pomodoro },
+      }));
+      return;
+    }
+
     const nameW = config.nameWidget.width || 480;
     const nameH = config.nameWidget.height || 100;
     const clockW = config.clock.width || 580;
@@ -1733,52 +1836,64 @@ export default function App() {
     const pomoH = config.pomodoro?.height || 240;
 
     if (sw >= 1400) {
-      const nameX = Math.max(10, (sw - nameW) / 2);
-      const nameY = 24;
+      // 1. Top section: Title header and Clock hero
+      const nameX = Math.max(10, Math.round((sw - nameW) / 2));
+      const nameY = Math.max(16, Math.round(sh * 0.025));
 
-      const clockX = Math.max(10, (sw - clockW) / 2);
-      const clockY = nameY + nameH + 16;
+      const clockX = Math.max(10, Math.round((sw - clockW) / 2));
+      const clockY = nameY + nameH + gapY;
 
-      const bottomY = clockY + clockH + 20;
-      const cdX = Math.max(20, (sw / 2) - cdW - 15);
-      const notifX = Math.min(sw - notifW - 20, (sw / 2) + 15);
+      const topEnd = clockY + clockH;
+      const availableMiddleH = sh - topEnd - bottomReserved - gapY;
 
-      const tasksX = Math.max(20, sw - tasksW - 30);
-      const tasksY = bottomY;
+      // 2. Middle section center-line balancing
+      const middleY = topEnd + gapY + Math.max(0, Math.round((availableMiddleH - Math.max(cdH, notifH)) / 2));
+      const cdX = Math.max(20, Math.round((sw / 2) - cdW - gapX / 2));
+      const notifX = Math.min(sw - notifW - 20, Math.round((sw / 2) + gapX / 2));
+
+      // 3. Side columns expanding vertically to balance the viewport
       const pomoX = Math.max(20, sw - pomoW - 30);
-      const pomoY = 24;
-      const calX = 30;
+      const pomoY = nameY;
+      const tasksX = Math.max(20, sw - tasksW - 30);
+      const availableRight = sh - pomoY - pomoH - bottomReserved - gapY;
+      const tasksY = Math.min(sh - tasksH - bottomReserved, pomoY + pomoH + gapY + Math.max(0, Math.round((availableRight - tasksH) / 2)));
+
       const motX = 30;
-      const motY = 24;
+      const motY = nameY;
+      const calX = 30;
+      const availableLeft = sh - motY - motH - bottomReserved - gapY;
+      const calY = Math.min(sh - calH - bottomReserved, motY + motH + gapY + Math.max(0, Math.round((availableLeft - calH) / 2)));
 
       updateConfig(prev => ({
         ...prev,
         nameWidget: { ...prev.nameWidget, x: nameX, y: nameY },
         clock: { ...prev.clock, x: clockX, y: clockY },
-        countdown: { ...prev.countdown, x: cdX, y: bottomY },
-        notification: { ...prev.notification, x: notifX, y: bottomY },
+        countdown: { ...prev.countdown, x: cdX, y: middleY },
+        notification: { ...prev.notification, x: notifX, y: middleY },
         tasks: { ...prev.tasks, x: tasksX, y: tasksY },
-        calendar: { ...prev.calendar, x: calX, y: bottomY },
+        calendar: { ...prev.calendar, x: calX, y: calY },
         motivation: { ...prev.motivation, x: motX, y: motY },
         pomodoro: { ...prev.pomodoro, x: pomoX, y: pomoY },
       }));
     } else {
-      const nameX = Math.max(10, (sw - nameW) / 2);
-      const nameY = 15;
-      const clockX = Math.max(10, (sw - clockW) / 2);
-      const clockY = nameY + nameH + 12;
-      const cdX = Math.max(10, (sw - cdW) / 2);
-      const cdY = clockY + clockH + 14;
-      const notifX = Math.max(10, (sw - notifW) / 2);
-      const notifY = cdY + cdH + 14;
-      const tasksX = Math.max(10, (sw - tasksW) / 2);
-      const tasksY = notifY + notifH + 14;
-      const pomoX = Math.max(10, (sw - pomoW) / 2);
-      const pomoY = tasksY + tasksH + 14;
-      const calX = Math.max(10, (sw - calW) / 2);
-      const calY = pomoY + pomoH + 14;
-      const motX = Math.max(10, (sw - motW) / 2);
-      const motY = calY + calH + 14;
+      const nameX = Math.max(10, Math.round((sw - nameW) / 2));
+      const nameY = Math.max(12, Math.round(sh * 0.015));
+      const stepGap = Math.max(8, Math.min(18, Math.round(gapY * 0.65)));
+
+      const clockX = Math.max(10, Math.round((sw - clockW) / 2));
+      const clockY = nameY + nameH + stepGap;
+      const cdX = Math.max(10, Math.round((sw - cdW) / 2));
+      const cdY = clockY + clockH + stepGap;
+      const notifX = Math.max(10, Math.round((sw - notifW) / 2));
+      const notifY = cdY + cdH + stepGap;
+      const tasksX = Math.max(10, Math.round((sw - tasksW) / 2));
+      const tasksY = notifY + notifH + stepGap;
+      const pomoX = Math.max(10, Math.round((sw - pomoW) / 2));
+      const pomoY = tasksY + tasksH + stepGap;
+      const calX = Math.max(10, Math.round((sw - calW) / 2));
+      const calY = pomoY + pomoH + stepGap;
+      const motX = Math.max(10, Math.round((sw - motW) / 2));
+      const motY = calY + calH + stepGap;
 
       updateConfig(prev => ({
         ...prev,
@@ -1793,6 +1908,8 @@ export default function App() {
       }));
     }
   }, [
+    config.layoutMode,
+    config.selectedGridPresetId,
     config.nameWidget.width,
     config.nameWidget.height,
     config.clock.width,
@@ -1841,22 +1958,40 @@ export default function App() {
     recenterWidgets,
   ]);
 
-  // Sync fullscreen change
+  // Sync fullscreen change & window resize with dynamic layout rebalancing
   useEffect(() => {
     const handleFullscreenChange = () => {
-      const isFull = !!document.fullscreenElement;
+      const isFull = !!(document.fullscreenElement || (document as any).webkitFullscreenElement);
       setIsFullscreen(isFull);
+      const hudEl = document.getElementById('floating-hud');
       if (isFull) {
         document.body.classList.add('fullscreen-locked');
         setDrawerOpen(false);
+        if (hudEl) {
+          hudEl.style.display = 'none';
+        }
       } else {
         document.body.classList.remove('fullscreen-locked');
+        if (hudEl) {
+          hudEl.style.display = 'flex';
+        }
       }
+      recenterWidgets();
+    };
+
+    const handleResize = () => {
+      recenterWidgets();
     };
 
     document.addEventListener('fullscreenchange', handleFullscreenChange);
-    return () => document.removeEventListener('fullscreenchange', handleFullscreenChange);
-  }, []);
+    document.addEventListener('webkitfullscreenchange', handleFullscreenChange);
+    window.addEventListener('resize', handleResize);
+    return () => {
+      document.removeEventListener('fullscreenchange', handleFullscreenChange);
+      document.removeEventListener('webkitfullscreenchange', handleFullscreenChange);
+      window.removeEventListener('resize', handleResize);
+    };
+  }, [recenterWidgets]);
 
   useEffect(() => {
     if (zenMode) {
@@ -2574,9 +2709,12 @@ export default function App() {
   return (
     <div
       ref={dashboardRef}
+      id="app"
       onContextMenu={handleContextMenu}
       onClick={handleDashboardClick}
-      className={`relative w-screen h-screen overflow-hidden select-none bg-[#030407] text-slate-100 ${
+      className={`relative w-screen h-screen min-h-screen h-[100dvh] overflow-hidden select-none bg-[#030407] text-slate-100 ${
+        isFullscreen ? 'is-fullscreen' : ''
+      } ${
         isPlacementModeActive ? 'cursor-crosshair' : !config.optionalFeatures.widgetCustomization ? 'cursor-default' : ''
       }`}
     >
@@ -2599,7 +2737,10 @@ export default function App() {
       {/* ================= FLOATING ACTION CONTROLS (TOP RIGHT CORNER) ================= */}
       <div
         id="floating-hud"
-        className="absolute top-4 right-4 sm:top-6 sm:right-6 z-40 flex items-center gap-2 transition-all duration-300"
+        style={{ display: isFullscreen ? 'none' : 'flex' }}
+        className={`absolute top-4 right-4 sm:top-6 sm:right-6 z-40 items-center gap-2 transition-all duration-300 ${
+          isFullscreen ? 'hidden pointer-events-none opacity-0' : 'flex'
+        }`}
       >
         {/* Click-to-Add Placement Mode Button */}
         <button
@@ -2675,7 +2816,7 @@ export default function App() {
       {/* ================= LAPTOP KEYBOARD SHORTCUTS BAR ================= */}
       <div
         id="laptop-shortcut-bar"
-        className="absolute bottom-4 left-6 z-40 hidden md:flex items-center gap-3 py-1.5 px-3.5 rounded-full bg-black/40 backdrop-blur-md border border-white/10 text-[11px] text-white/60 transition-opacity duration-300"
+        className="absolute bottom-0 mb-3 left-6 z-40 hidden md:flex items-center gap-3 py-1.5 px-3.5 rounded-full bg-black/40 backdrop-blur-md border border-white/10 text-[11px] text-white/60 transition-all duration-300"
       >
         <span>
           <kbd className="px-1.5 py-0.5 rounded bg-white/10 font-mono text-cyan-300 text-[10px]">V</kbd> Studio
@@ -2698,15 +2839,42 @@ export default function App() {
         </span>
         <span className="opacity-30">•</span>
         {currentUser ? (
-          <span className="flex items-center gap-1 text-emerald-400 font-medium">
-            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
-            <span>Cloud Synced</span>
-          </span>
+          <button
+            type="button"
+            onClick={handleManualSyncNow}
+            title={
+              autoSyncEnabled
+                ? `Firebase Auto-Sync Active (Last: ${lastSyncedTime || 'recent'}). Click to sync immediately.`
+                : 'Firebase Auto-Sync is Paused. Click to sync.'
+            }
+            className="flex items-center gap-1.5 text-emerald-400 font-medium hover:text-emerald-300 cursor-pointer transition"
+          >
+            <span
+              className={`w-2 h-2 rounded-full ${
+                syncStatus === 'saving' ? 'bg-amber-400 animate-ping' : autoSyncEnabled ? 'bg-emerald-400' : 'bg-amber-400'
+              }`}
+            />
+            <span>
+              {syncStatus === 'saving'
+                ? 'Auto-Syncing...'
+                : autoSyncEnabled
+                ? 'Firebase Auto-Synced'
+                : 'Auto-Sync Paused'}
+            </span>
+          </button>
         ) : (
-          <span className="flex items-center gap-1 text-white/40">
-            <span className="w-1.5 h-1.5 rounded-full bg-white/40" />
-            <span>Local Storage</span>
-          </span>
+          <button
+            type="button"
+            onClick={() => {
+              setActiveTab('cloud');
+              setDrawerOpen(true);
+            }}
+            title="Click to sign in with Google and activate Firebase Auto-Sync"
+            className="flex items-center gap-1.5 text-cyan-300 hover:text-cyan-200 cursor-pointer transition font-medium"
+          >
+            <Cloud className="w-3.5 h-3.5 text-cyan-400" />
+            <span>Connect Firebase Auto-Sync</span>
+          </button>
         )}
       </div>
 
@@ -4662,6 +4830,56 @@ export default function App() {
               </div>
             )}
 
+            {/* Live Auto-Sync Controller Card */}
+            <div className="p-4 rounded-2xl bg-white/[0.03] border border-white/10 space-y-3">
+              <div className="flex items-center justify-between">
+                <div>
+                  <div className="flex items-center gap-2">
+                    <RefreshCw className={`w-4 h-4 ${syncStatus === 'saving' ? 'animate-spin text-amber-400' : 'text-emerald-400'}`} />
+                    <span className="text-xs font-semibold text-white">Live Firebase Auto-Sync</span>
+                  </div>
+                  <p className="text-[11px] text-white/50 mt-0.5">
+                    Automatically saves and syncs widget layouts, themes, notes, and tasks
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const next = !autoSyncEnabled;
+                    setAutoSyncEnabled(next);
+                    localStorage.setItem('flocus_auto_sync', String(next));
+                    if (next && currentUser) {
+                      handleManualSyncNow();
+                    }
+                  }}
+                  className={`w-11 h-6 rounded-full transition-colors duration-200 ease-in-out relative shrink-0 cursor-pointer ${
+                    autoSyncEnabled ? 'bg-emerald-500' : 'bg-white/20'
+                  }`}
+                  aria-label="Toggle Auto Sync to Firebase"
+                >
+                  <span
+                    className={`inline-block w-4 h-4 transform bg-white rounded-full transition duration-200 ease-in-out mt-1 ml-1 ${
+                      autoSyncEnabled ? 'translate-x-5' : 'translate-x-0'
+                    }`}
+                  />
+                </button>
+              </div>
+
+              <div className="pt-2 border-t border-white/5 flex items-center justify-between text-[11px]">
+                <span className="text-white/40">Sync Engine:</span>
+                <span className="font-mono text-emerald-300">
+                  {autoSyncEnabled ? 'Real-Time Bi-Directional Snapshot' : 'Paused'}
+                </span>
+              </div>
+
+              {lastSyncedTime && (
+                <div className="flex items-center justify-between text-[11px]">
+                  <span className="text-white/40">Last Auto-Synced:</span>
+                  <span className="font-mono text-cyan-300">{lastSyncedTime}</span>
+                </div>
+              )}
+            </div>
+
             <div className="p-4 rounded-2xl bg-white/[0.03] border border-white/10 space-y-3">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
@@ -4677,7 +4895,7 @@ export default function App() {
                       : 'bg-white/10 text-white/50'
                   }`}
                 >
-                  {syncStatus === 'saved' ? '● Synced to Firestore' : syncStatus === 'saving' ? '⟳ Syncing...' : 'Local Storage Only'}
+                  {syncStatus === 'saved' ? '● Auto-Synced to Firestore' : syncStatus === 'saving' ? '⟳ Syncing...' : 'Local Storage Only'}
                 </span>
               </div>
 
