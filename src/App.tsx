@@ -51,6 +51,13 @@ import {
   Volume2,
   VolumeX,
   Minimize,
+  Crosshair,
+  Grid,
+  Move,
+  MousePointerClick,
+  Layers,
+  ArrowRight,
+  CornerDownRight,
 } from 'lucide-react';
 import { MOTIVATION_QUOTES, MotivationQuote } from './utils/quotes';
 import {
@@ -64,6 +71,12 @@ import {
   SyncStatus,
 } from './utils/firebase';
 import VisualCustomizationStudio from './components/VisualCustomizationStudio';
+import AnimatedCharacterBackdrop from './components/AnimatedCharacterBackdrop';
+import {
+  STUDIO_LAYOUT_ARRANGEMENTS,
+  computePresetWidgetCoordinates,
+  DashboardWidgetKey,
+} from './utils/layoutPresetsData';
 import {
   STUDIO_THEMES,
   STUDIO_FONTS,
@@ -76,6 +89,10 @@ import {
   N0T0_TYPOGRAPHY_STYLES,
   N0T0StyleOption,
   CustomTextItem,
+  CanvasThemeType,
+  WidgetSpecificStyle,
+  DashboardWidgetStyles,
+  AnimationControlsConfig,
 } from './utils/visualStudioData';
 
 // Web Audio API Synthesizer for study alerts & task completions
@@ -303,7 +320,8 @@ export const DEFAULT_PERSONALIZATION: PersonalizationConfig = {
 interface DashboardConfig {
   activeWallpaper: string;
   wallpaperUrl: string;
-  canvasTheme: 'none' | 'aurora' | 'nebula' | 'cyberpunk' | 'matrix' | 'fireflies' | 'minimal' | 'starlight' | 'embers' | 'thunder' | 'digital-rain' | 'warp-speed';
+  videoUrl?: string;
+  canvasTheme: CanvasThemeType;
   bgDimmer: number;
   bgBlur: number;
   animationIntensity: number;
@@ -311,6 +329,17 @@ interface DashboardConfig {
   routineMode: 'school' | 'leave';
   optionalFeatures: OptionalFeaturesConfig;
   personalization: PersonalizationConfig;
+  layoutMode?: 'grid' | 'freeform';
+  selectedGridPresetId?: string;
+  gridGaps?: number;
+  gridMargins?: number;
+  gridAlignment?: 'center' | 'top' | 'stretch';
+  snapToGrid?: boolean;
+  snapGridSize?: number;
+  freeformLayout?: Record<string, { x: number; y: number; width: number; height: number; zIndex?: number }>;
+  gridLayout?: Record<string, { x: number; y: number; width: number; height: number }>;
+  animationControls?: AnimationControlsConfig;
+  widgetStyles?: DashboardWidgetStyles;
   motivation: {
     visible: boolean;
     glassBg: boolean;
@@ -405,32 +434,68 @@ interface DashboardConfig {
 }
 
 const DEFAULT_CONFIG: DashboardConfig = {
-  activeWallpaper: 'lofi-tokyo',
-  wallpaperUrl: 'https://images.unsplash.com/photo-1509198397868-475647b2a1e5?auto=format&fit=crop&w=2400&q=85',
-  canvasTheme: 'none',
-  bgDimmer: 30,
-  bgBlur: 0,
-  bgSaturation: 100,
-  bgBrightness: 100,
+  activeWallpaper: 'hero-doctor-doom',
+  wallpaperUrl: 'https://images.unsplash.com/photo-1518709268805-4e9042af9f23?auto=format&fit=crop&w=2400&q=85',
+  canvasTheme: 'doom-animated',
+  bgDimmer: 35,
+  bgBlur: 1,
+  bgSaturation: 115,
+  bgBrightness: 95,
   animationIntensity: 1.0,
   isWallpaperStatic: false,
   wallpaperScaling: 'cover',
-  widgetStyle: 'subtle-dark-glass',
-  activeThemeId: 'obsidian-glass',
+  widgetStyle: 'metallic-panel',
+  activeThemeId: 'hero-doctor-doom',
+  layoutMode: 'grid',
+  selectedGridPresetId: 'preset-grid-1',
+  gridGaps: 16,
+  gridMargins: 24,
+  gridAlignment: 'center',
+  snapToGrid: true,
+  snapGridSize: 20,
+  animationControls: {
+    enabled: true,
+    intensity: 'medium',
+    speed: 1.0,
+    energyColor: '#10b981',
+    energyIntensity: 75,
+    focalPosition: 'left',
+    characterScale: 100,
+    dimmer: 35,
+    overlayOpacity: 88,
+  },
+  widgetStyles: {
+    global: {
+      bgColor: '#0c1a14',
+      bgOpacity: 82,
+      blur: 18,
+      borderColor: '#059669',
+      borderWidth: 1,
+      borderRadius: 20,
+      shadowColor: 'rgba(0,0,0,0.65)',
+      shadowBlur: 25,
+      glowColor: '#10b981',
+      glowIntensity: 35,
+      textColor: '#ffffff',
+      accentColor: '#10b981',
+      padding: 16,
+    },
+    overrides: {},
+  },
   typography: {
     globalScale: 1.0,
     elements: DEFAULT_ELEMENT_TYPOGRAPHY,
-    fontClock: 'inter',
-    fontHeading: 'inter',
-    fontBody: 'inter',
-    fontCountdown: 'inter',
-    fontLabels: 'inter',
+    fontClock: 'orbitron',
+    fontHeading: 'orbitron',
+    fontBody: 'rajdhani',
+    fontCountdown: 'orbitron',
+    fontLabels: 'rajdhani',
   },
   customColors: {
-    accent: '#06b6d4',
+    accent: '#10b981',
     primaryText: '#ffffff',
-    secondaryText: '#94a3b8',
-    surface: '#0c1220',
+    secondaryText: '#cbd5e1',
+    surface: '#0c1a14',
   },
   routineMode: 'school',
   optionalFeatures: DEFAULT_OPTIONAL_FEATURES,
@@ -542,6 +607,20 @@ export default function App() {
           customColors: { ...DEFAULT_CONFIG.customColors, ...(parsed.customColors || {}) },
           widgetStyle: parsed.widgetStyle || DEFAULT_CONFIG.widgetStyle,
           activeThemeId: parsed.activeThemeId || DEFAULT_CONFIG.activeThemeId,
+          layoutMode: parsed.layoutMode || DEFAULT_CONFIG.layoutMode,
+          selectedGridPresetId: parsed.selectedGridPresetId || DEFAULT_CONFIG.selectedGridPresetId,
+          gridGaps: parsed.gridGaps ?? DEFAULT_CONFIG.gridGaps,
+          gridMargins: parsed.gridMargins ?? DEFAULT_CONFIG.gridMargins,
+          gridAlignment: parsed.gridAlignment || DEFAULT_CONFIG.gridAlignment,
+          snapToGrid: parsed.snapToGrid ?? DEFAULT_CONFIG.snapToGrid,
+          snapGridSize: parsed.snapGridSize ?? DEFAULT_CONFIG.snapGridSize,
+          freeformLayout: parsed.freeformLayout || {},
+          gridLayout: parsed.gridLayout || {},
+          animationControls: { ...DEFAULT_CONFIG.animationControls, ...(parsed.animationControls || {}) },
+          widgetStyles: {
+            global: { ...DEFAULT_CONFIG.widgetStyles?.global, ...(parsed.widgetStyles?.global || {}) },
+            overrides: parsed.widgetStyles?.overrides || {},
+          },
           bgBrightness: parsed.bgBrightness ?? 100,
           bgSaturation: parsed.bgSaturation ?? 100,
           wallpaperScaling: parsed.wallpaperScaling || 'cover',
@@ -664,6 +743,16 @@ export default function App() {
   const calendarRef = useRef<HTMLDivElement | null>(null);
   const motivationRef = useRef<HTMLDivElement | null>(null);
   const pomodoroRef = useRef<HTMLDivElement | null>(null);
+  const dashboardRef = useRef<HTMLDivElement | null>(null);
+  const [placementModal, setPlacementModal] = useState<{
+    isOpen: boolean;
+    x: number;
+    y: number;
+    occupiedBy: DashboardWidgetKey | null;
+    occupiedWidgetLabel: string | null;
+    nearestGridSlot?: { name: string; cellX: number; cellY: number };
+  } | null>(null);
+  const [isPlacementModeActive, setIsPlacementModeActive] = useState<boolean>(false);
 
   // Interaction tracking (drag/resize)
   const dragResizeState = useRef<{
@@ -778,6 +867,297 @@ export default function App() {
       !config.pomodoro?.glassBg
     );
   }, [config]);
+
+  // ================= EXACT CLICK-TO-ADD WIDGET PLACEMENT & STYLING =================
+  const ALL_WIDGET_REGISTRY = useMemo<{
+    id: DashboardWidgetKey;
+    label: string;
+    defaultW: number;
+    defaultH: number;
+    icon: any;
+    category: string;
+  }[]>(() => [
+    { id: 'clock', label: 'Master Architectural Clock', defaultW: 580, defaultH: 180, icon: ClockIcon, category: 'Time' },
+    { id: 'countdown', label: 'Public Exam Countdown', defaultW: 460, defaultH: 170, icon: Target, category: 'Exam' },
+    { id: 'nameWidget', label: 'Centum Student Title Banner', defaultW: 480, defaultH: 100, icon: Award, category: 'Profile' },
+    { id: 'tasks', label: 'Target Checklist / Sprint', defaultW: 360, defaultH: 340, icon: CheckCircle2, category: 'Sprint' },
+    { id: 'notification', label: 'Routine Alert & Schedule', defaultW: 460, defaultH: 170, icon: CalendarIcon, category: 'Routine' },
+    { id: 'calendar', label: 'Exam Study Calendar', defaultW: 380, defaultH: 340, icon: CalendarIcon, category: 'Calendar' },
+    { id: 'motivation', label: 'Daily Intention & Motivation', defaultW: 440, defaultH: 140, icon: Sparkles, category: 'Mindset' },
+    { id: 'pomodoro', label: 'Pomodoro Focus Timer', defaultW: 360, defaultH: 240, icon: Zap, category: 'Focus' },
+  ], []);
+
+  const hexToRgba = useCallback((hex: string, alpha: number): string => {
+    if (!hex) return `rgba(12, 26, 20, ${alpha})`;
+    if (hex.startsWith('rgba') || hex.startsWith('rgb')) return hex;
+    let c = hex.replace('#', '');
+    if (c.length === 3) c = c.split('').map(x => x + x).join('');
+    const num = parseInt(c, 16);
+    if (isNaN(num)) return `rgba(12, 26, 20, ${alpha})`;
+    return `rgba(${(num >> 16) & 255}, ${(num >> 8) & 255}, ${num & 255}, ${alpha})`;
+  }, []);
+
+  const getWidgetComputedStyle = useCallback((widgetKey: DashboardWidgetKey): React.CSSProperties => {
+    const wConfig = (config as any)[widgetKey];
+    const glassBg = wConfig?.glassBg ?? true;
+    const customOverrides = config.widgetStyles?.overrides?.[widgetKey];
+    const globalStyle = config.widgetStyles?.global;
+    const style = customOverrides || globalStyle;
+
+    const isDoom = config.activeThemeId === 'hero-doctor-doom' || config.canvasTheme === 'doom-animated';
+    const isIronMan = config.activeThemeId === 'hero-iron-man' || config.canvasTheme === 'ironman-animated';
+    const isStandoff = config.activeThemeId === 'hero-doom-vs-ironman' || config.canvasTheme === 'doom-vs-ironman-animated';
+
+    const defaultBg = isDoom
+      ? 'rgba(12, 26, 20, 0.84)'
+      : isIronMan
+      ? 'rgba(24, 8, 12, 0.82)'
+      : isStandoff
+      ? 'rgba(14, 20, 26, 0.85)'
+      : 'rgba(15, 23, 42, 0.78)';
+
+    const defaultBorder = isDoom
+      ? 'rgba(16, 185, 129, 0.45)'
+      : isIronMan
+      ? 'rgba(239, 68, 68, 0.48)'
+      : isStandoff
+      ? 'rgba(16, 185, 129, 0.45)'
+      : 'rgba(255, 255, 255, 0.12)';
+
+    const defaultGlow = isDoom
+      ? 'rgba(16, 185, 129, 0.35)'
+      : isIronMan
+      ? 'rgba(239, 68, 68, 0.35)'
+      : isStandoff
+      ? 'rgba(6, 182, 212, 0.3)'
+      : 'transparent';
+
+    if (!glassBg) {
+      return {
+        backgroundColor: 'transparent',
+        borderColor: 'transparent',
+        boxShadow: 'none',
+        backdropFilter: 'none',
+        WebkitBackdropFilter: 'none',
+      };
+    }
+
+    const base: React.CSSProperties = {};
+
+    if (style) {
+      if (style.bgColor) {
+        const opacity = (style.bgOpacity ?? 82) / 100;
+        base.backgroundColor = style.bgColor.startsWith('#')
+          ? hexToRgba(style.bgColor, opacity)
+          : style.bgColor;
+      } else {
+        base.backgroundColor = defaultBg;
+      }
+
+      if (style.blur !== undefined) {
+        base.backdropFilter = `blur(${style.blur}px)`;
+        base.WebkitBackdropFilter = `blur(${style.blur}px)`;
+      } else {
+        base.backdropFilter = 'blur(18px)';
+        base.WebkitBackdropFilter = 'blur(18px)';
+      }
+
+      base.borderColor = style.borderColor || defaultBorder;
+      base.borderWidth = `${style.borderWidth ?? 1}px`;
+      base.borderRadius = `${style.borderRadius ?? 20}px`;
+
+      const shadowBlur = style.shadowBlur ?? 25;
+      const shadowCol = style.shadowColor || 'rgba(0,0,0,0.65)';
+      const glowCol = style.glowColor || defaultGlow;
+      const glowInt = (style.glowIntensity ?? 30) / 100;
+      base.boxShadow = `0 ${shadowBlur}px ${shadowBlur * 1.5}px ${shadowCol}, 0 0 ${Math.round(20 * glowInt)}px ${glowCol}`;
+
+      if (style.textColor) base.color = style.textColor;
+      if (style.padding !== undefined) base.padding = `${style.padding}px`;
+      if (style.fontFamily) base.fontFamily = style.fontFamily;
+    } else {
+      base.backgroundColor = defaultBg;
+      base.borderColor = defaultBorder;
+      base.boxShadow = `0 20px 40px rgba(0,0,0,0.65), 0 0 16px ${defaultGlow}`;
+      base.backdropFilter = 'blur(18px)';
+      base.WebkitBackdropFilter = 'blur(18px)';
+    }
+
+    return base;
+  }, [config, hexToRgba]);
+
+  const handleDashboardClick = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
+    const target = e.target as HTMLElement;
+    if (
+      target.closest('button') ||
+      target.closest('input') ||
+      target.closest('textarea') ||
+      target.closest('select') ||
+      target.closest('#floating-hud') ||
+      target.closest('.widget-placement-popover') ||
+      target.closest('.context-menu-container') ||
+      target.closest('.no-canvas-click') ||
+      target.closest('.task-item-action') ||
+      target.closest('.resize-handle')
+    ) {
+      return;
+    }
+
+    setContextMenu(null);
+
+    const rect = dashboardRef.current?.getBoundingClientRect() || { left: 0, top: 0 };
+    const clickX = Math.round(e.clientX - rect.left);
+    const clickY = Math.round(e.clientY - rect.top);
+
+    let occupiedId: DashboardWidgetKey | null = null;
+    let occupiedLabel: string | null = null;
+
+    for (const item of ALL_WIDGET_REGISTRY) {
+      const wConfig = (config as any)[item.id];
+      if (wConfig && wConfig.visible !== false) {
+        const wx = wConfig.x ?? 50;
+        const wy = wConfig.y ?? 50;
+        const ww = wConfig.width || item.defaultW;
+        const wh = wConfig.height || item.defaultH;
+        if (clickX >= wx && clickX <= wx + ww && clickY >= wy && clickY <= wy + wh) {
+          occupiedId = item.id;
+          occupiedLabel = item.label;
+          break;
+        }
+      }
+    }
+
+    const currentPreset = STUDIO_LAYOUT_ARRANGEMENTS.find(p => p.id === (config.selectedGridPresetId || 'preset-grid-1')) || STUDIO_LAYOUT_ARRANGEMENTS[0];
+    const usableW = Math.max(600, window.innerWidth - (config.gridMargins ?? 24) * 2);
+    const usableH = Math.max(500, window.innerHeight - (config.gridMargins ?? 24) * 2);
+
+    let nearestSlot = currentPreset.slots.find(s => {
+      const sx = (config.gridMargins ?? 24) + (s.xPercent / 100) * usableW;
+      const sy = (config.gridMargins ?? 24) + (s.yPercent / 100) * usableH;
+      const sw = (s.wPercent / 100) * usableW;
+      const sh = (s.hPercent / 100) * usableH;
+      return clickX >= sx && clickX <= sx + sw && clickY >= sy && clickY <= sy + sh;
+    });
+
+    if (!nearestSlot && currentPreset.slots.length > 0) {
+      let minDist = Infinity;
+      currentPreset.slots.forEach(s => {
+        const sx = (config.gridMargins ?? 24) + (s.xPercent / 100) * usableW + (s.wPercent / 200) * usableW;
+        const sy = (config.gridMargins ?? 24) + (s.yPercent / 100) * usableH + (s.hPercent / 200) * usableH;
+        const dist = Math.hypot(clickX - sx, clickY - sy);
+        if (dist < minDist) {
+          minDist = dist;
+          nearestSlot = s;
+        }
+      });
+    }
+
+    setPlacementModal({
+      isOpen: true,
+      x: clickX,
+      y: clickY,
+      occupiedBy: occupiedId,
+      occupiedWidgetLabel: occupiedLabel,
+      nearestGridSlot: nearestSlot ? { name: nearestSlot.label, cellX: Math.round(nearestSlot.xPercent), cellY: Math.round(nearestSlot.yPercent) } : undefined,
+    });
+  }, [config, ALL_WIDGET_REGISTRY]);
+
+  const handlePlaceWidgetAtSelectedPosition = useCallback((
+    widgetKey: DashboardWidgetKey,
+    mode: 'exact' | 'nearby' | 'swap' = 'exact'
+  ) => {
+    if (!placementModal) return;
+
+    const def = ALL_WIDGET_REGISTRY.find(w => w.id === widgetKey);
+    const existingW = (config as any)[widgetKey];
+    const targetW = existingW?.width || def?.defaultW || 360;
+    const targetH = existingW?.height || def?.defaultH || 180;
+
+    let finalX = placementModal.x;
+    let finalY = placementModal.y;
+
+    if (mode === 'nearby' && placementModal.occupiedBy) {
+      const occW = (config as any)[placementModal.occupiedBy];
+      const ow = occW?.width || 360;
+      const oh = occW?.height || 180;
+      const ox = occW?.x ?? placementModal.x;
+      const oy = occW?.y ?? placementModal.y;
+
+      if (ox + ow + targetW + 24 <= window.innerWidth) {
+        finalX = ox + ow + 20;
+        finalY = oy;
+      } else if (oy + oh + targetH + 24 <= window.innerHeight) {
+        finalX = ox;
+        finalY = oy + oh + 20;
+      } else {
+        finalX = Math.max(20, ox - targetW - 20);
+        finalY = oy;
+      }
+    } else if (config.layoutMode === 'grid') {
+      const usableW = Math.max(600, window.innerWidth - (config.gridMargins ?? 24) * 2);
+      const usableH = Math.max(500, window.innerHeight - (config.gridMargins ?? 24) * 2);
+      const currentPreset = STUDIO_LAYOUT_ARRANGEMENTS.find(p => p.id === (config.selectedGridPresetId || 'preset-grid-1')) || STUDIO_LAYOUT_ARRANGEMENTS[0];
+      const matchSlot = currentPreset.slots.find(s => s.widgetKey === widgetKey) || currentPreset.slots[0];
+      if (matchSlot && mode === 'exact') {
+        finalX = Math.round((config.gridMargins ?? 24) + (matchSlot.xPercent / 100) * usableW);
+        finalY = Math.round((config.gridMargins ?? 24) + (matchSlot.yPercent / 100) * usableH);
+      }
+    } else if (config.snapToGrid) {
+      const snap = config.snapGridSize || 20;
+      finalX = Math.round(finalX / snap) * snap;
+      finalY = Math.round(finalY / snap) * snap;
+    }
+
+    finalX = Math.round(Math.max(10, Math.min(window.innerWidth - targetW - 10, finalX)));
+    finalY = Math.round(Math.max(10, Math.min(window.innerHeight - targetH - 10, finalY)));
+
+    if (mode === 'swap' && placementModal.occupiedBy) {
+      const occKey = placementModal.occupiedBy;
+      const occOld = (config as any)[occKey];
+      const selfOld = (config as any)[widgetKey];
+
+      updateConfig(prev => ({
+        ...prev,
+        [widgetKey]: {
+          ...prev[widgetKey],
+          visible: true,
+          x: occOld?.x ?? finalX,
+          y: occOld?.y ?? finalY,
+        },
+        [occKey]: {
+          ...prev[occKey],
+          x: selfOld?.x ?? 50,
+          y: selfOld?.y ?? 50,
+        },
+        freeformLayout: {
+          ...(prev.freeformLayout || {}),
+          [widgetKey]: { x: occOld?.x ?? finalX, y: occOld?.y ?? finalY, width: targetW, height: targetH },
+          [occKey]: { x: selfOld?.x ?? 50, y: selfOld?.y ?? 50, width: occOld?.width || 360, height: occOld?.height || 180 },
+        },
+      }));
+    } else {
+      updateConfig(prev => ({
+        ...prev,
+        [widgetKey]: {
+          ...prev[widgetKey],
+          visible: true,
+          x: finalX,
+          y: finalY,
+        },
+        freeformLayout: {
+          ...(prev.freeformLayout || {}),
+          [widgetKey]: {
+            x: finalX,
+            y: finalY,
+            width: targetW,
+            height: targetH,
+          },
+        },
+      }));
+    }
+
+    setPlacementModal(null);
+  }, [placementModal, config, updateConfig, ALL_WIDGET_REGISTRY]);
 
   // ================= 5. FIREBASE AUTH & REALTIME DATABASE SYNC =================
   useEffect(() => {
@@ -2193,30 +2573,27 @@ export default function App() {
 
   return (
     <div
+      ref={dashboardRef}
       onContextMenu={handleContextMenu}
-      onClick={() => setContextMenu(null)}
-      className={`relative w-screen h-screen overflow-hidden select-none bg-[#030407] text-slate-100 ${!config.optionalFeatures.widgetCustomization ? 'cursor-default' : ''}`}
+      onClick={handleDashboardClick}
+      className={`relative w-screen h-screen overflow-hidden select-none bg-[#030407] text-slate-100 ${
+        isPlacementModeActive ? 'cursor-crosshair' : !config.optionalFeatures.widgetCustomization ? 'cursor-default' : ''
+      }`}
     >
-      {/* ================= BACKDROP WALLPAPER & CANVAS ================= */}
-      {config.wallpaperUrl && (
-        <img
-          src={config.wallpaperUrl}
-          alt="Wallpaper"
-          className="absolute inset-0 w-full h-full z-[1] pointer-events-none transition-opacity duration-500"
-          style={{
-            objectFit: (config.wallpaperScaling || 'cover') as any,
-            filter: `blur(${config.bgBlur}px) brightness(${config.bgBrightness ?? 100}%) saturate(${config.bgSaturation ?? 100}%)`,
-          }}
-        />
-      )}
-      <canvas ref={canvasRef} className="absolute inset-0 w-full h-full z-[0] pointer-events-none" />
-      <div
-        className="absolute inset-0 pointer-events-none transition-all duration-300 z-[2]"
-        style={{ backgroundColor: `rgba(0, 0, 0, ${(isFocusModeActive ? Math.max(75, config.bgDimmer) : config.bgDimmer) / 100})` }}
-      />
-      <div
-        className="absolute inset-0 pointer-events-none z-[3]"
-        style={{ background: 'radial-gradient(circle at center, transparent 40%, rgba(0,0,0,0.75) 100%)' }}
+      {/* ================= CINEMATIC ANIMATED BACKDROP & WALLPAPER LAYER ================= */}
+      <AnimatedCharacterBackdrop
+        canvasTheme={config.canvasTheme}
+        wallpaperUrl={config.wallpaperUrl}
+        videoUrl={config.videoUrl}
+        isStatic={config.isWallpaperStatic}
+        reducedMotion={config.personalization.reducedMotion}
+        dimmer={isFocusModeActive ? Math.max(75, config.bgDimmer) : config.bgDimmer}
+        blur={config.bgBlur}
+        brightness={config.bgBrightness}
+        saturation={config.bgSaturation}
+        scaling={config.wallpaperScaling || 'cover'}
+        controls={config.animationControls}
+        activeThemeId={config.activeThemeId}
       />
 
       {/* ================= FLOATING ACTION CONTROLS (TOP RIGHT CORNER) ================= */}
@@ -2224,6 +2601,43 @@ export default function App() {
         id="floating-hud"
         className="absolute top-4 right-4 sm:top-6 sm:right-6 z-40 flex items-center gap-2 transition-all duration-300"
       >
+        {/* Click-to-Add Placement Mode Button */}
+        <button
+          onClick={() => {
+            setIsPlacementModeActive(prev => !prev);
+            if (!isPlacementModeActive) {
+              setPlacementModal({
+                isOpen: true,
+                x: Math.round(window.innerWidth / 2 - 190),
+                y: Math.round(window.innerHeight / 2 - 160),
+                occupiedBy: null,
+                occupiedWidgetLabel: null,
+              });
+            } else {
+              setPlacementModal(null);
+            }
+          }}
+          title={isPlacementModeActive ? 'Exit Widget Placement Mode' : 'Click to Add / Place Widget At Selected Location'}
+          aria-label="Toggle Widget Placement Mode"
+          className={`p-2.5 sm:p-3 min-w-[44px] min-h-[44px] sm:min-w-[48px] sm:min-h-[48px] rounded-2xl hud-btn cursor-pointer flex items-center justify-center border transition shadow-sm ${
+            isPlacementModeActive
+              ? 'bg-emerald-500/30 border-emerald-400 text-emerald-300 shadow-[0_0_20px_rgba(16,185,129,0.35)] ring-1 ring-emerald-400'
+              : 'bg-black/40 hover:bg-black/60 border-white/10 text-white/80 hover:text-white'
+          }`}
+        >
+          <Crosshair className={`w-4 h-4 sm:w-5 sm:h-5 ${isPlacementModeActive ? 'animate-spin' : ''}`} />
+        </button>
+
+        {/* Visual Customization Studio Button (Themes, Wallpapers, 50 Presets) */}
+        <button
+          onClick={() => setStudioOpen(true)}
+          title="Studio (Themes, Wallpapers & 50 Grid Layouts) [Press V]"
+          aria-label="Open Studio Customization"
+          className="p-2.5 sm:p-3 min-w-[44px] min-h-[44px] sm:min-w-[48px] sm:min-h-[48px] rounded-2xl hud-btn cursor-pointer flex items-center justify-center bg-black/40 hover:bg-black/60 border border-white/10 text-emerald-300 hover:text-emerald-200 transition shadow-sm"
+        >
+          <Palette className="w-4 h-4 sm:w-5 sm:h-5" />
+        </button>
+
         {/* Fullscreen Mode Icon */}
         <button
           onClick={() => {
@@ -2334,6 +2748,7 @@ export default function App() {
             height: config.motivation.height || 140,
             left: config.motivation.x ?? 30,
             top: config.motivation.y ?? 24,
+            ...getWidgetComputedStyle('motivation'),
           }}
         >
           {showHandles && (
@@ -2413,6 +2828,7 @@ export default function App() {
             height: config.nameWidget.height || 100,
             left: config.nameWidget.x ?? 100,
             top: config.nameWidget.y ?? 20,
+            ...getWidgetComputedStyle('nameWidget'),
           }}
         >
           {showHandles && (
@@ -2486,6 +2902,7 @@ export default function App() {
             height: config.clock.height || 180,
             left: config.clock.x ?? 100,
             top: config.clock.y ?? 130,
+            ...getWidgetComputedStyle('clock'),
           }}
         >
           {showHandles && (
@@ -2582,6 +2999,7 @@ export default function App() {
             height: config.countdown.height || 170,
             left: config.countdown.x ?? 100,
             top: config.countdown.y ?? 340,
+            ...getWidgetComputedStyle('countdown'),
           }}
         >
           {showHandles && (
@@ -2705,6 +3123,7 @@ export default function App() {
             height: config.notification.height || 170,
             left: config.notification.x ?? 580,
             top: config.notification.y ?? 340,
+            ...getWidgetComputedStyle('notification'),
           }}
         >
           {showHandles && (
@@ -2813,6 +3232,7 @@ export default function App() {
             height: config.calendar.height || 340,
             left: config.calendar.x ?? 30,
             top: config.countdown.y ? config.countdown.y : 340,
+            ...getWidgetComputedStyle('calendar'),
           }}
         >
           {showHandles && (
@@ -2953,6 +3373,7 @@ export default function App() {
             height: config.tasks.height || 340,
             left: config.tasks.x ?? 1060,
             top: config.tasks.y ?? 340,
+            ...getWidgetComputedStyle('tasks'),
           }}
         >
           {showHandles && (
@@ -3092,6 +3513,7 @@ export default function App() {
             height: config.pomodoro?.height || 240,
             left: config.pomodoro?.x ?? 580,
             top: config.pomodoro?.y ?? 530,
+            ...getWidgetComputedStyle('pomodoro'),
           }}
         >
           {showHandles && (
@@ -5132,6 +5554,194 @@ export default function App() {
           </div>
         )}
       </div>
+
+      {/* ================= CLICK-TO-ADD WIDGET PLACEMENT MODAL & TARGET PREVIEW ================= */}
+      {placementModal && placementModal.isOpen && (
+        <>
+          {/* Target Reticle Anchor at Exact Clicked Coordinates */}
+          <div
+            className="fixed pointer-events-none z-50 -translate-x-1/2 -translate-y-1/2 flex items-center justify-center transition-all duration-150"
+            style={{ left: placementModal.x, top: placementModal.y }}
+          >
+            <div className="w-12 h-12 rounded-full border border-emerald-400/60 animate-ping absolute" />
+            <div className="w-8 h-8 rounded-full border-2 border-emerald-400 flex items-center justify-center bg-emerald-500/10 shadow-[0_0_15px_rgba(16,185,129,0.5)]">
+              <Crosshair className="w-4 h-4 text-emerald-300" />
+            </div>
+            <div className="absolute top-7 px-2 py-0.5 rounded-md bg-black/80 backdrop-blur-md border border-white/20 text-[9px] font-mono text-emerald-300 whitespace-nowrap shadow-md">
+              {placementModal.x}px, {placementModal.y}px
+            </div>
+          </div>
+
+          {/* Placement Popover Card */}
+          <div
+            className="fixed z-50 w-80 sm:w-96 rounded-2xl bg-[#090d16]/95 backdrop-blur-2xl border border-white/20 p-4 shadow-[0_25px_60px_rgba(0,0,0,0.9)] text-white text-xs space-y-3 widget-placement-popover animate-in fade-in zoom-in-95 duration-150"
+            style={{
+              left: Math.max(10, Math.min(window.innerWidth - 390, placementModal.x - 20)),
+              top: Math.max(10, Math.min(window.innerHeight - 490, placementModal.y + 20)),
+            }}
+            onClick={e => e.stopPropagation()}
+          >
+            {/* Header with Coordinates & Indicator */}
+            <div className="flex items-start justify-between pb-2.5 border-b border-white/10">
+              <div className="space-y-1">
+                <div className="flex items-center gap-2">
+                  <Crosshair className="w-4 h-4 text-emerald-400 animate-spin" />
+                  <span className="font-bold tracking-wide uppercase text-xs text-white">
+                    {placementModal.occupiedBy ? 'Position Occupied' : 'Add Widget At Position'}
+                  </span>
+                </div>
+                <div className="flex items-center gap-2 text-[10px] font-mono text-white/60 flex-wrap">
+                  <span className="px-1.5 py-0.5 rounded bg-white/10 text-emerald-300">
+                    X: {placementModal.x}px • Y: {placementModal.y}px
+                  </span>
+                  <span className="px-1.5 py-0.5 rounded bg-cyan-500/15 text-cyan-300">
+                    {config.layoutMode === 'freeform' ? 'Freeform Canvas' : `Grid: ${placementModal.nearestGridSlot?.name || 'Nearest Slot'}`}
+                  </span>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setPlacementModal(null)}
+                className="p-1 rounded-lg hover:bg-white/10 text-white/50 hover:text-white cursor-pointer"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
+
+            {/* Occupied Warning & Collision Resolution Choices */}
+            {placementModal.occupiedBy && (
+              <div className="p-2.5 rounded-xl bg-amber-500/10 border border-amber-500/30 space-y-2">
+                <div className="flex items-center gap-2 text-amber-300 font-semibold text-[11px]">
+                  <AlertTriangle className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                  <span>Occupied by {placementModal.occupiedWidgetLabel}</span>
+                </div>
+                <p className="text-[10px] text-white/70 leading-relaxed">
+                  Choose how to place your widget without deleting or duplicating existing content:
+                </p>
+                <div className="grid grid-cols-2 gap-1.5 pt-1">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const other = ALL_WIDGET_REGISTRY.find(w => w.id !== placementModal.occupiedBy);
+                      if (other) handlePlaceWidgetAtSelectedPosition(other.id, 'swap');
+                    }}
+                    className="py-1.5 px-2 rounded-lg bg-amber-400/20 hover:bg-amber-400/30 text-amber-200 border border-amber-400/40 text-[10px] font-semibold transition cursor-pointer flex items-center justify-center gap-1"
+                  >
+                    <ArrowRight className="w-3 h-3" />
+                    <span>Swap Position</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const firstHidden = ALL_WIDGET_REGISTRY.find(w => !(config as any)[w.id]?.visible) || ALL_WIDGET_REGISTRY[0];
+                      handlePlaceWidgetAtSelectedPosition(firstHidden.id, 'nearby');
+                    }}
+                    className="py-1.5 px-2 rounded-lg bg-cyan-500/20 hover:bg-cyan-500/30 text-cyan-200 border border-cyan-400/40 text-[10px] font-semibold transition cursor-pointer flex items-center justify-center gap-1"
+                  >
+                    <CornerDownRight className="w-3 h-3" />
+                    <span>Place Nearby (+Offset)</span>
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Widget Selection Header */}
+            <div className="flex items-center justify-between text-[10px] text-white/50 uppercase font-bold tracking-wider">
+              <span>Select Widget to Place Here</span>
+              <span>8 Available</span>
+            </div>
+
+            {/* List of 8 Widgets */}
+            <div className="space-y-1.5 max-h-56 overflow-y-auto pr-1">
+              {ALL_WIDGET_REGISTRY.map(widget => {
+                const Icon = widget.icon;
+                const isVisible = (config as any)[widget.id]?.visible !== false;
+                const isCurrentOccupier = placementModal.occupiedBy === widget.id;
+
+                return (
+                  <div
+                    key={widget.id}
+                    className={`flex items-center justify-between p-2 rounded-xl border transition ${
+                      isCurrentOccupier
+                        ? 'bg-amber-500/15 border-amber-500/40'
+                        : isVisible
+                        ? 'bg-white/[0.04] hover:bg-white/[0.08] border-white/10'
+                        : 'bg-emerald-500/10 hover:bg-emerald-500/20 border-emerald-500/30'
+                    }`}
+                  >
+                    <div className="flex items-center gap-2 min-w-0">
+                      <div
+                        className={`w-6 h-6 rounded-lg flex items-center justify-center shrink-0 ${
+                          isVisible ? 'bg-cyan-500/20 text-cyan-300' : 'bg-emerald-500/20 text-emerald-300'
+                        }`}
+                      >
+                        <Icon className="w-3.5 h-3.5" />
+                      </div>
+                      <div className="min-w-0">
+                        <div className="font-semibold text-white truncate text-[11px]">
+                          {widget.label}
+                        </div>
+                        <div className="text-[9px] text-white/50">
+                          {isVisible ? 'Active on dashboard' : 'Hidden • Ready to add'}
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-1 shrink-0">
+                      {isVisible && !isCurrentOccupier ? (
+                        <button
+                          type="button"
+                          onClick={() => handlePlaceWidgetAtSelectedPosition(widget.id, 'exact')}
+                          className="px-2 py-1 rounded-lg bg-cyan-500/25 hover:bg-cyan-500/40 border border-cyan-400/40 text-[10px] font-semibold text-cyan-200 transition cursor-pointer"
+                          title="Move this widget to the clicked location"
+                        >
+                          Move Here
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => handlePlaceWidgetAtSelectedPosition(widget.id, 'exact')}
+                          className={`px-2 py-1 rounded-lg border text-[10px] font-semibold transition cursor-pointer flex items-center gap-1 ${
+                            isCurrentOccupier
+                              ? 'bg-amber-400/20 text-amber-200 border-amber-400/40'
+                              : 'bg-emerald-500/30 hover:bg-emerald-500/45 text-emerald-200 border-emerald-400/50'
+                          }`}
+                        >
+                          <Plus className="w-3 h-3" />
+                          <span>{isCurrentOccupier ? 'Reposition' : 'Add Here'}</span>
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Mode & Grid Snapping Quick Controls */}
+            <div className="pt-2 border-t border-white/10 flex items-center justify-between text-[10px] text-white/60">
+              <button
+                type="button"
+                onClick={() => updateConfig(p => ({ ...p, layoutMode: p.layoutMode === 'grid' ? 'freeform' : 'grid' }))}
+                className="px-2 py-1 rounded-md bg-white/10 hover:bg-white/20 text-white font-medium transition cursor-pointer flex items-center gap-1"
+              >
+                {config.layoutMode === 'freeform' ? <Move className="w-2.5 h-2.5 text-cyan-300" /> : <Grid className="w-2.5 h-2.5 text-emerald-300" />}
+                <span>Mode: {config.layoutMode === 'freeform' ? 'Freeform' : '50 Grid Layouts'}</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setPlacementModal(null);
+                  setStudioOpen(true);
+                }}
+                className="text-emerald-300 hover:text-emerald-200 underline font-medium cursor-pointer"
+              >
+                Open 50 Layouts Gallery
+              </button>
+            </div>
+          </div>
+        </>
+      )}
 
       {/* ================= RIGHT-CLICK CONTEXT MENU ================= */}
       {contextMenu && contextMenu.visible && (

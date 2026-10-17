@@ -4,6 +4,58 @@
  */
 
 // ================= 1. THEMES (30+ THEMES INC. 20 AVENGERS SUPERHERO THEMES) =================
+export type CanvasThemeType =
+  | 'none'
+  | 'aurora'
+  | 'nebula'
+  | 'cyberpunk'
+  | 'matrix'
+  | 'fireflies'
+  | 'minimal'
+  | 'starlight'
+  | 'embers'
+  | 'thunder'
+  | 'digital-rain'
+  | 'warp-speed'
+  | 'doom-animated'
+  | 'ironman-animated'
+  | 'doom-vs-ironman-animated'
+  | 'civil-war-animated';
+
+export interface WidgetSpecificStyle {
+  bgColor?: string;
+  bgOpacity?: number; // 0 to 100
+  blur?: number; // 0 to 32 (px)
+  borderColor?: string;
+  borderWidth?: number; // 0 to 4 (px)
+  borderRadius?: number; // 0 to 40 (px)
+  shadowColor?: string;
+  shadowBlur?: number; // 0 to 40 (px)
+  glowColor?: string;
+  glowIntensity?: number; // 0 to 100 (%)
+  textColor?: string;
+  accentColor?: string;
+  fontFamily?: string;
+  padding?: number; // 8 to 32 (px)
+}
+
+export interface DashboardWidgetStyles {
+  global: WidgetSpecificStyle;
+  overrides: Record<string, WidgetSpecificStyle>;
+}
+
+export interface AnimationControlsConfig {
+  enabled: boolean;
+  intensity: 'low' | 'medium' | 'high';
+  speed: number; // 0.5, 1.0, 1.5, 2.0
+  energyColor: string;
+  energyIntensity: number; // 0 to 100
+  focalPosition: 'left' | 'center' | 'right' | 'split';
+  characterScale: number; // 80 to 120 (%)
+  dimmer: number; // 0 to 90 (%)
+  overlayOpacity: number; // 0 to 100 (%)
+}
+
 export interface ThemeOption {
   id: string;
   name: string;
@@ -16,7 +68,7 @@ export interface ThemeOption {
   previewWidgetBg: string;
   previewWidgetBorder: string;
   wallpaperUrl: string;
-  canvasTheme: 'none' | 'aurora' | 'nebula' | 'cyberpunk' | 'matrix' | 'fireflies' | 'minimal' | 'starlight' | 'embers' | 'thunder' | 'digital-rain' | 'warp-speed';
+  canvasTheme: CanvasThemeType;
   bgDimmer: number;
   bgBlur: number;
   bgSaturation: number;
@@ -30,23 +82,77 @@ export interface ThemeOption {
   fontHeading: string;
   fontBody: string;
   clockArchitecture: string;
+  isAnimated?: boolean;
+  animationIntensity?: number;
+  animationSpeed?: number;
+  energyColor?: string;
+  characterPosition?: 'left' | 'right' | 'split' | 'center';
+  characterScale?: number;
+  wallpaperType?: 'image' | 'video' | 'canvas';
+  videoUrl?: string;
+  defaultWidgetStyle?: WidgetSpecificStyle;
 }
 
 export const STUDIO_THEMES: ThemeOption[] = [
   // --- AVENGERS SUPERHERO COLLECTION (20 CINEMATIC & MINIMAL THEMES) ---
   {
+    id: 'hero-doctor-doom',
+    name: 'Doctor Doom (Latverian Monarch)',
+    tagline: 'Imperial titanium mask, emerald cowl velvet and animated Latverian energy runes',
+    category: 'superhero',
+    previewBg: '#070d0a',
+    previewAccent: '#10b981',
+    previewText: '#f8fafc',
+    previewSecondary: '#cbd5e1',
+    previewWidgetBg: 'rgba(12, 26, 20, 0.82)',
+    previewWidgetBorder: 'rgba(16, 185, 129, 0.45)',
+    wallpaperUrl: 'https://images.unsplash.com/photo-1518709268805-4e9042af9f23?auto=format&fit=crop&w=2400&q=85',
+    canvasTheme: 'doom-animated',
+    bgDimmer: 40,
+    bgBlur: 1,
+    bgSaturation: 115,
+    bgBrightness: 95,
+    accentColor: '#10b981',
+    primaryTextColor: '#ffffff',
+    secondaryTextColor: '#cbd5e1',
+    surfaceColor: '#0c1a14',
+    widgetStyle: 'metallic-panel',
+    fontClock: 'orbitron',
+    fontHeading: 'orbitron',
+    fontBody: 'rajdhani',
+    clockArchitecture: 'minimal',
+    isAnimated: true,
+    animationIntensity: 1.0,
+    animationSpeed: 1.0,
+    energyColor: '#10b981',
+    characterPosition: 'left',
+    characterScale: 100,
+    defaultWidgetStyle: {
+      bgColor: '#0c1a14',
+      bgOpacity: 82,
+      blur: 18,
+      borderColor: '#059669',
+      borderWidth: 1,
+      borderRadius: 20,
+      glowColor: '#10b981',
+      glowIntensity: 35,
+      accentColor: '#10b981',
+      textColor: '#ffffff',
+    },
+  },
+  {
     id: 'hero-iron-man',
     name: 'Iron Man (Mark LXXXV)',
-    tagline: 'Crimson titanium, hot-rod gold, arc-reactor cyan & holographic HUD',
+    tagline: 'Crimson titanium, hot-rod gold, animated arc-reactor cyan & holographic HUD',
     category: 'superhero',
     previewBg: '#0b0406',
     previewAccent: '#ef4444',
     previewText: '#ffffff',
     previewSecondary: '#fbbf24',
-    previewWidgetBg: 'rgba(24, 8, 12, 0.75)',
-    previewWidgetBorder: 'rgba(239, 68, 68, 0.45)',
+    previewWidgetBg: 'rgba(24, 8, 12, 0.78)',
+    previewWidgetBorder: 'rgba(239, 68, 68, 0.48)',
     wallpaperUrl: 'https://images.unsplash.com/photo-1579783902614-a3fb3927b675?auto=format&fit=crop&w=2400&q=85',
-    canvasTheme: 'embers',
+    canvasTheme: 'ironman-animated',
     bgDimmer: 45,
     bgBlur: 2,
     bgSaturation: 130,
@@ -60,6 +166,114 @@ export const STUDIO_THEMES: ThemeOption[] = [
     fontHeading: 'orbitron',
     fontBody: 'rajdhani',
     clockArchitecture: 'iron-armor',
+    isAnimated: true,
+    animationIntensity: 1.0,
+    animationSpeed: 1.0,
+    energyColor: '#00f0ff',
+    characterPosition: 'right',
+    characterScale: 100,
+    defaultWidgetStyle: {
+      bgColor: '#18080c',
+      bgOpacity: 80,
+      blur: 18,
+      borderColor: '#ef4444',
+      borderWidth: 1,
+      borderRadius: 20,
+      glowColor: '#ef4444',
+      glowIntensity: 32,
+      accentColor: '#ef4444',
+      textColor: '#ffffff',
+    },
+  },
+  {
+    id: 'hero-doom-vs-ironman',
+    name: 'Doctor Doom vs Iron Man (Cinematic Standoff)',
+    tagline: 'Latverian emerald magic against Stark arc reactor — dual animated energy fields',
+    category: 'superhero',
+    previewBg: '#090a0f',
+    previewAccent: '#10b981',
+    previewText: '#ffffff',
+    previewSecondary: '#ef4444',
+    previewWidgetBg: 'rgba(14, 18, 24, 0.82)',
+    previewWidgetBorder: 'rgba(16, 185, 129, 0.45)',
+    wallpaperUrl: 'https://images.unsplash.com/photo-1579783902614-a3fb3927b675?auto=format&fit=crop&w=2400&q=85',
+    canvasTheme: 'doom-vs-ironman-animated',
+    bgDimmer: 42,
+    bgBlur: 1,
+    bgSaturation: 120,
+    bgBrightness: 95,
+    accentColor: '#10b981',
+    primaryTextColor: '#ffffff',
+    secondaryTextColor: '#fde68a',
+    surfaceColor: '#0e141c',
+    widgetStyle: 'hud-technical',
+    fontClock: 'orbitron',
+    fontHeading: 'orbitron',
+    fontBody: 'rajdhani',
+    clockArchitecture: 'iron-armor',
+    isAnimated: true,
+    animationIntensity: 1.0,
+    animationSpeed: 1.0,
+    energyColor: '#10b981',
+    characterPosition: 'split',
+    characterScale: 100,
+    defaultWidgetStyle: {
+      bgColor: '#0e141c',
+      bgOpacity: 84,
+      blur: 20,
+      borderColor: '#10b981',
+      borderWidth: 1,
+      borderRadius: 22,
+      glowColor: '#059669',
+      glowIntensity: 35,
+      accentColor: '#10b981',
+      textColor: '#ffffff',
+    },
+  },
+  {
+    id: 'hero-civil-war',
+    name: 'Iron Man vs Captain America (Civil War)',
+    tagline: 'Crimson Stark titanium against Rogers vibranium star — balanced cinematic flank',
+    category: 'superhero',
+    previewBg: '#080a14',
+    previewAccent: '#3b82f6',
+    previewText: '#ffffff',
+    previewSecondary: '#ef4444',
+    previewWidgetBg: 'rgba(14, 16, 28, 0.8)',
+    previewWidgetBorder: 'rgba(59, 130, 246, 0.45)',
+    wallpaperUrl: 'https://images.unsplash.com/photo-1518709268805-4e9042af9f23?auto=format&fit=crop&w=2400&q=85',
+    canvasTheme: 'civil-war-animated',
+    bgDimmer: 38,
+    bgBlur: 1,
+    bgSaturation: 120,
+    bgBrightness: 98,
+    accentColor: '#3b82f6',
+    primaryTextColor: '#ffffff',
+    secondaryTextColor: '#93c5fd',
+    surfaceColor: '#0a1020',
+    widgetStyle: 'metallic-panel',
+    fontClock: 'montserrat',
+    fontHeading: 'montserrat',
+    fontBody: 'inter',
+    clockArchitecture: 'minimal',
+    isAnimated: true,
+    animationIntensity: 1.0,
+    animationSpeed: 1.0,
+    energyColor: '#3b82f6',
+    characterPosition: 'split',
+    characterScale: 100,
+    defaultWidgetStyle: {
+      bgColor: '#0a1020',
+      bgOpacity: 80,
+      blur: 18,
+      borderColor: '#3b82f6',
+      borderWidth: 1,
+      borderRadius: 20,
+      glowColor: '#3b82f6',
+      glowIntensity: 30,
+      accentColor: '#3b82f6',
+      textColor: '#ffffff',
+    },
   },
   {
     id: 'hero-captain-america',
@@ -493,33 +707,7 @@ export const STUDIO_THEMES: ThemeOption[] = [
     fontBody: 'inter',
     clockArchitecture: 'morph',
   },
-  {
-    id: 'hero-doctor-doom',
-    name: 'Doctor Doom (Latverian Monarch)',
-    tagline: 'Imperial titanium mask, emerald cape velvet and formidable iron sovereignty',
-    category: 'superhero',
-    previewBg: '#070d0a',
-    previewAccent: '#059669',
-    previewText: '#f8fafc',
-    previewSecondary: '#94a3b8',
-    previewWidgetBg: 'rgba(12, 24, 18, 0.8)',
-    previewWidgetBorder: 'rgba(5, 150, 105, 0.4)',
-    wallpaperUrl: 'https://images.unsplash.com/photo-1518770660439-4636190af475?auto=format&fit=crop&w=2400&q=85',
-    canvasTheme: 'minimal',
-    bgDimmer: 40,
-    bgBlur: 0,
-    bgSaturation: 110,
-    bgBrightness: 95,
-    accentColor: '#059669',
-    primaryTextColor: '#ffffff',
-    secondaryTextColor: '#cbd5e1',
-    surfaceColor: '#0c1a14',
-    widgetStyle: 'metallic-panel',
-    fontClock: 'oswald',
-    fontHeading: 'oswald',
-    fontBody: 'inter',
-    clockArchitecture: 'minimal',
-  },
+
   {
     id: 'hero-multiverse',
     name: 'Multiverse (Branching Timelines)',
@@ -1301,42 +1489,14 @@ export const STUDIO_WIDGET_STYLES: WidgetStyleOption[] = [
   { id: 'user-defined', name: 'User-Defined Master Style', tagline: 'Live customized sliders for blur, opacity and corners', cssClass: 'widget-style-user-defined', previewBg: 'rgba(15, 20, 30, 0.8)', previewBorder: 'rgba(255, 255, 255, 0.2)' },
 ];
 
-// ================= 7. 25+ WIDGET ARRANGEMENT LAYOUTS =================
-export interface LayoutPresetOption {
-  id: string;
-  name: string;
-  category: 'focus' | 'desktop' | 'minimal' | 'cinematic' | 'specialized';
-  description: string;
-  badge: string;
-}
-
-export const STUDIO_LAYOUT_ARRANGEMENTS: LayoutPresetOption[] = [
-  { id: 'minimal-center', name: 'Minimal Center', category: 'minimal', description: 'Central clock with essential countdown directly underneath', badge: 'Zen' },
-  { id: 'clock-centerpiece', name: 'Clock Centerpiece', category: 'desktop', description: 'Large central hero clock surrounded by perimeter tools', badge: 'Classic' },
-  { id: 'clock-left-widgets-right', name: 'Clock Left / Widgets Right', category: 'desktop', description: 'Two-column split: Time & Exam on left, Tasks & Notes on right', badge: 'Productive' },
-  { id: 'clock-top-dashboard-below', name: 'Clock Top / Dashboard Below', category: 'desktop', description: 'Full-width clock header with 3-widget dashboard row below', badge: 'Balanced' },
-  { id: 'cinematic-fullscreen', name: 'Cinematic Fullscreen', category: 'cinematic', description: 'Spacious floating HUD with maximum wallpaper visibility', badge: 'Aesthetic' },
-  { id: 'floating-widgets', name: 'Floating Widgets', category: 'minimal', description: 'Soft airy grouping with 40px breathing room', badge: 'Airy' },
-  { id: 'left-sidebar', name: 'Left Sidebar Dock', category: 'desktop', description: 'All study widgets stacked along the left margin', badge: 'Sidebar' },
-  { id: 'right-sidebar', name: 'Right Sidebar Dock', category: 'desktop', description: 'All study tools grouped along the right margin', badge: 'Sidebar' },
-  { id: 'symmetrical-grid', name: 'Symmetrical Grid (2x2)', category: 'desktop', description: 'Clean geometric quadrant arrangement', badge: 'Grid' },
-  { id: 'asymmetrical-grid', name: 'Asymmetrical Studio', category: 'cinematic', description: 'Dynamic staggered layout with varying widget weights', badge: 'Studio' },
-  { id: 'two-column-study', name: 'Two-Column Study Layout', category: 'desktop', description: 'Left column: Time & Routine, Right column: Tasks & Exam', badge: 'Study' },
-  { id: 'three-column-desktop', name: 'Three-Column Desktop Layout', category: 'desktop', description: 'Wide-screen 3-column setup for laptops and monitors', badge: 'Desktop' },
-  { id: 'compact-laptop', name: 'Compact Laptop Layout', category: 'focus', description: 'Optimized 13-14 inch tight grouping preventing scroll', badge: 'Laptop' },
-  { id: 'exam-countdown-focus', name: 'Exam Countdown Focus', category: 'focus', description: 'Public Exam countdown enlarged as the primary hero widget', badge: 'Exam Target' },
-  { id: 'timetable-focus', name: 'Timetable Focus', category: 'focus', description: 'School & Leave routine schedule maximized on screen', badge: 'Schedule' },
-  { id: 'quick-task-focus', name: 'Quick Task Focus', category: 'focus', description: 'Tasks widget expanded to full height for sprint ticking', badge: 'Sprint' },
-  { id: 'pomodoro-focus', name: 'Pomodoro Focus Center', category: 'focus', description: '25-minute Pomodoro timer placed centrally with live clock', badge: 'Focus Sprint' },
-  { id: 'monochrome-editorial', name: 'Monochrome Editorial', category: 'minimal', description: 'Strict Swiss grid alignment with pure typographic balance', badge: 'Swiss' },
-  { id: 'transparent-floating', name: 'Transparent Floating Layout', category: 'minimal', description: 'Frameless widgets positioned over panoramic wallpaper', badge: 'Pure' },
-  { id: 'superhero-hud', name: 'Superhero Tactical HUD', category: 'cinematic', description: 'Corner telemetry boxes and central targeting clock', badge: 'Avenger' },
-  { id: 'bottom-widget-dock', name: 'Bottom Widget Dock', category: 'desktop', description: 'Clock hero on top, all active tools in a dock along the bottom', badge: 'Dock' },
-  { id: 'corner-widget-layout', name: 'Corner Widget Layout', category: 'minimal', description: 'Four corners occupied, keeping center 100% open', badge: 'Open' },
-  { id: 'vertical-stack', name: 'Vertical Stack (Single Column)', category: 'focus', description: 'Single centered vertical column ideal for narrow windows', badge: 'Column' },
-  { id: 'wide-countdown-banner', name: 'Wide Countdown Banner', category: 'focus', description: 'Exam countdown stretched across the entire upper section', badge: 'Milestone' },
-  { id: 'custom-freeform', name: 'Custom Freeform Layout', category: 'specialized', description: 'Student-dragged positions with coordinate memory', badge: 'Custom' },
-];
+// ================= 7. 50 GENUINE WIDGET ARRANGEMENT GRID PRESETS =================
+export {
+  STUDIO_LAYOUT_ARRANGEMENTS,
+  computePresetWidgetCoordinates,
+  type LayoutPresetOption,
+  type GridCellSlot,
+  type DashboardWidgetKey,
+} from './layoutPresetsData';
 
 // ================= 8. 18+ READY-MADE COLOR PALETTES =================
 export interface ColorPaletteOption {
@@ -1392,8 +1552,13 @@ export interface VisualStudioConfig {
   bgBlur: number;
   isAnimated: boolean;
   animationIntensity: number;
+  animationSpeed?: number;
+  energyColor?: string;
+  characterPosition?: 'left' | 'right' | 'split' | 'center';
+  characterScale?: number;
   clockArchitecture: string;
   layoutPreset: string;
+  widgetStyles?: DashboardWidgetStyles;
 }
 
 export const DEFAULT_STUDIO_CONFIG: VisualStudioConfig = {
@@ -1415,8 +1580,12 @@ export const DEFAULT_STUDIO_CONFIG: VisualStudioConfig = {
   bgBlur: 0,
   isAnimated: false,
   animationIntensity: 1.0,
+  animationSpeed: 1.0,
+  energyColor: '#06b6d4',
+  characterPosition: 'center',
+  characterScale: 100,
   clockArchitecture: 'minimal',
-  layoutPreset: 'balanced',
+  layoutPreset: 'preset-grid-1',
 };
 
 export interface SavedPreset {
@@ -1427,7 +1596,7 @@ export interface SavedPreset {
   isFavorite?: boolean;
   config: VisualStudioConfig;
   wallpaperUrl: string;
-  canvasTheme: 'none' | 'aurora' | 'nebula' | 'cyberpunk' | 'matrix' | 'fireflies' | 'minimal' | 'starlight' | 'embers' | 'thunder' | 'digital-rain' | 'warp-speed';
+  canvasTheme: CanvasThemeType;
 }
 
 export const INITIAL_PRESETS: SavedPreset[] = [
@@ -1554,20 +1723,49 @@ export const INITIAL_PRESETS: SavedPreset[] = [
   {
     id: 'preset-doctor-doom',
     name: 'Doctor Doom Command',
-    tagline: 'Latverian emerald velvet, industrial silver and sovereign authority',
+    tagline: 'Latverian emerald velvet, titanium armor and animated runic energy',
     createdAt: 1710000000007,
-    wallpaperUrl: 'https://images.unsplash.com/photo-1518770660439-4636190af475?auto=format&fit=crop&w=2400&q=85',
-    canvasTheme: 'minimal',
+    isFavorite: true,
+    wallpaperUrl: 'https://images.unsplash.com/photo-1518709268805-4e9042af9f23?auto=format&fit=crop&w=2400&q=85',
+    canvasTheme: 'doom-animated',
     config: {
       ...DEFAULT_STUDIO_CONFIG,
       activeThemeId: 'hero-doctor-doom',
-      accentColor: '#059669',
+      accentColor: '#10b981',
       secondaryTextColor: '#cbd5e1',
       surfaceColor: '#0c1a14',
       widgetStyle: 'metallic-panel',
-      fontClock: 'oswald',
+      fontClock: 'orbitron',
       clockArchitecture: 'minimal',
-      layoutPreset: 'symmetrical-grid',
+      layoutPreset: 'preset-grid-1',
+      isAnimated: true,
+      animationIntensity: 1.0,
+      energyColor: '#10b981',
+      characterPosition: 'left',
+    },
+  },
+  {
+    id: 'preset-doom-vs-ironman',
+    name: 'Doctor Doom vs Iron Man Standoff',
+    tagline: 'Latverian emerald magic versus Stark arc reactor in a dual animated confrontation',
+    createdAt: 1710000000008,
+    isFavorite: true,
+    wallpaperUrl: 'https://images.unsplash.com/photo-1579783902614-a3fb3927b675?auto=format&fit=crop&w=2400&q=85',
+    canvasTheme: 'doom-vs-ironman-animated',
+    config: {
+      ...DEFAULT_STUDIO_CONFIG,
+      activeThemeId: 'hero-doom-vs-ironman',
+      accentColor: '#10b981',
+      secondaryTextColor: '#fde68a',
+      surfaceColor: '#0e141c',
+      widgetStyle: 'hud-technical',
+      fontClock: 'orbitron',
+      clockArchitecture: 'iron-armor',
+      layoutPreset: 'preset-grid-37',
+      isAnimated: true,
+      animationIntensity: 1.0,
+      energyColor: '#10b981',
+      characterPosition: 'split',
     },
   },
   {

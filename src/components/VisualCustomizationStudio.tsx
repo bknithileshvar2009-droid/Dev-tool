@@ -52,6 +52,17 @@ import {
   Underline,
   Target,
   Award,
+  Video,
+  Grid,
+  Move,
+  Lock,
+  Unlock,
+  ChevronDown,
+  ChevronUp,
+  Download,
+  FileJson,
+  Volume2,
+  VolumeX,
 } from 'lucide-react';
 import {
   STUDIO_THEMES,
@@ -60,7 +71,6 @@ import {
   STUDIO_WALLPAPERS,
   STUDIO_BACKGROUND_EFFECTS,
   STUDIO_WIDGET_STYLES,
-  STUDIO_LAYOUT_ARRANGEMENTS,
   STUDIO_PALETTES,
   INITIAL_PRESETS,
   ThemeOption,
@@ -69,7 +79,6 @@ import {
   WallpaperCategoryItem,
   BackgroundEffectOption,
   WidgetStyleOption,
-  LayoutPresetOption,
   ColorPaletteOption,
   SavedPreset,
   DEFAULT_STUDIO_CONFIG,
@@ -79,7 +88,17 @@ import {
   DEFAULT_ELEMENT_TYPOGRAPHY,
   N0T0StyleOption,
   N0T0_TYPOGRAPHY_STYLES,
+  CanvasThemeType,
+  WidgetSpecificStyle,
+  DashboardWidgetStyles,
+  AnimationControlsConfig,
 } from '../utils/visualStudioData';
+import {
+  STUDIO_LAYOUT_ARRANGEMENTS,
+  computePresetWidgetCoordinates,
+  LayoutPresetOption,
+  DashboardWidgetKey,
+} from '../utils/layoutPresetsData';
 
 interface VisualCustomizationStudioProps {
   isOpen: boolean;
@@ -92,20 +111,25 @@ interface VisualCustomizationStudioProps {
   onUpdateCustomNotes?: (notes: CustomTextItem[]) => void;
 }
 
-type StudioTab =
-  | 'themes'
-  | 'clocks'
+// 6 Organized Primary Studio Sections
+export type StudioSection =
+  | 'appearance'
+  | 'widget-styles'
+  | 'arrange-layout'
+  | 'freeform-editor'
   | 'typography'
-  | 'n0t0'
-  | 'fonts'
-  | 'text-styles'
-  | 'wallpapers'
-  | 'effects'
-  | 'widgets'
-  | 'layouts'
-  | 'colours'
-  | 'presets'
-  | 'notes';
+  | 'advanced';
+
+const ALL_WIDGET_KEYS: { id: DashboardWidgetKey; label: string; icon: any }[] = [
+  { id: 'clock', label: 'Master Clock', icon: ClockIcon },
+  { id: 'countdown', label: 'Exam Countdown', icon: Target },
+  { id: 'nameWidget', label: 'Centum Student Title', icon: Award },
+  { id: 'tasks', label: 'Target Checklist', icon: CheckCircle2 },
+  { id: 'notification', label: 'Routine Schedule', icon: Calendar },
+  { id: 'calendar', label: 'Monthly Calendar', icon: Calendar },
+  { id: 'motivation', label: 'Daily Motivation', icon: Sparkles },
+  { id: 'pomodoro', label: 'Pomodoro Focus Timer', icon: Zap },
+];
 
 export default function VisualCustomizationStudio({
   isOpen,
@@ -117,557 +141,184 @@ export default function VisualCustomizationStudio({
   customNotes = [],
   onUpdateCustomNotes,
 }: VisualCustomizationStudioProps) {
-  // Active studio tab
-  const [activeTab, setActiveTab] = useState<StudioTab>('themes');
+  // Primary Reorganized Tab Navigation
+  const [activeTab, setActiveTab] = useState<StudioSection>('appearance');
   const [searchQuery, setSearchQuery] = useState('');
 
-  // Sub-category filters
+  // Sub-navigation inside Appearance tab
+  const [appearanceSubTab, setAppearanceSubTab] = useState<'themes' | 'animation' | 'wallpapers' | 'clocks'>('themes');
   const [themeFilter, setThemeFilter] = useState<'all' | 'superhero' | 'dark' | 'light' | 'cinematic' | 'nature' | 'space'>('all');
-  const [clockFilter, setClockFilter] = useState<'all' | 'digital' | 'superhero' | 'classic' | 'specialized' | 'minimal'>('all');
-  const [n0t0Category, setN0t0Category] = useState<'all' | 'minimal' | 'editorial' | 'terminal' | 'cyber' | 'brutalist'>('all');
-  const [fontFilter, setFontFilter] = useState<string>('all');
-  const [wallpaperCategory, setWallpaperCategory] = useState<'all' | 'superhero' | 'cinematic' | 'nature' | 'minimal'>('all');
-  const [layoutCategory, setLayoutCategory] = useState<string>('all');
+  const [layoutCategoryFilter, setLayoutCategoryFilter] = useState<string>('all');
 
-  // Favorites & Recently Used
-  const [favorites, setFavorites] = useState<string[]>(() => {
-    try {
-      const saved = localStorage.getItem('flocus_design_favorites');
-      return saved ? JSON.parse(saved) : ['hero-iron-man', 'preset-iron-armor-study', 'hero-captain-america', 'hud', 'orbitron'];
-    } catch {
-      return ['hero-iron-man', 'preset-iron-armor-study'];
-    }
-  });
+  // Widget Styles State
+  const [selectedStyleWidget, setSelectedStyleWidget] = useState<string>('global'); // 'global' or widget key
 
-  const [recentlyUsed, setRecentlyUsed] = useState<string[]>(() => {
-    try {
-      const saved = localStorage.getItem('flocus_design_recents');
-      return saved ? JSON.parse(saved) : [];
-    } catch {
-      return [];
-    }
-  });
+  // Freeform Editor State
+  const [selectedFreeformWidget, setSelectedFreeformWidget] = useState<DashboardWidgetKey>('clock');
 
-  const toggleFavorite = (id: string, e?: React.MouseEvent) => {
-    if (e) e.stopPropagation();
-    setFavorites(prev => {
-      const next = prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id];
-      try {
-        localStorage.setItem('flocus_design_favorites', JSON.stringify(next));
-      } catch {}
-      return next;
-    });
-  };
+  // Confirmation Modal State (for removing / hiding widgets or resetting)
+  const [confirmDialog, setConfirmDialog] = useState<{
+    isOpen: boolean;
+    title: string;
+    description: string;
+    onConfirm: () => void;
+  } | null>(null);
 
-  const recordRecent = (id: string) => {
-    setRecentlyUsed(prev => {
-      const filtered = prev.filter(x => x !== id);
-      const next = [id, ...filtered].slice(0, 12);
-      try {
-        localStorage.setItem('flocus_design_recents', JSON.stringify(next));
-      } catch {}
-      return next;
-    });
-  };
-
-  // Staging state: modifications happen here first without dirtying actual dashboard
+  // Staging State (Preview Before Commit)
   const [stagedThemeId, setStagedThemeId] = useState<string>(
-    currentConfig.activeThemeId || currentConfig.activeWallpaper || 'obsidian-glass'
+    currentConfig.activeThemeId || currentConfig.activeWallpaper || 'hero-doctor-doom'
   );
   const [stagedWallpaperUrl, setStagedWallpaperUrl] = useState<string>(
-    currentConfig.wallpaperUrl || 'https://images.unsplash.com/photo-1509198397868-475647b2a1e5?auto=format&fit=crop&w=2400&q=85'
+    currentConfig.wallpaperUrl || 'https://images.unsplash.com/photo-1518709268805-4e9042af9f23?auto=format&fit=crop&w=2400&q=85'
   );
-  const [stagedCanvasTheme, setStagedCanvasTheme] = useState<string>(currentConfig.canvasTheme || 'none');
-  const [stagedBgDimmer, setStagedBgDimmer] = useState<number>(currentConfig.bgDimmer ?? 30);
-  const [stagedBgBlur, setStagedBgBlur] = useState<number>(currentConfig.bgBlur ?? 0);
-  const [stagedBgSaturation, setStagedBgSaturation] = useState<number>(currentConfig.bgSaturation ?? 100);
-  const [stagedBgBrightness, setStagedBgBrightness] = useState<number>(currentConfig.bgBrightness ?? 100);
+  const [stagedVideoUrl, setStagedVideoUrl] = useState<string>(currentConfig.videoUrl || '');
+  const [stagedCanvasTheme, setStagedCanvasTheme] = useState<CanvasThemeType>(currentConfig.canvasTheme || 'doom-animated');
+  const [stagedBgDimmer, setStagedBgDimmer] = useState<number>(currentConfig.bgDimmer ?? 40);
+  const [stagedBgBlur, setStagedBgBlur] = useState<number>(currentConfig.bgBlur ?? 1);
+  const [stagedBgSaturation, setStagedBgSaturation] = useState<number>(currentConfig.bgSaturation ?? 115);
+  const [stagedBgBrightness, setStagedBgBrightness] = useState<number>(currentConfig.bgBrightness ?? 95);
   const [stagedScaling, setStagedScaling] = useState<'cover' | 'contain' | 'fill'>(currentConfig.wallpaperScaling || 'cover');
-  const [stagedIsAnimated, setStagedIsAnimated] = useState<boolean>(!currentConfig.isWallpaperStatic);
-  const [stagedAnimIntensity, setStagedAnimIntensity] = useState<number>(currentConfig.animationIntensity ?? 1.0);
 
-  // Widget appearance
-  const [stagedWidgetStyle, setStagedWidgetStyle] = useState<string>(currentConfig.widgetStyle || 'subtle-dark-glass');
-  const [stagedWidgetRadius, setStagedWidgetRadius] = useState<string>(currentConfig.personalization?.widgetRadius || 'smooth');
-  const [stagedWidgetOpacity, setStagedWidgetOpacity] = useState<number>(85);
-  const [applyStyleTarget, setApplyStyleTarget] = useState<'all' | 'clock' | 'countdown' | 'tasks'>('all');
+  // Animation Controls Staging
+  const [stagedAnimEnabled, setStagedAnimEnabled] = useState<boolean>(
+    currentConfig.animationControls?.enabled !== false && !currentConfig.isWallpaperStatic
+  );
+  const [stagedAnimIntensity, setStagedAnimIntensity] = useState<'low' | 'medium' | 'high'>(
+    currentConfig.animationControls?.intensity || 'medium'
+  );
+  const [stagedAnimSpeed, setStagedAnimSpeed] = useState<number>(currentConfig.animationControls?.speed ?? 1.0);
+  const [stagedEnergyColor, setStagedEnergyColor] = useState<string>(
+    currentConfig.animationControls?.energyColor || '#10b981'
+  );
+  const [stagedEnergyIntensity, setStagedEnergyIntensity] = useState<number>(
+    currentConfig.animationControls?.energyIntensity ?? 70
+  );
+  const [stagedFocalPosition, setStagedFocalPosition] = useState<'left' | 'center' | 'right' | 'split'>(
+    currentConfig.animationControls?.focalPosition || 'left'
+  );
+  const [stagedCharacterScale, setStagedCharacterScale] = useState<number>(
+    currentConfig.animationControls?.characterScale ?? 100
+  );
 
-  // Widget Transparency Staging (Transparent vs Glass Cards)
-  const [stagedWidgetTransparency, setStagedWidgetTransparency] = useState<{
-    clock: boolean;
-    countdown: boolean;
-    notification: boolean;
-    calendar: boolean;
-    tasks: boolean;
-    motivation: boolean;
-    pomodoro: boolean;
-    nameWidget: boolean;
-  }>(() => ({
-    clock: !currentConfig.clock.glassBg,
-    countdown: !currentConfig.countdown.glassBg,
-    notification: !currentConfig.notification.glassBg,
-    calendar: !currentConfig.calendar.glassBg,
-    tasks: !currentConfig.tasks.glassBg,
-    motivation: !currentConfig.motivation.glassBg,
-    pomodoro: !(currentConfig.pomodoro?.glassBg ?? true),
-    nameWidget: !currentConfig.nameWidget.glassBg,
-  }));
-
-  const setAllStagedTransparency = (transparent: boolean) => {
-    setStagedWidgetTransparency({
-      clock: transparent,
-      countdown: transparent,
-      notification: transparent,
-      calendar: transparent,
-      tasks: transparent,
-      motivation: transparent,
-      pomodoro: transparent,
-      nameWidget: transparent,
-    });
-    if (transparent) {
-      setStagedWidgetStyle('transparent');
-    } else if (stagedWidgetStyle === 'transparent') {
-      setStagedWidgetStyle('subtle-dark-glass');
-    }
+  // Widget Dynamic Styles Staging
+  const initialGlobalStyle: WidgetSpecificStyle = {
+    bgColor: currentConfig.widgetStyles?.global?.bgColor || currentConfig.customColors?.surface || '#0c1a14',
+    bgOpacity: currentConfig.widgetStyles?.global?.bgOpacity ?? 82,
+    blur: currentConfig.widgetStyles?.global?.blur ?? 18,
+    borderColor: currentConfig.widgetStyles?.global?.borderColor || currentConfig.customColors?.accent || '#10b981',
+    borderWidth: currentConfig.widgetStyles?.global?.borderWidth ?? 1,
+    borderRadius: currentConfig.widgetStyles?.global?.borderRadius ?? 20,
+    shadowColor: currentConfig.widgetStyles?.global?.shadowColor || 'rgba(0,0,0,0.6)',
+    shadowBlur: currentConfig.widgetStyles?.global?.shadowBlur ?? 25,
+    glowColor: currentConfig.widgetStyles?.global?.glowColor || '#10b981',
+    glowIntensity: currentConfig.widgetStyles?.global?.glowIntensity ?? 30,
+    textColor: currentConfig.widgetStyles?.global?.textColor || '#ffffff',
+    accentColor: currentConfig.widgetStyles?.global?.accentColor || '#10b981',
+    padding: currentConfig.widgetStyles?.global?.padding ?? 16,
   };
 
-  // Clock architecture
+  const [stagedGlobalStyle, setStagedGlobalStyle] = useState<WidgetSpecificStyle>(initialGlobalStyle);
+  const [stagedWidgetOverrides, setStagedWidgetOverrides] = useState<Record<string, WidgetSpecificStyle>>(
+    currentConfig.widgetStyles?.overrides || {}
+  );
+
+  // Layout & Freeform Staging
+  const [stagedLayoutMode, setStagedLayoutMode] = useState<'grid' | 'freeform'>(currentConfig.layoutMode || 'grid');
+  const [stagedGridPresetId, setStagedGridPresetId] = useState<string>(
+    currentConfig.selectedGridPresetId || 'preset-grid-1'
+  );
+  const [stagedGridGap, setStagedGridGap] = useState<number>(currentConfig.gridGaps ?? 16);
+  const [stagedGridMargin, setStagedGridMargin] = useState<number>(currentConfig.gridMargins ?? 24);
+  const [stagedGridAlignment, setStagedGridAlignment] = useState<'center' | 'top' | 'stretch'>(
+    currentConfig.gridAlignment || 'center'
+  );
+
+  // Freeform Staged Positions & Dimensions
+  const [stagedFreeformLayout, setStagedFreeformLayout] = useState<
+    Record<string, { x: number; y: number; width: number; height: number; zIndex?: number }>
+  >(() => {
+    if (currentConfig.freeformLayout && Object.keys(currentConfig.freeformLayout).length > 0) {
+      return currentConfig.freeformLayout;
+    }
+    const layout: Record<string, { x: number; y: number; width: number; height: number; zIndex?: number }> = {};
+    ALL_WIDGET_KEYS.forEach(k => {
+      const w = (currentConfig as any)[k.id];
+      layout[k.id] = {
+        x: w?.x ?? 50,
+        y: w?.y ?? 50,
+        width: w?.width ?? 360,
+        height: w?.height ?? 160,
+        zIndex: w?.zIndex ?? 20,
+      };
+    });
+    return layout;
+  });
+
+  const [stagedSnapToGrid, setStagedSnapToGrid] = useState<boolean>(currentConfig.snapToGrid ?? false);
+  const [stagedSnapSize, setStagedSnapSize] = useState<number>(currentConfig.snapGridSize ?? 20);
+
+  // Widget Visibility Staging
+  const [stagedVisibility, setStagedVisibility] = useState<Record<string, boolean>>({
+    clock: currentConfig.clock?.visible !== false,
+    countdown: currentConfig.countdown?.visible !== false,
+    nameWidget: currentConfig.nameWidget?.visible !== false,
+    tasks: currentConfig.tasks?.visible !== false,
+    notification: currentConfig.notification?.visible !== false,
+    calendar: currentConfig.calendar?.visible !== false,
+    motivation: currentConfig.motivation?.visible !== false,
+    pomodoro: currentConfig.pomodoro?.visible !== false,
+  });
+
+  // Typography Staging
+  const [stagedTypography, setStagedTypography] = useState<DashboardTypographyConfig>(
+    currentConfig.typography || {
+      globalScale: 1.0,
+      elements: DEFAULT_ELEMENT_TYPOGRAPHY,
+      fontClock: 'orbitron',
+      fontHeading: 'orbitron',
+      fontBody: 'rajdhani',
+      fontCountdown: 'orbitron',
+      fontLabels: 'inter',
+    }
+  );
+  const [selectedTypoElement, setSelectedTypoElement] = useState<string>('clockMain');
+
+  // Clock Architecture Staging
   const [stagedClockArch, setStagedClockArch] = useState<string>(currentConfig.clock?.architecture || 'minimal');
 
-  // Advanced Element Typography System Staging
-  const [stagedTypography, setStagedTypography] = useState<DashboardTypographyConfig>(() => ({
-    globalScale: currentConfig.typography?.globalScale ?? 1.0,
-    elements: {
-      ...DEFAULT_ELEMENT_TYPOGRAPHY,
-      ...(currentConfig.typography?.elements || {}),
-    },
-    fontClock: currentConfig.typography?.fontClock || 'inter',
-    fontHeading: currentConfig.typography?.fontHeading || 'inter',
-    fontBody: currentConfig.typography?.fontBody || 'inter',
-    fontCountdown: currentConfig.typography?.fontCountdown || 'inter',
-    fontLabels: currentConfig.typography?.fontLabels || 'inter',
-    activeN0T0StyleId: currentConfig.typography?.activeN0T0StyleId,
-  }));
+  // History Stack for Undo / Redo
+  const [historyStack, setHistoryStack] = useState<any[]>([]);
+  const [historyIndex, setHistoryIndex] = useState<number>(-1);
 
-  const [selectedTypographyElement, setSelectedTypographyElement] =
-    useState<keyof DashboardTypographyConfig['elements']>('clockMain');
-  const [undoStack, setUndoStack] = useState<DashboardTypographyConfig[]>([]);
-  const [redoStack, setRedoStack] = useState<DashboardTypographyConfig[]>([]);
-
-  // Interactive sample testing text
-  const [sampleHeadingText, setSampleHeadingText] = useState('CHEMISTRY CENTUM TARGET');
-  const [sampleWidgetTitle, setSampleWidgetTitle] = useState("TODAY'S STUDY GOALS");
-  const [sampleQuoteText, setSampleQuoteText] = useState('Excellence is an art won by training and habituation.');
-  const [sampleCustomText, setSampleCustomText] = useState('Solve 2026 Model Paper Line-by-Line');
-  const [sampleClockTime, setSampleClockTime] = useState('10:42:00');
-  const [sampleCountdownDays, setSampleCountdownDays] = useState('137');
-  const [previewMode, setPreviewMode] = useState<'dashboard' | 'clock' | 'countdown' | 'timetable' | 'sandbox'>('dashboard');
-
-  // Typography settings (independent for each element!)
-  const [stagedFontClock, setStagedFontClock] = useState<string>(currentConfig.typography?.fontClock || 'inter');
-  const [stagedFontHeading, setStagedFontHeading] = useState<string>(currentConfig.typography?.fontHeading || 'inter');
-  const [stagedFontBody, setStagedFontBody] = useState<string>(currentConfig.typography?.fontBody || 'inter');
-  const [stagedFontCountdown, setStagedFontCountdown] = useState<string>(currentConfig.typography?.fontCountdown || 'inter');
-  const [stagedFontLabels, setStagedFontLabels] = useState<string>(currentConfig.typography?.fontLabels || 'inter');
-
-  // Typography controls
-  const [clockFontSizeOffset, setClockFontSizeOffset] = useState<number>(0);
-  const [clockLetterSpacing, setClockLetterSpacing] = useState<number>(0);
-  const [clockFontWeight, setClockFontWeight] = useState<string>('400');
-  const [clockUppercase, setClockUppercase] = useState<boolean>(false);
-  const [headingLetterSpacing, setHeadingLetterSpacing] = useState<number>(2);
-
-  // Active element config helper
-  const activeElementConfig: ElementTypographyConfig = useMemo(() => {
-    return stagedTypography.elements[selectedTypographyElement] || DEFAULT_ELEMENT_TYPOGRAPHY[selectedTypographyElement] || {};
-  }, [stagedTypography, selectedTypographyElement]);
-
-  const updateSelectedElement = (updates: Partial<ElementTypographyConfig>) => {
-    setStagedTypography(prev => {
-      setUndoStack(u => [...u.slice(-20), prev]);
-      setRedoStack([]);
-      const cur = prev.elements[selectedTypographyElement] || DEFAULT_ELEMENT_TYPOGRAPHY[selectedTypographyElement] || {};
-      const newEl = { ...cur, ...updates };
-      const newElements = { ...prev.elements, [selectedTypographyElement]: newEl };
-
-      let fontClock = prev.fontClock;
-      let fontHeading = prev.fontHeading;
-      let fontBody = prev.fontBody;
-      let fontCountdown = prev.fontCountdown;
-      let fontLabels = prev.fontLabels;
-
-      if (selectedTypographyElement === 'clockMain' && updates.fontFamily) {
-        fontClock = updates.fontFamily;
-        setStagedFontClock(updates.fontFamily);
-      } else if (selectedTypographyElement === 'widgetTitle' && updates.fontFamily) {
-        fontHeading = updates.fontFamily;
-        setStagedFontHeading(updates.fontFamily);
-      } else if (selectedTypographyElement === 'widgetBody' && updates.fontFamily) {
-        fontBody = updates.fontFamily;
-        setStagedFontBody(updates.fontFamily);
-      } else if (selectedTypographyElement === 'countdownNumber' && updates.fontFamily) {
-        fontCountdown = updates.fontFamily;
-        setStagedFontCountdown(updates.fontFamily);
-      } else if (selectedTypographyElement === 'countdownLabel' && updates.fontFamily) {
-        fontLabels = updates.fontFamily;
-        setStagedFontLabels(updates.fontFamily);
-      }
-
-      return {
-        ...prev,
-        fontClock,
-        fontHeading,
-        fontBody,
-        fontCountdown,
-        fontLabels,
-        elements: newElements,
-      };
-    });
-  };
-
-  const handleGlobalScaleChange = (scale: number) => {
-    setStagedTypography(prev => {
-      setUndoStack(u => [...u.slice(-20), prev]);
-      setRedoStack([]);
-      return {
-        ...prev,
-        globalScale: Math.round(scale * 100) / 100,
-      };
-    });
-  };
-
-  const handleUndo = () => {
-    if (undoStack.length === 0) return;
-    const prev = undoStack[undoStack.length - 1];
-    setUndoStack(u => u.slice(0, -1));
-    setRedoStack(r => [...r, stagedTypography]);
-    setStagedTypography(prev);
-    if (prev.fontClock) setStagedFontClock(prev.fontClock);
-    if (prev.fontHeading) setStagedFontHeading(prev.fontHeading);
-    if (prev.fontBody) setStagedFontBody(prev.fontBody);
-  };
-
-  const handleRedo = () => {
-    if (redoStack.length === 0) return;
-    const next = redoStack[redoStack.length - 1];
-    setRedoStack(r => r.slice(0, -1));
-    setUndoStack(u => [...u, stagedTypography]);
-    setStagedTypography(next);
-    if (next.fontClock) setStagedFontClock(next.fontClock);
-    if (next.fontHeading) setStagedFontHeading(next.fontHeading);
-    if (next.fontBody) setStagedFontBody(next.fontBody);
-  };
-
-  const handleResetElement = () => {
-    const def = DEFAULT_ELEMENT_TYPOGRAPHY[selectedTypographyElement];
-    if (def) {
-      updateSelectedElement({ ...def });
-    }
-  };
-
-  const handleResetTypographyOnly = () => {
-    setStagedTypography(prev => {
-      setUndoStack(u => [...u.slice(-20), prev]);
-      setRedoStack([]);
-      return {
-        globalScale: 1.0,
-        elements: { ...DEFAULT_ELEMENT_TYPOGRAPHY },
-        fontClock: 'inter',
-        fontHeading: 'inter',
-        fontBody: 'inter',
-        fontCountdown: 'inter',
-        fontLabels: 'inter',
-        activeN0T0StyleId: undefined,
-      };
-    });
-    setStagedFontClock('inter');
-    setStagedFontHeading('inter');
-    setStagedFontBody('inter');
-    setStagedFontCountdown('inter');
-    setStagedFontLabels('inter');
-  };
-
-  const handleApplyN0T0Style = (style: N0T0StyleOption) => {
-    setStagedTypography(prev => {
-      setUndoStack(u => [...u.slice(-20), prev]);
-      setRedoStack([]);
-      const cfg = style.config;
-      const updated = { ...prev.elements };
-
-      Object.keys(updated).forEach(k => {
-        const key = k as keyof DashboardTypographyConfig['elements'];
-        updated[key] = {
-          ...updated[key],
-          fontFamily: cfg.fontFamily,
-          fontWeight: cfg.fontWeight,
-          letterSpacing: Math.min(cfg.letterSpacing, 4),
-          lineHeight: cfg.lineHeight,
-          textShadow: cfg.textShadow || 'none',
-          textGlow: cfg.textGlow,
-          glowColor: cfg.glowColor,
-          glowIntensity: cfg.glowIntensity,
-        };
-      });
-
-      if (updated.clockMain) {
-        updated.clockMain = {
-          ...updated.clockMain,
-          fontSize: cfg.clockSize || 64,
-          letterSpacing: cfg.letterSpacing,
-          textTransform: cfg.textTransform || 'none',
-        };
-      }
-      if (updated.clockDate) {
-        updated.clockDate = {
-          ...updated.clockDate,
-          fontSize: cfg.dateSize || 13,
-        };
-      }
-      if (updated.countdownNumber) {
-        updated.countdownNumber = {
-          ...updated.countdownNumber,
-          fontSize: cfg.countdownSize || 48,
-        };
-      }
-      if (updated.countdownLabel) {
-        updated.countdownLabel = {
-          ...updated.countdownLabel,
-          fontSize: cfg.labelSize || 11,
-          textTransform: 'uppercase',
-        };
-      }
-
-      if (cfg.elementOverrides) {
-        Object.entries(cfg.elementOverrides).forEach(([k, ov]) => {
-          const key = k as keyof DashboardTypographyConfig['elements'];
-          if (updated[key]) {
-            updated[key] = { ...updated[key], ...ov };
-          }
-        });
-      }
-
-      return {
-        ...prev,
-        activeN0T0StyleId: style.id,
-        fontClock: cfg.fontFamily,
-        fontHeading: cfg.fontFamily,
-        fontBody: cfg.fontFamily,
-        fontCountdown: cfg.fontFamily,
-        fontLabels: cfg.fontFamily,
-        elements: updated,
-      };
-    });
-
-    setStagedFontClock(style.config.fontFamily);
-    setStagedFontHeading(style.config.fontFamily);
-    setStagedFontBody(style.config.fontFamily);
-    recordRecent(style.id);
-  };
-
-  const getInlineFontStyle = (cfg?: ElementTypographyConfig): React.CSSProperties => {
-    if (!cfg) return {};
-    const globalScale = stagedTypography.globalScale ?? 1.0;
-    const style: React.CSSProperties = {};
-
-    const fontId = cfg.fontFamily || stagedFontClock || 'inter';
-    const familyMap: Record<string, string> = {
-      inter: "'Inter', -apple-system, BlinkMacSystemFont, sans-serif",
-      roboto: "'Roboto', sans-serif",
-      poppins: "'Poppins', sans-serif",
-      montserrat: "'Montserrat', sans-serif",
-      outfit: "'Outfit', sans-serif",
-      space: "'Space Grotesk', sans-serif",
-      orbitron: "'Orbitron', sans-serif",
-      rajdhani: "'Rajdhani', sans-serif",
-      oxanium: "'Oxanium', sans-serif",
-      'exo-2': "'Exo 2', sans-serif",
-      sora: "'Sora', sans-serif",
-      manrope: "'Manrope', sans-serif",
-      'dm-sans': "'DM Sans', sans-serif",
-      'plus-jakarta': "'Plus Jakarta Sans', sans-serif",
-      'ibm-plex-sans': "'IBM Plex Sans', sans-serif",
-      'mono-jb': "'JetBrains Mono', monospace",
-      'mono-ibm': "'IBM Plex Mono', monospace",
-      'space-mono': "'Space Mono', monospace",
-      'fira-code': "'Fira Code', monospace",
-      'source-code': "'Source Code Pro', monospace",
-      'bebas-neue': "'Bebas Neue', sans-serif",
-      oswald: "'Oswald', sans-serif",
-      archivo: "'Archivo', sans-serif",
-      lato: "'Lato', sans-serif",
-      anton: "'Anton', sans-serif",
-      audiowide: "'Audiowide', cursive",
-      vt323: "'VT323', monospace",
-      doto: "'Doto', sans-serif",
-      'courier-prime': "'Courier Prime', monospace",
-      system: "system-ui, -apple-system, BlinkMacSystemFont, sans-serif",
-      monospace: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
-    };
-    if (familyMap[fontId]) style.fontFamily = familyMap[fontId];
-
-    if (cfg.fontSize) {
-      style.fontSize = `${Math.round(cfg.fontSize * globalScale)}px`;
-    }
-    if (cfg.fontWeight) style.fontWeight = cfg.fontWeight;
-    if (cfg.letterSpacing !== undefined) style.letterSpacing = `${cfg.letterSpacing}px`;
-    if (cfg.lineHeight !== undefined) style.lineHeight = cfg.lineHeight;
-    if (cfg.textAlign) style.textAlign = cfg.textAlign;
-    if (cfg.color) style.color = cfg.color;
-    if (cfg.opacity !== undefined) style.opacity = cfg.opacity;
-    if (cfg.textTransform) style.textTransform = cfg.textTransform;
-    if (cfg.isItalic) style.fontStyle = 'italic';
-    if (cfg.isUnderline) style.textDecoration = 'underline';
-
-    const shadows: string[] = [];
-    if (cfg.textShadow === 'soft') {
-      shadows.push('0 2px 8px rgba(0, 0, 0, 0.6)');
-    } else if (cfg.textShadow === 'crisp') {
-      shadows.push('0 2px 0 rgba(0, 0, 0, 0.9)');
-    } else if (cfg.textShadow === 'deep') {
-      shadows.push('0 8px 24px rgba(0, 0, 0, 0.85)');
-    } else if (cfg.textShadow === 'outline') {
-      shadows.push('-1px -1px 0 rgba(0,0,0,0.9), 1px -1px 0 rgba(0,0,0,0.9), -1px 1px 0 rgba(0,0,0,0.9), 1px 1px 0 rgba(0,0,0,0.9)');
-    }
-
-    if (cfg.textGlow) {
-      const glowColor = cfg.glowColor || cfg.color || stagedAccentColor || '#06b6d4';
-      const intensity = cfg.glowIntensity || 12;
-      shadows.push(`0 0 ${intensity}px ${glowColor}`);
-    }
-
-    if (shadows.length > 0) style.textShadow = shadows.join(', ');
-
-    return style;
-  };
-
-  // Colours
-  const [stagedAccentColor, setStagedAccentColor] = useState<string>(currentConfig.customColors?.accent || currentConfig.clock?.color || '#06b6d4');
-  const [stagedPrimaryText, setStagedPrimaryText] = useState<string>(currentConfig.customColors?.primaryText || '#ffffff');
-  const [stagedSecondaryText, setStagedSecondaryText] = useState<string>(currentConfig.customColors?.secondaryText || '#94a3b8');
-  const [stagedSurfaceColor, setStagedSurfaceColor] = useState<string>(currentConfig.customColors?.surface || '#0c1220');
-
-  // Layout arrangement
-  const [stagedLayoutPreset, setStagedLayoutPreset] = useState<string>(currentConfig.personalization?.layoutPreset || 'balanced');
-
-  // Custom Sticky Notes Staging
-  const [stagedNotes, setStagedNotes] = useState<CustomTextItem[]>(customNotes);
-  const [newNoteTitle, setNewNoteTitle] = useState('');
-  const [newNoteContent, setNewNoteContent] = useState('');
-  const [newNoteColor, setNewNoteColor] = useState('#fbbf24');
-
-  // File Upload State
-  const [uploadError, setUploadError] = useState<string | null>(null);
-  const fileInputRef = useRef<HTMLInputElement | null>(null);
-
-  // Preset creation modal
-  const [newPresetName, setNewPresetName] = useState('');
+  // Preset Creation Modal
   const [isSavingPreset, setIsSavingPreset] = useState(false);
-  const [editingPresetId, setEditingPresetId] = useState<string | null>(null);
-  const [editingPresetName, setEditingPresetName] = useState('');
+  const [newPresetName, setNewPresetName] = useState('');
 
-  // Live ticking time for studio clock preview
-  const [previewTime, setPreviewTime] = useState(new Date());
-  useEffect(() => {
-    const timer = setInterval(() => setPreviewTime(new Date()), 1000);
-    return () => clearInterval(timer);
-  }, []);
-
-  const previewHoursStr = String(previewTime.getHours()).padStart(2, '0');
-  const previewMinutesStr = String(previewTime.getMinutes()).padStart(2, '0');
-  const previewSecondsStr = String(previewTime.getSeconds()).padStart(2, '0');
-
-  // Filtered Themes
+  // Search Filtering for Themes and Presets
   const filteredThemes = useMemo(() => {
-    let list = STUDIO_THEMES;
-    if (themeFilter !== 'all') {
-      list = list.filter(t => t.category === themeFilter);
-    }
-    if (searchQuery.trim()) {
-      const q = searchQuery.toLowerCase();
-      list = list.filter(t => t.name.toLowerCase().includes(q) || t.tagline.toLowerCase().includes(q));
-    }
-    return list;
-  }, [themeFilter, searchQuery]);
+    return STUDIO_THEMES.filter(theme => {
+      const matchesSearch =
+        searchQuery === '' ||
+        theme.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        theme.tagline.toLowerCase().includes(searchQuery.toLowerCase());
+      const matchesCat = themeFilter === 'all' || theme.category === themeFilter;
+      return matchesSearch && matchesCat;
+    });
+  }, [searchQuery, themeFilter]);
 
-  // Filtered Clock Designs
-  const filteredClockDesigns = useMemo(() => {
-    let list = STUDIO_CLOCK_DESIGNS;
-    if (clockFilter !== 'all') {
-      list = list.filter(c => c.category === clockFilter);
-    }
-    if (searchQuery.trim()) {
-      const q = searchQuery.toLowerCase();
-      list = list.filter(c => c.name.toLowerCase().includes(q) || c.description.toLowerCase().includes(q) || c.badge.toLowerCase().includes(q));
-    }
-    return list;
-  }, [clockFilter, searchQuery]);
+  const filteredGridPresets = useMemo(() => {
+    return STUDIO_LAYOUT_ARRANGEMENTS.filter(preset => {
+      const matchesSearch =
+        searchQuery === '' ||
+        preset.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        preset.description.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        preset.badge.toLowerCase().includes(searchQuery.toLowerCase());
+      const matchesCat = layoutCategoryFilter === 'all' || preset.category === layoutCategoryFilter;
+      return matchesSearch && matchesCat;
+    });
+  }, [searchQuery, layoutCategoryFilter]);
 
-  // Filtered Fonts
-  const filteredFonts = useMemo(() => {
-    let list = STUDIO_FONTS;
-    if (fontFilter !== 'all') {
-      list = list.filter(f => f.category === fontFilter);
-    }
-    if (searchQuery.trim()) {
-      const q = searchQuery.toLowerCase();
-      list = list.filter(f => f.name.toLowerCase().includes(q) || f.category.toLowerCase().includes(q));
-    }
-    return list;
-  }, [fontFilter, searchQuery]);
-
-  // Filtered Wallpapers
-  const filteredWallpapers = useMemo(() => {
-    let list = STUDIO_WALLPAPERS;
-    if (wallpaperCategory !== 'all') {
-      list = list.filter(w => w.category === wallpaperCategory);
-    }
-    if (searchQuery.trim()) {
-      const q = searchQuery.toLowerCase();
-      list = list.filter(w => w.title.toLowerCase().includes(q) || w.category.toLowerCase().includes(q));
-    }
-    return list;
-  }, [wallpaperCategory, searchQuery]);
-
-  // Filtered Widget Styles
-  const filteredWidgetStyles = useMemo(() => {
-    if (!searchQuery.trim()) return STUDIO_WIDGET_STYLES;
-    const q = searchQuery.toLowerCase();
-    return STUDIO_WIDGET_STYLES.filter(w => w.name.toLowerCase().includes(q) || w.tagline.toLowerCase().includes(q));
-  }, [searchQuery]);
-
-  // Filtered Layouts
-  const filteredLayouts = useMemo(() => {
-    let list = STUDIO_LAYOUT_ARRANGEMENTS;
-    if (layoutCategory !== 'all') {
-      list = list.filter(l => l.category === layoutCategory);
-    }
-    if (searchQuery.trim()) {
-      const q = searchQuery.toLowerCase();
-      list = list.filter(l => l.name.toLowerCase().includes(q) || l.description.toLowerCase().includes(q));
-    }
-    return list;
-  }, [layoutCategory, searchQuery]);
-
-  // Filtered Palettes
-  const filteredPalettes = useMemo(() => {
-    if (!searchQuery.trim()) return STUDIO_PALETTES;
-    const q = searchQuery.toLowerCase();
-    return STUDIO_PALETTES.filter(p => p.name.toLowerCase().includes(q));
-  }, [searchQuery]);
-
-  // Total Presets Count Across Library (>100!)
-  const totalLibraryItemsCount =
-    STUDIO_THEMES.length +
-    STUDIO_CLOCK_DESIGNS.length +
-    STUDIO_FONTS.length +
-    STUDIO_WALLPAPERS.length +
-    STUDIO_BACKGROUND_EFFECTS.length +
-    STUDIO_WIDGET_STYLES.length +
-    STUDIO_LAYOUT_ARRANGEMENTS.length +
-    STUDIO_PALETTES.length +
-    INITIAL_PRESETS.length;
-
-  // Apply Theme Handler
+  // Handle Theme Selection with Instant Dynamic Overhaul
   const handleSelectTheme = (theme: ThemeOption) => {
     setStagedThemeId(theme.id);
     setStagedWallpaperUrl(theme.wallpaperUrl);
@@ -676,233 +327,225 @@ export default function VisualCustomizationStudio({
     setStagedBgBlur(theme.bgBlur);
     setStagedBgSaturation(theme.bgSaturation);
     setStagedBgBrightness(theme.bgBrightness);
-    setStagedAccentColor(theme.accentColor);
-    setStagedPrimaryText(theme.primaryTextColor);
-    setStagedSecondaryText(theme.secondaryTextColor);
-    setStagedSurfaceColor(theme.surfaceColor);
-    setStagedWidgetStyle(theme.widgetStyle);
-    setStagedFontClock(theme.fontClock);
-    setStagedFontHeading(theme.fontHeading);
-    setStagedFontBody(theme.fontBody);
     setStagedClockArch(theme.clockArchitecture);
-    recordRecent(theme.id);
+    setStagedAnimEnabled(theme.isAnimated ?? true);
+    setStagedAnimIntensity(theme.animationIntensity ? (theme.animationIntensity > 1.2 ? 'high' : theme.animationIntensity < 0.8 ? 'low' : 'medium') : 'medium');
+    setStagedAnimSpeed(theme.animationSpeed ?? 1.0);
+    setStagedEnergyColor(theme.energyColor || theme.accentColor);
+    setStagedFocalPosition(theme.characterPosition || 'left');
+    setStagedCharacterScale(theme.characterScale ?? 100);
+
+    // Apply coordinated global widget styling default
+    if (theme.defaultWidgetStyle) {
+      setStagedGlobalStyle({
+        ...stagedGlobalStyle,
+        ...theme.defaultWidgetStyle,
+      });
+    } else {
+      setStagedGlobalStyle({
+        ...stagedGlobalStyle,
+        bgColor: theme.surfaceColor,
+        borderColor: theme.accentColor,
+        glowColor: theme.accentColor,
+        accentColor: theme.accentColor,
+      });
+    }
+
+    setStagedTypography(prev => ({
+      ...prev,
+      fontClock: theme.fontClock,
+      fontHeading: theme.fontHeading,
+      fontBody: theme.fontBody,
+    }));
   };
 
-  // Apply Clock Design Handler
-  const handleSelectClockDesign = (clock: ClockDesignOption) => {
-    setStagedClockArch(clock.id);
-    recordRecent(clock.id);
+  // Helper to get active editing style (global or per-widget override)
+  const currentEditingStyle = useMemo(() => {
+    if (selectedStyleWidget === 'global') {
+      return stagedGlobalStyle;
+    }
+    return stagedWidgetOverrides[selectedStyleWidget] || stagedGlobalStyle;
+  }, [selectedStyleWidget, stagedGlobalStyle, stagedWidgetOverrides]);
+
+  // Update style property for current target
+  const updateCurrentStyle = (patch: Partial<WidgetSpecificStyle>) => {
+    if (selectedStyleWidget === 'global') {
+      setStagedGlobalStyle(prev => ({ ...prev, ...patch }));
+    } else {
+      setStagedWidgetOverrides(prev => ({
+        ...prev,
+        [selectedStyleWidget]: {
+          ...(prev[selectedStyleWidget] || stagedGlobalStyle),
+          ...patch,
+        },
+      }));
+    }
   };
 
-  // Apply Palette Handler
-  const handleSelectPalette = (palette: ColorPaletteOption) => {
-    setStagedAccentColor(palette.accent);
-    setStagedPrimaryText(palette.primaryText);
-    setStagedSecondaryText(palette.secondaryText);
-    setStagedSurfaceColor(palette.surface);
-    recordRecent(palette.id);
+  // Reset selected widget to global theme default
+  const handleResetWidgetToDefault = (widgetKey: string) => {
+    setStagedWidgetOverrides(prev => {
+      const next = { ...prev };
+      delete next[widgetKey];
+      return next;
+    });
   };
 
-  // Commit all staged modifications to the active dashboard
-  const handleApplyAllChanges = () => {
-    onApply({
+  // Apply current widget override to all widgets
+  const handleApplyCurrentStyleToAll = () => {
+    setStagedGlobalStyle(currentEditingStyle);
+    setStagedWidgetOverrides({});
+  };
+
+  // Save changes and commit to live dashboard
+  const handleSaveAndApply = () => {
+    const computedGridCoordinates = computePresetWidgetCoordinates(
+      STUDIO_LAYOUT_ARRANGEMENTS.find(p => p.id === stagedGridPresetId) || STUDIO_LAYOUT_ARRANGEMENTS[0],
+      window.innerWidth,
+      window.innerHeight,
+      stagedGridGap,
+      stagedGridMargin
+    );
+
+    const updates: any = {
       activeThemeId: stagedThemeId,
       wallpaperUrl: stagedWallpaperUrl,
+      videoUrl: stagedVideoUrl,
       canvasTheme: stagedCanvasTheme,
       bgDimmer: stagedBgDimmer,
       bgBlur: stagedBgBlur,
       bgSaturation: stagedBgSaturation,
       bgBrightness: stagedBgBrightness,
       wallpaperScaling: stagedScaling,
-      isWallpaperStatic: !stagedIsAnimated,
-      animationIntensity: stagedAnimIntensity,
-      widgetStyle: stagedWidgetStyle,
+      layoutMode: stagedLayoutMode,
+      selectedGridPresetId: stagedGridPresetId,
+      gridGaps: stagedGridGap,
+      gridMargins: stagedGridMargin,
+      gridAlignment: stagedGridAlignment,
+      snapToGrid: stagedSnapToGrid,
+      snapGridSize: stagedSnapSize,
+      freeformLayout: stagedFreeformLayout,
+      gridLayout: computedGridCoordinates,
+      animationControls: {
+        enabled: stagedAnimEnabled,
+        intensity: stagedAnimIntensity,
+        speed: stagedAnimSpeed,
+        energyColor: stagedEnergyColor,
+        energyIntensity: stagedEnergyIntensity,
+        focalPosition: stagedFocalPosition,
+        characterScale: stagedCharacterScale,
+        dimmer: stagedBgDimmer,
+        overlayOpacity: 70,
+      },
+      widgetStyles: {
+        global: stagedGlobalStyle,
+        overrides: stagedWidgetOverrides,
+      },
       clock: {
         ...currentConfig.clock,
-        glassBg: !stagedWidgetTransparency.clock,
-        color: stagedAccentColor,
         architecture: stagedClockArch,
+        visible: stagedVisibility.clock,
+        ...(stagedLayoutMode === 'grid' && computedGridCoordinates.clock
+          ? computedGridCoordinates.clock
+          : stagedFreeformLayout.clock || {}),
       },
       countdown: {
         ...currentConfig.countdown,
-        glassBg: !stagedWidgetTransparency.countdown,
-      },
-      notification: {
-        ...currentConfig.notification,
-        glassBg: !stagedWidgetTransparency.notification,
-      },
-      calendar: {
-        ...currentConfig.calendar,
-        glassBg: !stagedWidgetTransparency.calendar,
-      },
-      tasks: {
-        ...currentConfig.tasks,
-        glassBg: !stagedWidgetTransparency.tasks,
-      },
-      motivation: {
-        ...currentConfig.motivation,
-        glassBg: !stagedWidgetTransparency.motivation,
-      },
-      pomodoro: {
-        ...currentConfig.pomodoro,
-        glassBg: !stagedWidgetTransparency.pomodoro,
+        visible: stagedVisibility.countdown,
+        ...(stagedLayoutMode === 'grid' && computedGridCoordinates.countdown
+          ? computedGridCoordinates.countdown
+          : stagedFreeformLayout.countdown || {}),
       },
       nameWidget: {
         ...currentConfig.nameWidget,
-        glassBg: !stagedWidgetTransparency.nameWidget,
+        visible: stagedVisibility.nameWidget,
+        ...(stagedLayoutMode === 'grid' && computedGridCoordinates.nameWidget
+          ? computedGridCoordinates.nameWidget
+          : stagedFreeformLayout.nameWidget || {}),
       },
-      typography: {
-        ...stagedTypography,
-        fontClock: stagedFontClock,
-        fontHeading: stagedFontHeading,
-        fontBody: stagedFontBody,
-        fontCountdown: stagedFontCountdown,
-        fontLabels: stagedFontLabels,
-        clockFontSizeOffset,
-        clockLetterSpacing,
-        clockFontWeight,
-        clockUppercase,
-        headingLetterSpacing,
+      tasks: {
+        ...currentConfig.tasks,
+        visible: stagedVisibility.tasks,
+        ...(stagedLayoutMode === 'grid' && computedGridCoordinates.tasks
+          ? computedGridCoordinates.tasks
+          : stagedFreeformLayout.tasks || {}),
       },
+      notification: {
+        ...currentConfig.notification,
+        visible: stagedVisibility.notification,
+        ...(stagedLayoutMode === 'grid' && computedGridCoordinates.notification
+          ? computedGridCoordinates.notification
+          : stagedFreeformLayout.notification || {}),
+      },
+      calendar: {
+        ...currentConfig.calendar,
+        visible: stagedVisibility.calendar,
+        ...(stagedLayoutMode === 'grid' && computedGridCoordinates.calendar
+          ? computedGridCoordinates.calendar
+          : stagedFreeformLayout.calendar || {}),
+      },
+      motivation: {
+        ...currentConfig.motivation,
+        visible: stagedVisibility.motivation,
+        ...(stagedLayoutMode === 'grid' && computedGridCoordinates.motivation
+          ? computedGridCoordinates.motivation
+          : stagedFreeformLayout.motivation || {}),
+      },
+      pomodoro: {
+        ...currentConfig.pomodoro,
+        visible: stagedVisibility.pomodoro,
+        ...(stagedLayoutMode === 'grid' && computedGridCoordinates.pomodoro
+          ? computedGridCoordinates.pomodoro
+          : stagedFreeformLayout.pomodoro || {}),
+      },
+      typography: stagedTypography,
       customColors: {
-        accent: stagedAccentColor,
-        primaryText: stagedPrimaryText,
-        secondaryText: stagedSecondaryText,
-        surface: stagedSurfaceColor,
+        accent: stagedGlobalStyle.accentColor || '#10b981',
+        primaryText: stagedGlobalStyle.textColor || '#ffffff',
+        secondaryText: '#cbd5e1',
+        surface: stagedGlobalStyle.bgColor || '#0c1a14',
       },
-      personalization: {
-        ...currentConfig.personalization,
-        layoutPreset: stagedLayoutPreset,
-        widgetRadius: stagedWidgetRadius,
-      },
-    });
+    };
 
-    if (onUpdateCustomNotes) {
-      onUpdateCustomNotes(stagedNotes);
-    }
-
+    onApply(updates);
     onClose();
   };
 
-  // Reset Staged Settings to Defaults
-  const handleResetToDefaults = () => {
-    setStagedThemeId('obsidian-glass');
-    setStagedWallpaperUrl('https://images.unsplash.com/photo-1506703719100-a0f3a48c0f86?auto=format&fit=crop&w=2400&q=85');
-    setStagedCanvasTheme('none');
-    setStagedBgDimmer(35);
-    setStagedBgBlur(0);
-    setStagedBgSaturation(100);
-    setStagedBgBrightness(100);
-    setStagedAccentColor('#06b6d4');
-    setStagedPrimaryText('#ffffff');
-    setStagedSecondaryText('#94a3b8');
-    setStagedSurfaceColor('#0c1220');
-    setStagedWidgetStyle('subtle-dark-glass');
-    setStagedFontClock('inter');
-    setStagedFontHeading('inter');
-    setStagedFontBody('inter');
-    setStagedClockArch('minimal');
-    setStagedLayoutPreset('balanced');
-  };
-
-  // Preset Management
-  const handleSaveNewPreset = () => {
-    if (!newPresetName.trim()) return;
-    const newPreset: SavedPreset = {
-      id: `preset-${Date.now()}`,
-      name: newPresetName.trim(),
-      tagline: 'Custom student layout and visual combination',
-      createdAt: Date.now(),
-      wallpaperUrl: stagedWallpaperUrl,
-      canvasTheme: stagedCanvasTheme as any,
-      config: {
-        activeThemeId: stagedThemeId,
-        accentColor: stagedAccentColor,
-        primaryTextColor: stagedPrimaryText,
-        secondaryTextColor: stagedSecondaryText,
-        surfaceColor: stagedSurfaceColor,
-        fontClock: stagedFontClock,
-        fontHeading: stagedFontHeading,
-        fontBody: stagedFontBody,
-        fontCountdown: stagedFontCountdown,
-        fontLabels: stagedFontLabels,
-        widgetStyle: stagedWidgetStyle,
-        wallpaperScaling: stagedScaling,
-        bgBrightness: stagedBgBrightness,
-        bgSaturation: stagedBgSaturation,
-        bgDimmer: stagedBgDimmer,
-        bgBlur: stagedBgBlur,
-        isAnimated: stagedIsAnimated,
-        animationIntensity: stagedAnimIntensity,
-        clockArchitecture: stagedClockArch,
-        layoutPreset: stagedLayoutPreset,
-      },
-    };
-    onUpdatePresets([newPreset, ...savedPresets]);
-    setNewPresetName('');
-    setIsSavingPreset(false);
-  };
-
-  const handleApplyPreset = (preset: SavedPreset) => {
-    const c = preset.config;
-    setStagedThemeId(c.activeThemeId);
-    setStagedWallpaperUrl(preset.wallpaperUrl);
-    setStagedCanvasTheme(preset.canvasTheme);
-    setStagedBgDimmer(c.bgDimmer);
-    setStagedBgBlur(c.bgBlur);
-    setStagedBgSaturation(c.bgSaturation);
-    setStagedBgBrightness(c.bgBrightness);
-    setStagedAccentColor(c.accentColor);
-    setStagedPrimaryText(c.primaryTextColor);
-    setStagedSecondaryText(c.secondaryTextColor);
-    setStagedSurfaceColor(c.surfaceColor);
-    setStagedWidgetStyle(c.widgetStyle);
-    setStagedFontClock(c.fontClock);
-    setStagedFontHeading(c.fontHeading);
-    setStagedFontBody(c.fontBody);
-    setStagedFontCountdown(c.fontCountdown);
-    setStagedFontLabels(c.fontLabels);
-    if (c.clockArchitecture) setStagedClockArch(c.clockArchitecture);
-    if (c.layoutPreset) setStagedLayoutPreset(c.layoutPreset);
-    recordRecent(preset.id);
-  };
-
-  // Font CSS helper
-  const getFontClass = (id: string) => {
-    const f = STUDIO_FONTS.find(x => x.id === id);
-    return f ? f.cssClass : 'font-inter';
+  // Revert / Cancel without saving
+  const handleCancel = () => {
+    onClose();
   };
 
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-xl flex items-center justify-center p-2 sm:p-5 overflow-hidden">
-      <div className="w-full max-w-7xl h-[94vh] rounded-3xl bg-[#070a12] border border-white/15 shadow-[0_30px_90px_rgba(0,0,0,0.95)] flex flex-col overflow-hidden">
-        {/* Studio Top Header */}
-        <div className="flex items-center justify-between px-5 py-3.5 border-b border-white/10 bg-white/[0.02]">
+    <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-2xl flex items-center justify-center p-2 sm:p-5 overflow-hidden select-none">
+      <div className="w-full max-w-7xl h-[94vh] rounded-3xl bg-[#060911] border border-white/15 shadow-[0_30px_90px_rgba(0,0,0,0.95)] flex flex-col overflow-hidden">
+        {/* ================= STUDIO TOP BAR ================= */}
+        <div className="flex items-center justify-between px-6 py-4 border-b border-white/10 bg-white/[0.02]">
           <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-2xl bg-cyan-500/20 border border-cyan-400/40 flex items-center justify-center text-cyan-300 shadow-[0_0_15px_rgba(6,182,212,0.3)]">
+            <div className="w-9 h-9 rounded-2xl bg-emerald-500/20 border border-emerald-400/40 flex items-center justify-center text-emerald-300 shadow-[0_0_15px_rgba(16,185,129,0.3)]">
               <Sparkles className="w-5 h-5 animate-pulse" />
             </div>
             <div>
               <div className="flex items-center gap-2">
                 <h2 className="text-base font-bold tracking-wide text-white font-['Plus_Jakarta_Sans']">
-                  Design Studio & 100+ Preset Library
+                  Dashboard Studio & Visual Architect
                 </h2>
-                <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full bg-gradient-to-r from-red-500/30 to-amber-500/30 text-amber-300 border border-amber-500/40">
-                  Avengers & Study HUD
+                <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                  Doctor Doom & Iron Man Ready
                 </span>
                 <span className="hidden sm:inline-block text-[10px] text-white/50 font-mono">
-                  ({totalLibraryItemsCount} Presets Available)
+                  (50 Grid Arrangements)
                 </span>
               </div>
               <p className="text-xs text-white/50 line-clamp-1">
-                Cinematic Marvel superhero aesthetics, 35+ architectural clocks, 26 fonts, 30 widget styles & custom sticky notes
+                Cinematic animated character themes, 50 numbered layout presets, dynamic widget styler & freeform precision
               </p>
             </div>
           </div>
 
-          <div className="flex items-center gap-2 sm:gap-3">
+          <div className="flex items-center gap-3">
             {/* Search Input */}
             <div className="relative hidden md:block">
               <Search className="w-3.5 h-3.5 text-white/40 absolute left-3 top-1/2 -translate-y-1/2" />
@@ -910,8 +553,8 @@ export default function VisualCustomizationStudio({
                 type="text"
                 value={searchQuery}
                 onChange={e => setSearchQuery(e.target.value)}
-                placeholder="Search Avengers, clocks, fonts..."
-                className="pl-8 pr-3 py-1.5 rounded-xl bg-black/50 border border-white/10 text-xs text-white placeholder-white/30 focus:outline-none focus:border-cyan-400 transition w-56 lg:w-64"
+                placeholder="Search themes, 50 presets, fonts..."
+                className="pl-8 pr-3 py-1.5 rounded-xl bg-black/50 border border-white/10 text-xs text-white placeholder-white/30 focus:outline-none focus:border-emerald-400 transition w-56 lg:w-64"
               />
               {searchQuery && (
                 <button
@@ -923,59 +566,43 @@ export default function VisualCustomizationStudio({
               )}
             </div>
 
+            {/* Cancel & Save Action Buttons */}
             <button
-              onClick={handleResetToDefaults}
-              title="Reset studio staging to defaults"
-              className="px-3 py-1.5 rounded-xl bg-white/5 hover:bg-white/10 text-white/70 hover:text-white text-xs border border-white/10 transition cursor-pointer flex items-center gap-1.5"
+              onClick={handleCancel}
+              className="px-3.5 py-1.5 rounded-xl bg-white/5 hover:bg-white/10 text-white/70 hover:text-white text-xs font-semibold border border-white/10 transition cursor-pointer"
             >
-              <RotateCcw className="w-3.5 h-3.5" />
-              <span className="hidden sm:inline">Reset</span>
+              Cancel
             </button>
-
             <button
-              onClick={handleApplyAllChanges}
-              className="px-4 py-1.5 rounded-xl bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 text-white font-bold text-xs shadow-[0_0_15px_rgba(6,182,212,0.4)] transition cursor-pointer flex items-center gap-1.5"
+              onClick={handleSaveAndApply}
+              className="px-4 py-1.5 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-400 hover:to-teal-500 text-white text-xs font-bold shadow-[0_0_20px_rgba(16,185,129,0.3)] transition cursor-pointer flex items-center gap-1.5"
             >
-              <Check className="w-4 h-4 stroke-[3]" />
-              <span>Apply Design</span>
-            </button>
-
-            <button
-              onClick={onClose}
-              className="p-1.5 rounded-xl hover:bg-white/10 text-white/60 hover:text-white transition cursor-pointer ml-1"
-            >
-              <X className="w-5 h-5" />
+              <Check className="w-3.5 h-3.5 stroke-[2.5]" />
+              <span>Save & Apply</span>
             </button>
           </div>
         </div>
 
-        {/* Studio Tabs Navigation (10 Searchable Galleries + Sticky Notes) */}
-        <div className="flex items-center justify-between px-5 border-b border-white/10 bg-black/40 overflow-x-auto no-scrollbar">
-          <div className="flex items-center gap-1 py-2">
+        {/* ================= 6 CLEAR PRIMARY TABS ================= */}
+        <div className="flex items-center justify-between px-6 border-b border-white/10 bg-black/40 overflow-x-auto no-scrollbar">
+          <div className="flex items-center gap-1 py-2.5">
             {[
-              { id: 'themes', label: 'Avengers & Themes (30)', icon: Shield },
-              { id: 'clocks', label: 'Clock Designs (35)', icon: ClockIcon },
-              { id: 'typography', label: 'Advanced Typography Studio', icon: Type },
-              { id: 'n0t0', label: '15 N0T0 Minimalist Styles', icon: Sparkles },
-              { id: 'fonts', label: 'Typography Fonts (27)', icon: SlidersHorizontal },
-              { id: 'text-styles', label: 'Text & Font Stylers', icon: Sliders },
-              { id: 'wallpapers', label: 'Wallpapers (36)', icon: ImageIcon },
-              { id: 'effects', label: 'Background FX (12)', icon: Flame },
-              { id: 'widgets', label: 'Widget Styles (30)', icon: Layers },
-              { id: 'layouts', label: 'Widget Layouts (25)', icon: Layout },
-              { id: 'colours', label: 'Color Palettes (19)', icon: Palette },
-              { id: 'presets', label: 'Combination Presets (15)', icon: Bookmark },
-              { id: 'notes', label: 'Custom Notes Studio', icon: StickyNote },
+              { id: 'appearance', label: '1. Appearance & Animated Themes', icon: Shield },
+              { id: 'widget-styles', label: '2. Widget Styles', icon: Layers },
+              { id: 'arrange-layout', label: '3. Arrange Layout (50 Presets)', icon: Grid },
+              { id: 'freeform-editor', label: '4. Freeform Editor', icon: Move },
+              { id: 'typography', label: '5. Typography Studio', icon: Type },
+              { id: 'advanced', label: '6. Advanced Settings', icon: SlidersHorizontal },
             ].map(tab => {
               const Icon = tab.icon;
               const isActive = activeTab === tab.id;
               return (
                 <button
                   key={tab.id}
-                  onClick={() => setActiveTab(tab.id as StudioTab)}
-                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold transition cursor-pointer shrink-0 ${
+                  onClick={() => setActiveTab(tab.id as StudioSection)}
+                  className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-semibold transition cursor-pointer shrink-0 ${
                     isActive
-                      ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-400/40 shadow-[0_0_15px_rgba(6,182,212,0.15)]'
+                      ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-400/40 shadow-[0_0_15px_rgba(16,185,129,0.18)]'
                       : 'text-white/60 hover:text-white hover:bg-white/5 border border-transparent'
                   }`}
                 >
@@ -987,2290 +614,1265 @@ export default function VisualCustomizationStudio({
           </div>
         </div>
 
-        {/* Studio Body: Split View (Options on Left, Live Preview on Right) */}
+        {/* ================= MAIN STUDIO BODY (SPLIT VIEW) ================= */}
         <div className="flex-1 flex overflow-hidden">
           {/* LEFT: Options & Studio Controls */}
           <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-6">
-            {/* ================= 1. THEMES GALLERY (INC. 20 AVENGERS SUPERHERO THEMES) ================= */}
-            {activeTab === 'themes' && (
-              <div className="space-y-4">
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                  <div>
-                    <h3 className="text-sm font-bold text-white uppercase tracking-wider flex items-center gap-2">
-                      <span>Cinematic Dashboard Themes</span>
-                      <span className="text-[10px] px-2 py-0.5 rounded-full bg-red-500/20 text-red-300 border border-red-500/30">
-                        20 Avengers Themes
-                      </span>
-                    </h3>
-                    <p className="text-xs text-white/50">
-                      Select character-inspired atmospheres with customized lighting, HUD elements, and typography
-                    </p>
-                  </div>
-                  <div className="flex items-center gap-1.5 overflow-x-auto text-xs">
-                    {(['all', 'superhero', 'dark', 'light', 'cinematic', 'nature', 'space'] as const).map(cat => (
-                      <button
-                        key={cat}
-                        onClick={() => setThemeFilter(cat)}
-                        className={`px-2.5 py-1 rounded-lg uppercase tracking-wider text-[10px] font-bold transition cursor-pointer ${
-                          themeFilter === cat
-                            ? 'bg-cyan-500/30 text-cyan-200 border border-cyan-400/50'
-                            : 'bg-white/5 text-white/50 hover:text-white'
-                        }`}
-                      >
-                        {cat}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-2 xl:grid-cols-3 gap-3">
-                  {filteredThemes.map(th => {
-                    const isSelected = stagedThemeId === th.id;
-                    const isFav = favorites.includes(th.id);
-
-                    return (
-                      <div
-                        key={th.id}
-                        onClick={() => handleSelectTheme(th)}
-                        className={`group relative p-3.5 rounded-2xl border transition-all duration-200 cursor-pointer flex flex-col justify-between overflow-hidden ${
-                          isSelected
-                            ? 'border-cyan-400 bg-cyan-500/10 shadow-[0_0_20px_rgba(6,182,212,0.25)]'
-                            : 'border-white/10 bg-white/[0.03] hover:bg-white/[0.06] hover:border-white/20'
-                        }`}
-                      >
-                        {/* Card Background Subtle Tint */}
-                        <div
-                          className="absolute inset-0 opacity-15 pointer-events-none transition group-hover:opacity-25"
-                          style={{ background: `linear-gradient(135deg, ${th.previewAccent} 0%, transparent 60%)` }}
-                        />
-
-                        <div className="relative z-10">
-                          <div className="flex items-center justify-between mb-1.5">
-                            <div className="flex items-center gap-1.5 min-w-0">
-                              <span
-                                className="w-3 h-3 rounded-full shrink-0 shadow-sm"
-                                style={{ backgroundColor: th.accentColor }}
-                              />
-                              <h4 className="text-xs font-bold text-white truncate">{th.name}</h4>
-                            </div>
-
-                            <div className="flex items-center gap-1">
-                              <button
-                                type="button"
-                                onClick={e => toggleFavorite(th.id, e)}
-                                title={isFav ? 'Remove from favorites' : 'Add to favorites'}
-                                className={`p-1 rounded-lg hover:bg-white/10 transition ${isFav ? 'text-amber-400' : 'text-white/30 hover:text-white'}`}
-                              >
-                                <Star className={`w-3.5 h-3.5 ${isFav ? 'fill-current' : ''}`} />
-                              </button>
-                              {isSelected && (
-                                <span className="p-0.5 rounded-full bg-cyan-400 text-black">
-                                  <Check className="w-3 h-3 stroke-[3]" />
-                                </span>
-                              )}
-                            </div>
-                          </div>
-
-                          <p className="text-[11px] text-white/50 line-clamp-2 leading-relaxed mb-3">
-                            {th.tagline}
-                          </p>
-
-                          {/* Mini Visual Color Bar Preview */}
-                          <div className="flex items-center gap-1.5 p-1.5 rounded-xl bg-black/40 border border-white/5 text-[10px]">
-                            <span className="text-white/40 font-mono text-[9px] uppercase">{th.category}</span>
-                            <div className="ml-auto flex items-center gap-1">
-                              <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: th.previewBg }} title="Background" />
-                              <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: th.previewWidgetBg }} title="Widget" />
-                              <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: th.accentColor }} title="Accent" />
-                              <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: th.secondaryTextColor }} title="Secondary" />
-                            </div>
-                          </div>
-                        </div>
-
-                        <div className="relative z-10 mt-3 pt-2 border-t border-white/5 flex items-center justify-between text-[10px] text-white/40">
-                          <span className="capitalize">{th.clockArchitecture} Clock</span>
-                          <span className="text-cyan-400/80 font-mono group-hover:underline">Click to Apply</span>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
-
-            {/* ================= 2. 35+ CLOCK DESIGNS GALLERY ================= */}
-            {activeTab === 'clocks' && (
-              <div className="space-y-4">
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                  <div>
-                    <h3 className="text-sm font-bold text-white uppercase tracking-wider">
-                      35+ Working Clock Designs
-                    </h3>
-                    <p className="text-xs text-white/50">
-                      High-precision architectural digital, superhero HUD, split-flap, flip, dot-matrix, and analog clocks
-                    </p>
-                  </div>
-                  <div className="flex items-center gap-1.5 overflow-x-auto text-xs">
-                    {(['all', 'digital', 'superhero', 'classic', 'specialized', 'minimal'] as const).map(cat => (
-                      <button
-                        key={cat}
-                        onClick={() => setClockFilter(cat)}
-                        className={`px-2.5 py-1 rounded-lg uppercase tracking-wider text-[10px] font-bold transition cursor-pointer ${
-                          clockFilter === cat
-                            ? 'bg-cyan-500/30 text-cyan-200 border border-cyan-400/50'
-                            : 'bg-white/5 text-white/50 hover:text-white'
-                        }`}
-                      >
-                        {cat}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-                  {filteredClockDesigns.map(clk => {
-                    const isSelected = stagedClockArch === clk.id;
-                    const isFav = favorites.includes(clk.id);
-
-                    return (
-                      <div
-                        key={clk.id}
-                        onClick={() => handleSelectClockDesign(clk)}
-                        className={`group p-3.5 rounded-2xl border transition-all duration-200 cursor-pointer flex flex-col justify-between ${
-                          isSelected
-                            ? 'border-cyan-400 bg-cyan-500/10 shadow-[0_0_20px_rgba(6,182,212,0.25)]'
-                            : 'border-white/10 bg-white/[0.03] hover:bg-white/[0.06] hover:border-white/20'
-                        }`}
-                      >
-                        <div>
-                          <div className="flex items-center justify-between mb-2">
-                            <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full bg-white/10 text-white/70">
-                              {clk.badge}
-                            </span>
-                            <div className="flex items-center gap-1">
-                              <button
-                                type="button"
-                                onClick={e => toggleFavorite(clk.id, e)}
-                                className={`p-1 rounded-lg hover:bg-white/10 transition ${isFav ? 'text-amber-400' : 'text-white/30 hover:text-white'}`}
-                              >
-                                <Star className={`w-3.5 h-3.5 ${isFav ? 'fill-current' : ''}`} />
-                              </button>
-                              {isSelected && (
-                                <span className="p-0.5 rounded-full bg-cyan-400 text-black">
-                                  <Check className="w-3 h-3 stroke-[3]" />
-                                </span>
-                              )}
-                            </div>
-                          </div>
-
-                          {/* Live Clock Visual Render Card */}
-                          <div className="h-20 rounded-xl bg-black/60 border border-white/10 flex flex-col items-center justify-center p-2 mb-2.5 relative overflow-hidden">
-                            <div
-                              className="text-lg sm:text-xl font-bold tracking-wider font-mono tabular-digits transition"
-                              style={{ color: stagedAccentColor }}
-                            >
-                              {previewHoursStr}:{previewMinutesStr}:{previewSecondsStr}
-                            </div>
-                            <span className="text-[9px] text-white/40 mt-1 uppercase tracking-widest">
-                              {clk.previewTime}
-                            </span>
-                          </div>
-
-                          <h4 className="text-xs font-bold text-white mb-1">{clk.name}</h4>
-                          <p className="text-[11px] text-white/50 line-clamp-2 leading-relaxed">
-                            {clk.description}
-                          </p>
-                        </div>
-
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
-
-            {/* ================= ADVANCED TYPOGRAPHY STUDIO ================= */}
-            {activeTab === 'typography' && (
+            {/* ================= TAB 1: APPEARANCE & ANIMATED THEMES ================= */}
+            {activeTab === 'appearance' && (
               <div className="space-y-6">
-                {/* Header & Global Toolbar */}
-                <div className="p-4 rounded-2xl bg-white/[0.03] border border-white/10 space-y-4">
-                  <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <h3 className="text-sm font-bold text-white uppercase tracking-wider flex items-center gap-2">
-                          <Type className="w-4 h-4 text-cyan-400" />
-                          <span>Advanced Typography & Font Studio</span>
-                        </h3>
-                        <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full bg-cyan-500/20 text-cyan-300 border border-cyan-400/30">
-                          Independent Element Tuning
-                        </span>
-                      </div>
-                      <p className="text-xs text-white/50 mt-0.5">
-                        Customize font family, sizing, weights, tracking, letter-casing, shadows, and glows for each dashboard element independently.
-                      </p>
-                    </div>
-
-                    {/* Global Scale & History Controls */}
-                    <div className="flex items-center flex-wrap gap-2">
-                      <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-black/40 border border-white/10 text-xs">
-                        <span className="text-white/60 text-[11px] font-medium">Global Scale:</span>
-                        <button
-                          type="button"
-                          onClick={() => handleGlobalScaleChange(Math.max(0.7, (stagedTypography.globalScale ?? 1.0) - 0.05))}
-                          className="w-5 h-5 rounded bg-white/10 hover:bg-white/20 text-white flex items-center justify-center cursor-pointer transition"
-                          title="Decrease Global Scale"
-                        >
-                          <Minus className="w-3 h-3" />
-                        </button>
-                        <span className="font-mono text-cyan-300 font-bold min-w-[38px] text-center">
-                          {Math.round((stagedTypography.globalScale ?? 1.0) * 100)}%
-                        </span>
-                        <button
-                          type="button"
-                          onClick={() => handleGlobalScaleChange(Math.min(1.6, (stagedTypography.globalScale ?? 1.0) + 0.05))}
-                          className="w-5 h-5 rounded bg-white/10 hover:bg-white/20 text-white flex items-center justify-center cursor-pointer transition"
-                          title="Increase Global Scale"
-                        >
-                          <Plus className="w-3 h-3" />
-                        </button>
-
-                        <div className="hidden sm:flex items-center gap-1 ml-1 border-l border-white/10 pl-1.5">
-                          {[0.85, 1.0, 1.15, 1.3].map(scale => (
-                            <button
-                              key={scale}
-                              type="button"
-                              onClick={() => handleGlobalScaleChange(scale)}
-                              className={`px-1.5 py-0.5 rounded text-[10px] font-mono cursor-pointer transition ${
-                                Math.abs((stagedTypography.globalScale ?? 1.0) - scale) < 0.02
-                                  ? 'bg-cyan-500 text-black font-bold'
-                                  : 'text-white/40 hover:text-white hover:bg-white/10'
-                              }`}
-                            >
-                              {scale}x
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-
-                      {/* Undo / Redo */}
-                      <div className="flex items-center gap-1">
-                        <button
-                          type="button"
-                          onClick={handleUndo}
-                          disabled={undoStack.length === 0}
-                          className="p-1.5 rounded-xl bg-white/5 hover:bg-white/10 disabled:opacity-30 disabled:cursor-not-allowed text-white/80 hover:text-white border border-white/10 transition cursor-pointer flex items-center gap-1 text-xs"
-                          title="Undo Typography Change"
-                        >
-                          <Undo className="w-3.5 h-3.5" />
-                          <span className="hidden sm:inline text-[11px]">Undo</span>
-                        </button>
-                        <button
-                          type="button"
-                          onClick={handleRedo}
-                          disabled={redoStack.length === 0}
-                          className="p-1.5 rounded-xl bg-white/5 hover:bg-white/10 disabled:opacity-30 disabled:cursor-not-allowed text-white/80 hover:text-white border border-white/10 transition cursor-pointer flex items-center gap-1 text-xs"
-                          title="Redo Typography Change"
-                        >
-                          <Redo className="w-3.5 h-3.5" />
-                          <span className="hidden sm:inline text-[11px]">Redo</span>
-                        </button>
-                      </div>
-
-                      {/* Reset Actions */}
-                      <div className="flex items-center gap-1">
-                        <button
-                          type="button"
-                          onClick={handleResetElement}
-                          className="px-2.5 py-1.5 rounded-xl bg-white/5 hover:bg-white/10 text-white/70 hover:text-white border border-white/10 transition cursor-pointer text-[11px] flex items-center gap-1"
-                          title="Reset Selected Element"
-                        >
-                          <RotateCcw className="w-3 h-3 text-amber-400" />
-                          <span>Reset Element</span>
-                        </button>
-                        <button
-                          type="button"
-                          onClick={handleResetTypographyOnly}
-                          className="px-2.5 py-1.5 rounded-xl bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 border border-rose-500/20 transition cursor-pointer text-[11px]"
-                          title="Reset Entire Dashboard Typography"
-                        >
-                          Reset All
-                        </button>
-                      </div>
-                    </div>
+                {/* Sub-Tabs for Appearance */}
+                <div className="flex items-center justify-between gap-3 pb-3 border-b border-white/10">
+                  <div className="flex items-center gap-1.5 p-1 rounded-xl bg-white/5 border border-white/10 text-xs">
+                    {[
+                      { id: 'themes', label: 'Character Themes' },
+                      { id: 'animation', label: 'Animation & Atmosphere' },
+                      { id: 'wallpapers', label: 'Wallpapers & Video' },
+                      { id: 'clocks', label: 'Clock Architecture' },
+                    ].map(st => (
+                      <button
+                        key={st.id}
+                        onClick={() => setAppearanceSubTab(st.id as any)}
+                        className={`px-3 py-1.5 rounded-lg font-medium transition cursor-pointer ${
+                          appearanceSubTab === st.id
+                            ? 'bg-emerald-500/25 text-emerald-300 border border-emerald-400/40'
+                            : 'text-white/60 hover:text-white'
+                        }`}
+                      >
+                        {st.label}
+                      </button>
+                    ))}
                   </div>
 
-                  {/* Element Selector Tabs (12 Distinct Elements) */}
-                  <div>
-                    <label className="text-[11px] font-bold uppercase tracking-wider text-white/60 mb-2 block">
-                      Select Dashboard Element to Style:
-                    </label>
-                    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-1.5">
-                      {[
-                        { key: 'clockMain', label: 'Main Clock', sub: 'Hours & Minutes' },
-                        { key: 'clockDate', label: 'Date & Day', sub: 'Calendar Header' },
-                        { key: 'countdownNumber', label: 'Exam Countdown', sub: 'Days & Numbers' },
-                        { key: 'countdownLabel', label: 'Countdown Label', sub: 'Exam Badge' },
-                        { key: 'widgetTitle', label: 'Widget Title', sub: 'Card Headings' },
-                        { key: 'widgetBody', label: 'Widget Body', sub: 'Descriptions' },
-                        { key: 'timetableSubject', label: 'Timetable Subject', sub: 'Routine Classes' },
-                        { key: 'timetableTime', label: 'Timetable Time', sub: 'Period Intervals' },
-                        { key: 'taskText', label: 'Quick Task Text', sub: 'Checklist Items' },
-                        { key: 'motivationText', label: 'Motivational Quote', sub: 'Daily Affirmation' },
-                        { key: 'customText', label: 'Sticky Notes', sub: 'Custom Elements' },
-                        { key: 'buttonLabel', label: 'Buttons & Badges', sub: 'Interactive Tags' },
-                      ].map(el => {
-                        const isSelected = selectedTypographyElement === el.key;
-                        const elCfg = stagedTypography.elements[el.key as keyof DashboardTypographyConfig['elements']] || {};
-                        const currentSize = elCfg.fontSize || DEFAULT_ELEMENT_TYPOGRAPHY[el.key]?.fontSize || 14;
+                  {appearanceSubTab === 'themes' && (
+                    <div className="flex items-center gap-1 overflow-x-auto text-xs">
+                      {(['all', 'superhero', 'dark', 'light', 'cinematic'] as const).map(cat => (
+                        <button
+                          key={cat}
+                          onClick={() => setThemeFilter(cat)}
+                          className={`px-2.5 py-1 rounded-lg uppercase tracking-wider text-[10px] font-bold transition cursor-pointer ${
+                            themeFilter === cat
+                              ? 'bg-emerald-500/30 text-emerald-200 border border-emerald-400/50'
+                              : 'bg-white/5 text-white/50 hover:text-white'
+                          }`}
+                        >
+                          {cat}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {/* Sub-Tab Content: Themes Gallery */}
+                {appearanceSubTab === 'themes' && (
+                  <div className="space-y-4">
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3.5">
+                      {filteredThemes.map(theme => {
+                        const isSelected = stagedThemeId === theme.id;
+                        const isSpecialHero =
+                          theme.id === 'hero-doctor-doom' ||
+                          theme.id === 'hero-iron-man' ||
+                          theme.id === 'hero-doom-vs-ironman' ||
+                          theme.id === 'hero-civil-war';
 
                         return (
-                          <button
-                            key={el.key}
-                            type="button"
-                            onClick={() => setSelectedTypographyElement(el.key as keyof DashboardTypographyConfig['elements'])}
-                            className={`p-2 rounded-xl text-left transition cursor-pointer border flex flex-col justify-between ${
+                          <div
+                            key={theme.id}
+                            onClick={() => handleSelectTheme(theme)}
+                            className={`relative p-3.5 rounded-2xl border transition-all cursor-pointer flex flex-col justify-between group overflow-hidden ${
                               isSelected
-                                ? 'bg-cyan-500/20 border-cyan-400 text-white shadow-[0_0_15px_rgba(6,182,212,0.25)]'
-                                : 'bg-black/40 border-white/10 text-white/70 hover:text-white hover:bg-white/5'
+                                ? 'bg-emerald-950/30 border-emerald-400 shadow-[0_0_25px_rgba(16,185,129,0.25)] ring-1 ring-emerald-400/50'
+                                : 'bg-white/[0.02] hover:bg-white/[0.06] border-white/10 hover:border-white/20'
                             }`}
                           >
-                            <div className="flex items-center justify-between w-full">
-                              <span className="text-xs font-bold truncate">{el.label}</span>
-                              <span className="text-[10px] font-mono text-cyan-300">
-                                {currentSize}px
+                            <div className="flex items-start justify-between gap-2 mb-2">
+                              <div>
+                                <div className="flex items-center gap-1.5">
+                                  <h4 className="text-xs font-bold text-white group-hover:text-emerald-300 transition">
+                                    {theme.name}
+                                  </h4>
+                                  {isSpecialHero && (
+                                    <span className="text-[9px] px-1.5 py-0.2 rounded bg-emerald-500/20 text-emerald-300 font-bold border border-emerald-500/30">
+                                      ANIMATED
+                                    </span>
+                                  )}
+                                </div>
+                                <p className="text-[11px] text-white/50 line-clamp-1 mt-0.5">
+                                  {theme.tagline}
+                                </p>
+                              </div>
+                              <div
+                                className="w-5 h-5 rounded-full border border-white/20 shrink-0 flex items-center justify-center"
+                                style={{ backgroundColor: theme.accentColor }}
+                              >
+                                {isSelected && <Check className="w-3 h-3 text-white stroke-[3]" />}
+                              </div>
+                            </div>
+
+                            {/* Theme Palette Swatch Preview */}
+                            <div className="flex items-center gap-1.5 mt-2 pt-2 border-t border-white/5">
+                              <span className="text-[10px] text-white/40 font-mono">Palette:</span>
+                              <div className="flex items-center gap-1">
+                                <span className="w-3.5 h-3.5 rounded-md" style={{ backgroundColor: theme.surfaceColor }} />
+                                <span className="w-3.5 h-3.5 rounded-md" style={{ backgroundColor: theme.accentColor }} />
+                                <span className="w-3.5 h-3.5 rounded-md" style={{ backgroundColor: theme.secondaryTextColor }} />
+                              </div>
+                              <span className="ml-auto text-[10px] text-white/40 font-mono capitalize">
+                                {theme.canvasTheme}
                               </span>
                             </div>
-                            <span className="text-[10px] text-white/40 truncate mt-0.5">{el.sub}</span>
-                          </button>
+                          </div>
                         );
                       })}
                     </div>
                   </div>
-                </div>
+                )}
 
-                {/* Main Controls Grid for Selected Element */}
-                <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                  {/* Card 1: Font Family, Weight, Casing & Alignment */}
-                  <div className="p-4 rounded-2xl bg-white/[0.03] border border-white/10 space-y-4">
-                    <div className="flex items-center justify-between pb-2 border-b border-white/10">
-                      <h4 className="text-xs font-bold uppercase tracking-wider text-cyan-300 flex items-center gap-1.5">
-                        <Type className="w-3.5 h-3.5" />
-                        <span>Font Family & Typography Style</span>
-                      </h4>
-                      <span className="text-[10px] font-mono text-white/40 capitalize">
-                        Target: {selectedTypographyElement}
-                      </span>
-                    </div>
-
-                    {/* Font Family Selector with 27 Fonts */}
-                    <div className="space-y-1.5">
-                      <div className="flex justify-between items-center text-xs">
-                        <label className="text-white/70 font-medium">Font Family</label>
-                        <span className="text-cyan-400 font-mono text-[11px]">
-                          {activeElementConfig.fontFamily || 'inter'}
-                        </span>
-                      </div>
-                      <select
-                        value={activeElementConfig.fontFamily || 'inter'}
-                        onChange={e => updateSelectedElement({ fontFamily: e.target.value })}
-                        className="w-full bg-black/60 border border-white/15 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-cyan-400 cursor-pointer"
-                      >
-                        {STUDIO_FONTS.map(f => (
-                          <option key={f.id} value={f.id} className="bg-slate-900 text-white">
-                            {f.name} — {f.category} ({f.description})
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-
-                    {/* Font Weight */}
-                    <div className="space-y-1.5">
-                      <div className="flex justify-between items-center text-xs">
-                        <label className="text-white/70 font-medium">Font Weight</label>
-                        <span className="text-cyan-400 font-mono text-[11px]">
-                          {activeElementConfig.fontWeight || '400'}
-                        </span>
-                      </div>
-                      <div className="grid grid-cols-5 sm:grid-cols-9 gap-1 text-[11px] font-mono">
-                        {[
-                          { val: '100', label: '100' },
-                          { val: '200', label: '200' },
-                          { val: '300', label: '300' },
-                          { val: '400', label: '400' },
-                          { val: '500', label: '500' },
-                          { val: '600', label: '600' },
-                          { val: '700', label: '700' },
-                          { val: '800', label: '800' },
-                          { val: '900', label: '900' },
-                        ].map(w => {
-                          const isW = (activeElementConfig.fontWeight || '400') === w.val;
-                          return (
-                            <button
-                              key={w.val}
-                              type="button"
-                              onClick={() => updateSelectedElement({ fontWeight: w.val })}
-                              className={`py-1 rounded-lg transition cursor-pointer text-center ${
-                                isW
-                                  ? 'bg-cyan-500 text-black font-bold shadow-[0_0_10px_rgba(6,182,212,0.4)]'
-                                  : 'bg-black/40 text-white/60 hover:text-white hover:bg-white/10 border border-white/5'
-                              }`}
-                            >
-                              {w.label}
-                            </button>
-                          );
-                        })}
-                      </div>
-                    </div>
-
-                    {/* Text Casing & Alignment & Styles */}
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2 border-t border-white/5">
-                      {/* Text Casing */}
-                      <div className="space-y-1.5">
-                        <label className="text-[11px] text-white/70 font-medium block">Text Casing</label>
-                        <div className="flex items-center gap-1 bg-black/40 p-1 rounded-xl border border-white/10">
-                          {[
-                            { val: 'none', label: 'Normal' },
-                            { val: 'uppercase', label: 'UPPER' },
-                            { val: 'lowercase', label: 'lower' },
-                            { val: 'capitalize', label: 'Title' },
-                          ].map(c => {
-                            const isC = (activeElementConfig.textTransform || 'none') === c.val;
-                            return (
-                              <button
-                                key={c.val}
-                                type="button"
-                                onClick={() => updateSelectedElement({ textTransform: c.val as any })}
-                                className={`flex-1 py-1 rounded-lg text-[10px] font-bold transition cursor-pointer text-center ${
-                                  isC
-                                    ? 'bg-cyan-500 text-black shadow-sm'
-                                    : 'text-white/60 hover:text-white hover:bg-white/10'
-                                }`}
-                              >
-                                {c.label}
-                              </button>
-                            );
-                          })}
-                        </div>
-                      </div>
-
-                      {/* Text Alignment */}
-                      <div className="space-y-1.5">
-                        <label className="text-[11px] text-white/70 font-medium block">Text Alignment</label>
-                        <div className="flex items-center gap-1 bg-black/40 p-1 rounded-xl border border-white/10">
-                          {[
-                            { val: 'left', icon: AlignLeft, label: 'Left' },
-                            { val: 'center', icon: AlignCenter, label: 'Center' },
-                            { val: 'right', icon: AlignRight, label: 'Right' },
-                            { val: 'justify', icon: AlignJustify, label: 'Justify' },
-                          ].map(a => {
-                            const Icon = a.icon;
-                            const isA = (activeElementConfig.textAlign || 'left') === a.val;
-                            return (
-                              <button
-                                key={a.val}
-                                type="button"
-                                onClick={() => updateSelectedElement({ textAlign: a.val as any })}
-                                className={`flex-1 py-1 rounded-lg text-xs flex items-center justify-center transition cursor-pointer ${
-                                  isA
-                                    ? 'bg-cyan-500 text-black shadow-sm'
-                                    : 'text-white/60 hover:text-white hover:bg-white/10'
-                                }`}
-                                title={a.label}
-                              >
-                                <Icon className="w-3.5 h-3.5" />
-                              </button>
-                            );
-                          })}
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Italic & Underline Toggles */}
-                    <div className="flex items-center gap-2 pt-1">
-                      <button
-                        type="button"
-                        onClick={() => updateSelectedElement({ isItalic: !activeElementConfig.isItalic })}
-                        className={`flex-1 py-1.5 px-3 rounded-xl border text-xs font-semibold flex items-center justify-center gap-1.5 transition cursor-pointer ${
-                          activeElementConfig.isItalic
-                            ? 'bg-cyan-500/20 text-cyan-300 border-cyan-400'
-                            : 'bg-black/40 text-white/60 border-white/10 hover:text-white'
-                        }`}
-                      >
-                        <Italic className="w-3.5 h-3.5" />
-                        <span>Italic Style</span>
-                      </button>
-
-                      <button
-                        type="button"
-                        onClick={() => updateSelectedElement({ isUnderline: !activeElementConfig.isUnderline })}
-                        className={`flex-1 py-1.5 px-3 rounded-xl border text-xs font-semibold flex items-center justify-center gap-1.5 transition cursor-pointer ${
-                          activeElementConfig.isUnderline
-                            ? 'bg-cyan-500/20 text-cyan-300 border-cyan-400'
-                            : 'bg-black/40 text-white/60 border-white/10 hover:text-white'
-                        }`}
-                      >
-                        <Underline className="w-3.5 h-3.5" />
-                        <span>Underline Style</span>
-                      </button>
-                    </div>
-                  </div>
-
-                  {/* Card 2: Font Sizing, Letter Spacing & Line Height */}
-                  <div className="p-4 rounded-2xl bg-white/[0.03] border border-white/10 space-y-4">
-                    <div className="flex items-center justify-between pb-2 border-b border-white/10">
-                      <h4 className="text-xs font-bold uppercase tracking-wider text-amber-300 flex items-center gap-1.5">
-                        <Sliders className="w-3.5 h-3.5" />
-                        <span>Font Size & Geometry Spacing</span>
-                      </h4>
-                      <span className="text-[10px] text-amber-300/80 font-mono">
-                        Global Scale: {stagedTypography.globalScale ?? 1.0}x
-                      </span>
-                    </div>
-
-                    {/* Font Size with Slider, Numeric Input & (-) / (+) Buttons */}
-                    <div className="space-y-2">
-                      <div className="flex justify-between items-center text-xs">
-                        <label className="text-white/70 font-medium">Font Size</label>
-                        <div className="flex items-center gap-1.5">
-                          <span className="text-white/40 text-[10px]">Computed:</span>
-                          <span className="text-amber-300 font-mono font-bold text-xs">
-                            {Math.round((activeElementConfig.fontSize || 14) * (stagedTypography.globalScale ?? 1.0))}px
-                          </span>
-                        </div>
-                      </div>
-
-                      <div className="flex items-center gap-2">
-                        {/* Minus Button */}
-                        <button
-                          type="button"
-                          onClick={() => updateSelectedElement({ fontSize: Math.max(8, (activeElementConfig.fontSize || 14) - 1) })}
-                          className="w-8 h-8 rounded-xl bg-white/5 hover:bg-white/15 text-white flex items-center justify-center border border-white/10 transition cursor-pointer shrink-0"
-                          title="Decrease Font Size (−)"
-                        >
-                          <Minus className="w-3.5 h-3.5" />
-                        </button>
-
-                        {/* Slider */}
-                        <input
-                          type="range"
-                          min={selectedTypographyElement === 'clockMain' ? '20' : '8'}
-                          max={selectedTypographyElement === 'clockMain' ? '140' : selectedTypographyElement === 'countdownNumber' ? '96' : '48'}
-                          value={activeElementConfig.fontSize || DEFAULT_ELEMENT_TYPOGRAPHY[selectedTypographyElement]?.fontSize || 14}
-                          onChange={e => updateSelectedElement({ fontSize: parseInt(e.target.value) || 14 })}
-                          className="flex-1 accent-amber-400"
-                        />
-
-                        {/* Plus Button */}
-                        <button
-                          type="button"
-                          onClick={() => updateSelectedElement({
-                            fontSize: Math.min(
-                              selectedTypographyElement === 'clockMain' ? 140 : selectedTypographyElement === 'countdownNumber' ? 96 : 48,
-                              (activeElementConfig.fontSize || 14) + 1
-                            )
-                          })}
-                          className="w-8 h-8 rounded-xl bg-white/5 hover:bg-white/15 text-white flex items-center justify-center border border-white/10 transition cursor-pointer shrink-0"
-                          title="Increase Font Size (+)"
-                        >
-                          <Plus className="w-3.5 h-3.5" />
-                        </button>
-
-                        {/* Direct Numeric Input */}
-                        <div className="flex items-center gap-1 bg-black/60 border border-white/15 rounded-xl px-2 py-1 w-20 shrink-0">
-                          <input
-                            type="number"
-                            min="8"
-                            max="160"
-                            value={activeElementConfig.fontSize || 14}
-                            onChange={e => {
-                              const val = parseInt(e.target.value);
-                              if (!isNaN(val) && val >= 8 && val <= 160) {
-                                updateSelectedElement({ fontSize: val });
-                              }
-                            }}
-                            className="w-full bg-transparent text-xs font-mono text-white text-right focus:outline-none"
-                          />
-                          <span className="text-[10px] text-white/40 font-mono">px</span>
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Letter Spacing (Tracking) */}
-                    <div className="space-y-2">
-                      <div className="flex justify-between items-center text-xs">
-                        <label className="text-white/70 font-medium">Letter Spacing (Tracking)</label>
-                        <span className="text-amber-300 font-mono text-xs">
-                          {activeElementConfig.letterSpacing ?? 0}px
-                        </span>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <input
-                          type="range"
-                          min="-3"
-                          max="16"
-                          step="0.5"
-                          value={activeElementConfig.letterSpacing ?? 0}
-                          onChange={e => updateSelectedElement({ letterSpacing: parseFloat(e.target.value) })}
-                          className="flex-1 accent-amber-400"
-                        />
-                        <div className="flex items-center gap-1 bg-black/60 border border-white/15 rounded-xl px-2 py-1 w-20 shrink-0">
-                          <input
-                            type="number"
-                            min="-3"
-                            max="16"
-                            step="0.5"
-                            value={activeElementConfig.letterSpacing ?? 0}
-                            onChange={e => {
-                              const val = parseFloat(e.target.value);
-                              if (!isNaN(val)) updateSelectedElement({ letterSpacing: val });
-                            }}
-                            className="w-full bg-transparent text-xs font-mono text-white text-right focus:outline-none"
-                          />
-                          <span className="text-[10px] text-white/40 font-mono">px</span>
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Line Height */}
-                    <div className="space-y-2">
-                      <div className="flex justify-between items-center text-xs">
-                        <label className="text-white/70 font-medium">Line Height</label>
-                        <span className="text-amber-300 font-mono text-xs">
-                          {activeElementConfig.lineHeight ?? 1.2}
-                        </span>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <input
-                          type="range"
-                          min="0.8"
-                          max="2.5"
-                          step="0.1"
-                          value={activeElementConfig.lineHeight ?? 1.2}
-                          onChange={e => updateSelectedElement({ lineHeight: parseFloat(e.target.value) })}
-                          className="flex-1 accent-amber-400"
-                        />
-                        <div className="flex items-center gap-1 bg-black/60 border border-white/15 rounded-xl px-2 py-1 w-20 shrink-0">
-                          <input
-                            type="number"
-                            min="0.8"
-                            max="2.5"
-                            step="0.1"
-                            value={activeElementConfig.lineHeight ?? 1.2}
-                            onChange={e => {
-                              const val = parseFloat(e.target.value);
-                              if (!isNaN(val)) updateSelectedElement({ lineHeight: val });
-                            }}
-                            className="w-full bg-transparent text-xs font-mono text-white text-right focus:outline-none"
-                          />
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Card 3: Color, Opacity, Text Shadow & Glow */}
-                <div className="p-4 rounded-2xl bg-white/[0.03] border border-white/10 space-y-4">
-                  <div className="flex items-center justify-between pb-2 border-b border-white/10">
-                    <h4 className="text-xs font-bold uppercase tracking-wider text-purple-300 flex items-center gap-1.5">
-                      <Sparkles className="w-3.5 h-3.5" />
-                      <span>Text Color, Shadows & Glow Effects</span>
-                    </h4>
-                    <span className="text-[10px] text-white/40 font-mono">
-                      Specular Luminescence
-                    </span>
-                  </div>
-
-                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-                    {/* Text Color Picker + Swatches */}
-                    <div className="space-y-2">
-                      <label className="text-xs font-medium text-white/70 block">Text Color</label>
-                      <div className="flex items-center gap-2">
-                        <input
-                          type="color"
-                          value={activeElementConfig.color || '#ffffff'}
-                          onChange={e => updateSelectedElement({ color: e.target.value })}
-                          className="w-8 h-8 rounded-lg cursor-pointer bg-transparent border-0"
-                        />
-                        <input
-                          type="text"
-                          value={activeElementConfig.color || '#ffffff'}
-                          onChange={e => updateSelectedElement({ color: e.target.value })}
-                          className="flex-1 bg-black/60 border border-white/15 rounded-xl px-2.5 py-1.5 text-xs font-mono text-white focus:outline-none focus:border-cyan-400"
-                        />
-                      </div>
-                      <div className="flex items-center gap-1.5 pt-1">
-                        {['#ffffff', '#06b6d4', '#f59e0b', '#10b981', '#a855f7', '#f43f5e', '#38bdf8', '#94a3b8'].map(c => (
-                          <button
-                            key={c}
-                            type="button"
-                            onClick={() => updateSelectedElement({ color: c })}
-                            className="w-5 h-5 rounded-full border border-white/20 transition cursor-pointer hover:scale-110"
-                            style={{ backgroundColor: c }}
-                            title={c}
-                          />
-                        ))}
-                      </div>
-                    </div>
-
-                    {/* Text Opacity */}
-                    <div className="space-y-2">
-                      <div className="flex justify-between items-center text-xs">
-                        <label className="text-white/70 font-medium">Text Opacity</label>
-                        <span className="text-purple-300 font-mono font-bold text-xs">
-                          {Math.round((activeElementConfig.opacity ?? 1.0) * 100)}%
-                        </span>
-                      </div>
-                      <input
-                        type="range"
-                        min="0.1"
-                        max="1.0"
-                        step="0.05"
-                        value={activeElementConfig.opacity ?? 1.0}
-                        onChange={e => updateSelectedElement({ opacity: parseFloat(e.target.value) })}
-                        className="w-full accent-purple-400"
-                      />
-                      <div className="flex justify-between text-[10px] text-white/40 font-mono">
-                        <span>10% Faint</span>
-                        <span>100% Solid</span>
-                      </div>
-                    </div>
-
-                    {/* Text Shadow Presets */}
-                    <div className="space-y-2">
-                      <label className="text-xs font-medium text-white/70 block">Text Shadow</label>
-                      <select
-                        value={activeElementConfig.textShadow || 'none'}
-                        onChange={e => updateSelectedElement({ textShadow: e.target.value as any })}
-                        className="w-full bg-black/60 border border-white/15 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-cyan-400 cursor-pointer"
-                      >
-                        <option value="none">None (Clean Flat)</option>
-                        <option value="soft">Soft Ambient Shadow</option>
-                        <option value="crisp">Crisp High-Contrast</option>
-                        <option value="deep">Deep Cinematic Shadow</option>
-                        <option value="outline">Architectural Outline</option>
-                        <option value="neon-glow">Neon Glow Luminescence</option>
-                      </select>
-                    </div>
-
-                    {/* Text Glow Controls */}
-                    <div className="space-y-2">
+                {/* Sub-Tab Content: Animation & Atmospheric Controls */}
+                {appearanceSubTab === 'animation' && (
+                  <div className="space-y-6 max-w-3xl">
+                    <div className="p-4 rounded-2xl bg-white/[0.02] border border-white/10 space-y-4">
                       <div className="flex items-center justify-between">
-                        <label className="text-xs font-medium text-white/70">Text Glow Aura</label>
-                        <label className="relative inline-flex items-center cursor-pointer">
+                        <div>
+                          <h4 className="text-xs font-bold text-white uppercase tracking-wider">
+                            Atmospheric Background Animation
+                          </h4>
+                          <p className="text-xs text-white/50">
+                            Controls real-time canvas energy, embers, sparks, and character lighting
+                          </p>
+                        </div>
+                        <label className="flex items-center gap-2 cursor-pointer">
                           <input
                             type="checkbox"
-                            checked={!!activeElementConfig.textGlow}
-                            onChange={e => updateSelectedElement({ textGlow: e.target.checked })}
-                            className="sr-only peer"
+                            checked={stagedAnimEnabled}
+                            onChange={e => setStagedAnimEnabled(e.target.checked)}
+                            className="w-4 h-4 rounded text-emerald-500 cursor-pointer"
                           />
-                          <div className="w-8 h-4 bg-white/20 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-3 after:w-3 after:transition-all peer-checked:bg-cyan-500" />
+                          <span className="text-xs font-semibold text-emerald-300">
+                            {stagedAnimEnabled ? 'Animation ON' : 'Animation OFF'}
+                          </span>
                         </label>
                       </div>
 
-                      {activeElementConfig.textGlow ? (
-                        <div className="space-y-1.5 pt-1">
+                      {/* Animation Intensity & Speed */}
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-3 border-t border-white/5">
+                        <div className="space-y-1.5">
+                          <label className="text-[11px] font-medium text-white/70">
+                            Particle Intensity:
+                          </label>
+                          <div className="grid grid-cols-3 gap-2">
+                            {(['low', 'medium', 'high'] as const).map(lvl => (
+                              <button
+                                key={lvl}
+                                onClick={() => setStagedAnimIntensity(lvl)}
+                                className={`py-1.5 rounded-lg text-xs font-bold uppercase transition cursor-pointer border ${
+                                  stagedAnimIntensity === lvl
+                                    ? 'bg-emerald-500/25 border-emerald-400 text-emerald-300'
+                                    : 'bg-white/5 border-white/10 text-white/60 hover:text-white'
+                                }`}
+                              >
+                                {lvl}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+
+                        <div className="space-y-1.5">
+                          <div className="flex justify-between text-[11px] text-white/70">
+                            <span>Animation Speed:</span>
+                            <span className="font-mono text-emerald-300 font-bold">{stagedAnimSpeed}x</span>
+                          </div>
+                          <div className="grid grid-cols-4 gap-1.5">
+                            {[0.5, 1.0, 1.5, 2.0].map(spd => (
+                              <button
+                                key={spd}
+                                onClick={() => setStagedAnimSpeed(spd)}
+                                className={`py-1.5 rounded-lg text-xs font-mono font-bold transition cursor-pointer border ${
+                                  stagedAnimSpeed === spd
+                                    ? 'bg-emerald-500/25 border-emerald-400 text-emerald-300'
+                                    : 'bg-white/5 border-white/10 text-white/60 hover:text-white'
+                                }`}
+                              >
+                                {spd}x
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Energy Color & Character Position */}
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-3 border-t border-white/5">
+                        <div className="space-y-1.5">
+                          <div className="flex justify-between text-[11px] text-white/70">
+                            <span>Energy Rune & Arc Color:</span>
+                            <span className="font-mono text-emerald-300">{stagedEnergyColor}</span>
+                          </div>
                           <div className="flex items-center gap-2">
                             <input
                               type="color"
-                              value={activeElementConfig.glowColor || activeElementConfig.color || stagedAccentColor || '#06b6d4'}
-                              onChange={e => updateSelectedElement({ glowColor: e.target.value })}
-                              className="w-6 h-6 rounded cursor-pointer bg-transparent border-0"
+                              value={stagedEnergyColor}
+                              onChange={e => setStagedEnergyColor(e.target.value)}
+                              className="w-9 h-9 rounded-xl bg-transparent border border-white/20 cursor-pointer"
                             />
-                            <div className="flex-1">
-                              <input
-                                type="range"
-                                min="4"
-                                max="36"
-                                value={activeElementConfig.glowIntensity || 14}
-                                onChange={e => updateSelectedElement({ glowIntensity: parseInt(e.target.value) })}
-                                className="w-full accent-cyan-400"
-                              />
+                            <div className="flex items-center gap-1.5">
+                              {['#10b981', '#00f0ff', '#ef4444', '#fbbf24', '#a855f7', '#ffffff'].map(c => (
+                                <button
+                                  key={c}
+                                  onClick={() => setStagedEnergyColor(c)}
+                                  className="w-6 h-6 rounded-lg border border-white/20 transition cursor-pointer hover:scale-110"
+                                  style={{ backgroundColor: c }}
+                                />
+                              ))}
                             </div>
-                            <span className="text-[10px] font-mono text-cyan-300 w-8 text-right">
-                              {activeElementConfig.glowIntensity || 14}px
-                            </span>
                           </div>
                         </div>
-                      ) : (
-                        <p className="text-[10px] text-white/40 pt-1">
-                          Enable to render a luminous neon bloom behind letters
-                        </p>
-                      )}
-                    </div>
-                  </div>
-                </div>
 
-                {/* Card 4: Live Interactive Sample Text Sandbox */}
-                <div className="p-4 rounded-2xl bg-white/[0.03] border border-white/10 space-y-4">
-                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-2 border-b border-white/10">
-                    <div>
-                      <h4 className="text-xs font-bold uppercase tracking-wider text-emerald-300 flex items-center gap-1.5">
-                        <Eye className="w-3.5 h-3.5" />
-                        <span>Live Sample Text Sandbox & Real-Time Preview</span>
+                        <div className="space-y-1.5">
+                          <label className="text-[11px] font-medium text-white/70">
+                            Character Focal Anchor:
+                          </label>
+                          <div className="grid grid-cols-4 gap-1.5">
+                            {(['left', 'center', 'right', 'split'] as const).map(pos => (
+                              <button
+                                key={pos}
+                                onClick={() => setStagedFocalPosition(pos)}
+                                className={`py-1.5 rounded-lg text-xs font-bold uppercase transition cursor-pointer border ${
+                                  stagedFocalPosition === pos
+                                    ? 'bg-emerald-500/25 border-emerald-400 text-emerald-300'
+                                    : 'bg-white/5 border-white/10 text-white/60 hover:text-white'
+                                }`}
+                              >
+                                {pos}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Background Dimming & Blur Sliders */}
+                    <div className="p-4 rounded-2xl bg-white/[0.02] border border-white/10 space-y-4">
+                      <h4 className="text-xs font-bold text-white uppercase tracking-wider">
+                        Canvas Visibility & Legibility Scrim
                       </h4>
-                      <p className="text-[11px] text-white/50">
-                        Enter customized student subject titles, exam dates, or motivational affirmations to test typography live.
-                      </p>
-                    </div>
-                  </div>
-
-                  <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3 text-xs">
-                    <div>
-                      <label className="text-white/60 text-[11px] mb-1 block">Sample Heading</label>
-                      <input
-                        type="text"
-                        value={sampleHeadingText}
-                        onChange={e => setSampleHeadingText(e.target.value)}
-                        className="w-full bg-black/50 border border-white/10 rounded-xl px-3 py-1.5 text-xs text-white focus:outline-none focus:border-cyan-400"
-                      />
-                    </div>
-                    <div>
-                      <label className="text-white/60 text-[11px] mb-1 block">Sample Widget Title</label>
-                      <input
-                        type="text"
-                        value={sampleWidgetTitle}
-                        onChange={e => setSampleWidgetTitle(e.target.value)}
-                        className="w-full bg-black/50 border border-white/10 rounded-xl px-3 py-1.5 text-xs text-white focus:outline-none focus:border-cyan-400"
-                      />
-                    </div>
-                    <div>
-                      <label className="text-white/60 text-[11px] mb-1 block">Sample Clock Digits</label>
-                      <input
-                        type="text"
-                        value={sampleClockTime}
-                        onChange={e => setSampleClockTime(e.target.value)}
-                        className="w-full bg-black/50 border border-white/10 rounded-xl px-3 py-1.5 text-xs text-white focus:outline-none focus:border-cyan-400 font-mono"
-                      />
-                    </div>
-                    <div>
-                      <label className="text-white/60 text-[11px] mb-1 block">Sample Countdown Days</label>
-                      <input
-                        type="text"
-                        value={sampleCountdownDays}
-                        onChange={e => setSampleCountdownDays(e.target.value)}
-                        className="w-full bg-black/50 border border-white/10 rounded-xl px-3 py-1.5 text-xs text-white focus:outline-none focus:border-cyan-400 font-mono"
-                      />
-                    </div>
-                  </div>
-
-                  {/* Sandbox Live Display Frame */}
-                  <div
-                    className="p-6 rounded-2xl border border-white/15 bg-black/60 shadow-xl overflow-hidden min-h-[140px] flex flex-col justify-center items-center text-center transition-all"
-                  >
-                    <div style={getInlineFontStyle(activeElementConfig)}>
-                      {selectedTypographyElement === 'clockMain'
-                        ? sampleClockTime
-                        : selectedTypographyElement === 'clockDate'
-                        ? 'WEDNESDAY, 17 OCTOBER 2026'
-                        : selectedTypographyElement === 'countdownNumber'
-                        ? `${sampleCountdownDays} DAYS`
-                        : selectedTypographyElement === 'countdownLabel'
-                        ? 'PUBLIC EXAM COUNTDOWN'
-                        : selectedTypographyElement === 'widgetTitle'
-                        ? sampleWidgetTitle
-                        : selectedTypographyElement === 'motivationText'
-                        ? `"${sampleQuoteText}"`
-                        : selectedTypographyElement === 'timetableSubject'
-                        ? 'PHYSICS & MATHEMATICS REVISION'
-                        : selectedTypographyElement === 'timetableTime'
-                        ? '08:30 AM – 10:15 AM'
-                        : selectedTypographyElement === 'taskText'
-                        ? 'Solve 2026 Model Paper Line-by-Line'
-                        : sampleHeadingText}
-                    </div>
-                    <span className="mt-3 text-[10px] font-mono text-white/40 tracking-widest uppercase">
-                      Element: {selectedTypographyElement} • Font: {activeElementConfig.fontFamily || 'inter'} ({activeElementConfig.fontWeight || '400'}) • Size: {activeElementConfig.fontSize || 14}px
-                    </span>
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {/* ================= 15 N0T0 MINIMALIST TYPOGRAPHY STYLES ================= */}
-            {activeTab === 'n0t0' && (
-              <div className="space-y-4">
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                  <div>
-                    <h3 className="text-sm font-bold text-white uppercase tracking-wider flex items-center gap-2">
-                      <Sparkles className="w-4 h-4 text-cyan-400" />
-                      <span>15 N0T0-Inspired Minimalist Typography Collection</span>
-                    </h3>
-                    <p className="text-xs text-white/50">
-                      Original minimalist productivity typography featuring editorial whitespace, crisp terminals, and high-legibility clock numerals.
-                    </p>
-                  </div>
-                  <div className="flex items-center gap-1.5 overflow-x-auto text-xs">
-                    {(['all', 'minimal', 'editorial', 'terminal', 'cyber', 'brutalist'] as const).map(cat => (
-                      <button
-                        key={cat}
-                        onClick={() => setN0t0Category(cat)}
-                        className={`px-2.5 py-1 rounded-lg uppercase tracking-wider text-[10px] font-bold transition cursor-pointer ${
-                          n0t0Category === cat
-                            ? 'bg-cyan-500/30 text-cyan-200 border border-cyan-400/50'
-                            : 'bg-white/5 text-white/50 hover:text-white'
-                        }`}
-                      >
-                        {cat}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3.5">
-                  {N0T0_TYPOGRAPHY_STYLES.filter(s => n0t0Category === 'all' || s.category === n0t0Category).map(style => {
-                    const isSelected = stagedTypography.activeN0T0StyleId === style.id;
-
-                    return (
-                      <div
-                        key={style.id}
-                        onClick={() => handleApplyN0T0Style(style)}
-                        className={`group p-4 rounded-2xl border transition-all duration-200 cursor-pointer flex flex-col justify-between ${
-                          isSelected
-                            ? 'border-cyan-400 bg-cyan-500/15 shadow-[0_0_20px_rgba(6,182,212,0.25)]'
-                            : 'border-white/10 bg-white/[0.03] hover:bg-white/[0.06] hover:border-white/20'
-                        }`}
-                      >
-                        <div>
-                          <div className="flex items-center justify-between mb-2">
-                            <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full bg-white/10 text-cyan-300">
-                              {style.badge}
-                            </span>
-                            {isSelected && (
-                              <span className="p-0.5 rounded-full bg-cyan-400 text-black">
-                                <Check className="w-3 h-3 stroke-[3]" />
-                              </span>
-                            )}
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                        <div className="space-y-1">
+                          <div className="flex justify-between text-xs text-white/70">
+                            <span>Background Dimmer:</span>
+                            <span className="font-mono text-emerald-300 font-bold">{stagedBgDimmer}%</span>
                           </div>
-
-                          {/* Live Clock Digits in this Typography Style */}
-                          <div
-                            className="p-3 rounded-xl bg-black/50 border border-white/5 mb-3 text-center"
-                          >
-                            <div
-                              className="text-2xl tracking-tight text-white transition leading-none py-1"
-                              style={{
-                                fontFamily: style.config.fontFamily ? `'${style.config.fontFamily}', sans-serif` : undefined,
-                                fontWeight: style.config.fontWeight,
-                                letterSpacing: `${style.config.letterSpacing}px`,
-                                textTransform: (style.config.textTransform as any) || 'none',
-                                color: stagedAccentColor,
-                              }}
-                            >
-                              {style.previewClock}
-                            </div>
-                            <div
-                              className="text-[11px] text-white/70 line-clamp-1 mt-1.5"
-                              style={{
-                                fontFamily: style.config.fontFamily ? `'${style.config.fontFamily}', sans-serif` : undefined,
-                                fontStyle: 'italic',
-                              }}
-                            >
-                              "{style.previewSample}"
-                            </div>
-                          </div>
-
-                          <h4 className="text-xs font-bold text-white mb-0.5">{style.name}</h4>
-                          <p className="text-[10px] text-cyan-300/80 font-medium mb-1 line-clamp-1">{style.tagline}</p>
-                          <p className="text-[11px] text-white/50 leading-relaxed line-clamp-2">
-                            {style.description}
-                          </p>
-                        </div>
-
-                        <div className="mt-3 pt-2.5 border-t border-white/5 flex items-center justify-between text-[10px] text-white/40">
-                          <span className="capitalize">{style.category}</span>
-                          <span className="text-cyan-400 font-mono group-hover:underline">Apply Typography</span>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
-
-            {/* ================= 3. 26 FONTS GALLERY ================= */}
-            {activeTab === 'fonts' && (
-              <div className="space-y-4">
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                  <div>
-                    <h3 className="text-sm font-bold text-white uppercase tracking-wider">
-                      26 Typography Fonts
-                    </h3>
-                    <p className="text-xs text-white/50">
-                      Live font cards for Inter, Orbitron, Rajdhani, JetBrains Mono, Space Grotesk, Bebas Neue, and more
-                    </p>
-                  </div>
-                  <div className="flex items-center gap-1.5 overflow-x-auto text-xs">
-                    {['all', 'Modern Sans', 'Contemporary', 'Monospace', 'Futuristic', 'Display'].map(cat => (
-                      <button
-                        key={cat}
-                        onClick={() => setFontFilter(cat)}
-                        className={`px-2.5 py-1 rounded-lg uppercase tracking-wider text-[10px] font-bold transition cursor-pointer ${
-                          fontFilter === cat
-                            ? 'bg-cyan-500/30 text-cyan-200 border border-cyan-400/50'
-                            : 'bg-white/5 text-white/50 hover:text-white'
-                        }`}
-                      >
-                        {cat}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-                  {filteredFonts.map(f => {
-                    const isSelected = stagedFontClock === f.id;
-
-                    return (
-                      <div
-                        key={f.id}
-                        onClick={() => {
-                          setStagedFontClock(f.id);
-                          recordRecent(f.id);
-                        }}
-                        className={`group p-4 rounded-2xl border transition-all duration-200 cursor-pointer flex flex-col justify-between ${
-                          isSelected
-                            ? 'border-cyan-400 bg-cyan-500/10 shadow-[0_0_20px_rgba(6,182,212,0.2)]'
-                            : 'border-white/10 bg-white/[0.03] hover:bg-white/[0.06] hover:border-white/20'
-                        }`}
-                      >
-                        <div>
-                          <div className="flex items-center justify-between mb-2">
-                            <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-white/10 text-white/60">
-                              {f.category}
-                            </span>
-                            {isSelected && (
-                              <span className="p-0.5 rounded-full bg-cyan-400 text-black">
-                                <Check className="w-3 h-3 stroke-[3]" />
-                              </span>
-                            )}
-                          </div>
-
-                          <div className={`text-2xl text-white mb-2 font-medium tracking-tight ${f.cssClass}`}>
-                            10:42:00
-                          </div>
-
-                          <div className={`text-sm text-cyan-300 font-bold mb-1 ${f.cssClass}`}>
-                            {f.name}
-                          </div>
-                          <p className="text-[11px] text-white/50 leading-relaxed">
-                            {f.description}
-                          </p>
-                        </div>
-
-                        <div className="mt-3 pt-2 border-t border-white/5 flex items-center justify-between text-[10px]">
-                          <button
-                            type="button"
-                            onClick={e => {
-                              e.stopPropagation();
-                              setStagedFontClock(f.id);
-                              setStagedFontHeading(f.id);
-                              setStagedFontBody(f.id);
-                            }}
-                            className="text-white/40 hover:text-white underline cursor-pointer"
-                          >
-                            Apply to All Elements
-                          </button>
-                          <span className="text-cyan-400 group-hover:underline">Apply to Clock</span>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
-
-            {/* ================= 4. TEXT & FONT STYLERS (INDEPENDENT SELECTION) ================= */}
-            {activeTab === 'text-styles' && (
-              <div className="space-y-6">
-                <div>
-                  <h3 className="text-sm font-bold text-white uppercase tracking-wider">
-                    Independent Element Typography & Text Controls
-                  </h3>
-                  <p className="text-xs text-white/50">
-                    Assign different typography fonts independently to Clock digits, Headings, Countdown, and Labels
-                  </p>
-                </div>
-
-                {/* Independent Font Pickers Grid */}
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-                  {/* Clock Digits Font */}
-                  <div className="p-4 rounded-2xl bg-white/[0.03] border border-white/10 space-y-2.5">
-                    <label className="text-xs font-bold uppercase tracking-wider text-cyan-300 block">
-                      Clock Digits Font
-                    </label>
-                    <select
-                      value={stagedFontClock}
-                      onChange={e => setStagedFontClock(e.target.value)}
-                      className="w-full bg-black/60 border border-white/15 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-cyan-400"
-                    >
-                      {STUDIO_FONTS.map(f => (
-                        <option key={f.id} value={f.id} className="bg-slate-900 text-white">
-                          {f.name} ({f.category})
-                        </option>
-                      ))}
-                    </select>
-                    <div className={`p-2.5 rounded-xl bg-black/40 text-center text-xl text-white font-mono ${getFontClass(stagedFontClock)}`}>
-                      10:42:00
-                    </div>
-                  </div>
-
-                  {/* Dashboard Headings Font */}
-                  <div className="p-4 rounded-2xl bg-white/[0.03] border border-white/10 space-y-2.5">
-                    <label className="text-xs font-bold uppercase tracking-wider text-amber-300 block">
-                      Headings Font
-                    </label>
-                    <select
-                      value={stagedFontHeading}
-                      onChange={e => setStagedFontHeading(e.target.value)}
-                      className="w-full bg-black/60 border border-white/15 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-cyan-400"
-                    >
-                      {STUDIO_FONTS.map(f => (
-                        <option key={f.id} value={f.id} className="bg-slate-900 text-white">
-                          {f.name} ({f.category})
-                        </option>
-                      ))}
-                    </select>
-                    <div className={`p-2.5 rounded-xl bg-black/40 text-center text-xs text-white font-bold tracking-wider uppercase ${getFontClass(stagedFontHeading)}`}>
-                      STUDY DASHBOARD
-                    </div>
-                  </div>
-
-                  {/* Countdown Numbers Font */}
-                  <div className="p-4 rounded-2xl bg-white/[0.03] border border-white/10 space-y-2.5">
-                    <label className="text-xs font-bold uppercase tracking-wider text-emerald-300 block">
-                      Countdown Digits Font
-                    </label>
-                    <select
-                      value={stagedFontCountdown}
-                      onChange={e => setStagedFontCountdown(e.target.value)}
-                      className="w-full bg-black/60 border border-white/15 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-cyan-400"
-                    >
-                      {STUDIO_FONTS.map(f => (
-                        <option key={f.id} value={f.id} className="bg-slate-900 text-white">
-                          {f.name} ({f.category})
-                        </option>
-                      ))}
-                    </select>
-                    <div className={`p-2.5 rounded-xl bg-black/40 text-center text-xl text-white font-light ${getFontClass(stagedFontCountdown)}`}>
-                      137 Days
-                    </div>
-                  </div>
-
-                  {/* Body Text & Labels Font */}
-                  <div className="p-4 rounded-2xl bg-white/[0.03] border border-white/10 space-y-2.5">
-                    <label className="text-xs font-bold uppercase tracking-wider text-purple-300 block">
-                      Body & Timetable Font
-                    </label>
-                    <select
-                      value={stagedFontBody}
-                      onChange={e => setStagedFontBody(e.target.value)}
-                      className="w-full bg-black/60 border border-white/15 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-cyan-400"
-                    >
-                      {STUDIO_FONTS.map(f => (
-                        <option key={f.id} value={f.id} className="bg-slate-900 text-white">
-                          {f.name} ({f.category})
-                        </option>
-                      ))}
-                    </select>
-                    <div className={`p-2.5 rounded-xl bg-black/40 text-center text-xs text-white/80 ${getFontClass(stagedFontBody)}`}>
-                      Formula Mastery & Routine
-                    </div>
-                  </div>
-                </div>
-
-                {/* Micro-Adjustment Sliders */}
-                <div className="p-4 rounded-2xl bg-white/[0.03] border border-white/10 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 text-xs">
-                  <div>
-                    <div className="flex justify-between mb-1.5 text-white/70">
-                      <span>Clock Size Offset</span>
-                      <span className="text-cyan-400 font-mono">{clockFontSizeOffset > 0 ? `+${clockFontSizeOffset}` : clockFontSizeOffset}px</span>
-                    </div>
-                    <input
-                      type="range"
-                      min="-20"
-                      max="40"
-                      value={clockFontSizeOffset}
-                      onChange={e => setClockFontSizeOffset(parseInt(e.target.value))}
-                      className="w-full"
-                    />
-                  </div>
-
-                  <div>
-                    <div className="flex justify-between mb-1.5 text-white/70">
-                      <span>Clock Letter Spacing</span>
-                      <span className="text-cyan-400 font-mono">{clockLetterSpacing}px</span>
-                    </div>
-                    <input
-                      type="range"
-                      min="-4"
-                      max="12"
-                      value={clockLetterSpacing}
-                      onChange={e => setClockLetterSpacing(parseInt(e.target.value))}
-                      className="w-full"
-                    />
-                  </div>
-
-                  <div>
-                    <div className="flex justify-between mb-1.5 text-white/70">
-                      <span>Headings Tracking</span>
-                      <span className="text-cyan-400 font-mono">{headingLetterSpacing}px</span>
-                    </div>
-                    <input
-                      type="range"
-                      min="0"
-                      max="10"
-                      value={headingLetterSpacing}
-                      onChange={e => setHeadingLetterSpacing(parseInt(e.target.value))}
-                      className="w-full"
-                    />
-                  </div>
-
-                  <div className="flex flex-col justify-end">
-                    <label className="flex items-center gap-2 cursor-pointer text-white/80 hover:text-white py-1">
-                      <input
-                        type="checkbox"
-                        checked={clockUppercase}
-                        onChange={e => setClockUppercase(e.target.checked)}
-                        className="w-4 h-4 rounded text-cyan-500"
-                      />
-                      <span>Uppercase Digital Text</span>
-                    </label>
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {/* ================= 5. 36+ WALLPAPERS & CUSTOM UPLOAD ================= */}
-            {activeTab === 'wallpapers' && (
-              <div className="space-y-4">
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                  <div>
-                    <h3 className="text-sm font-bold text-white uppercase tracking-wider">
-                      36+ Curated Wallpapers & Backgrounds
-                    </h3>
-                    <p className="text-xs text-white/50">
-                      Superhero Marvel landscapes, Tokyo cyberpunk rain, misty forests, and OLED minimalist pure black
-                    </p>
-                  </div>
-                  <div className="flex items-center gap-1.5 overflow-x-auto text-xs">
-                    {(['all', 'superhero', 'cinematic', 'nature', 'minimal'] as const).map(cat => (
-                      <button
-                        key={cat}
-                        onClick={() => setWallpaperCategory(cat)}
-                        className={`px-2.5 py-1 rounded-lg uppercase tracking-wider text-[10px] font-bold transition cursor-pointer ${
-                          wallpaperCategory === cat
-                            ? 'bg-cyan-500/30 text-cyan-200 border border-cyan-400/50'
-                            : 'bg-white/5 text-white/50 hover:text-white'
-                        }`}
-                      >
-                        {cat}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                {/* Wallpapers Grid */}
-                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
-                  {filteredWallpapers.map(wp => {
-                    const isSelected = stagedWallpaperUrl === wp.fullUrl;
-
-                    return (
-                      <div
-                        key={wp.id}
-                        onClick={() => {
-                          setStagedWallpaperUrl(wp.fullUrl);
-                          recordRecent(wp.id);
-                        }}
-                        className={`group relative rounded-2xl overflow-hidden border-2 transition-all duration-200 cursor-pointer h-28 sm:h-32 ${
-                          isSelected
-                            ? 'border-cyan-400 shadow-[0_0_20px_rgba(6,182,212,0.4)] scale-[1.02]'
-                            : 'border-white/10 hover:border-white/30 hover:scale-[1.01]'
-                        }`}
-                      >
-                        {wp.fullUrl ? (
-                          <img
-                            src={wp.thumbUrl}
-                            alt={wp.title}
-                            className="w-full h-full object-cover transition duration-300 group-hover:scale-105"
+                          <input
+                            type="range"
+                            min="0"
+                            max="90"
+                            value={stagedBgDimmer}
+                            onChange={e => setStagedBgDimmer(Number(e.target.value))}
+                            className="w-full accent-emerald-400"
                           />
-                        ) : (
-                          <div className="w-full h-full bg-black flex items-center justify-center text-white/40 text-xs">
-                            Pure OLED Black
+                        </div>
+
+                        <div className="space-y-1">
+                          <div className="flex justify-between text-xs text-white/70">
+                            <span>Background Blur:</span>
+                            <span className="font-mono text-emerald-300 font-bold">{stagedBgBlur}px</span>
                           </div>
-                        )}
-
-                        <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent flex flex-col justify-end p-2.5">
-                          <span className="text-[10px] font-bold text-white truncate drop-shadow">
-                            {wp.title}
-                          </span>
-                          <span className="text-[8px] text-white/50 uppercase tracking-wider">
-                            {wp.category}
-                          </span>
-                        </div>
-
-                        {isSelected && (
-                          <span className="absolute top-2 right-2 p-1 rounded-full bg-cyan-400 text-black shadow-md">
-                            <Check className="w-3 h-3 stroke-[3]" />
-                          </span>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-
-                {/* Custom Wallpaper Upload & Sliders */}
-                <div className="p-4 rounded-2xl bg-white/[0.03] border border-white/10 space-y-4">
-                  <div className="flex flex-col sm:flex-row items-center justify-between gap-3">
-                    <div className="flex items-center gap-2">
-                      <Upload className="w-4 h-4 text-cyan-400" />
-                      <span className="text-xs font-bold text-white uppercase tracking-wider">
-                        Upload Custom Background File
-                      </span>
-                    </div>
-
-                    <div className="flex items-center gap-2">
-                      <input
-                        ref={fileInputRef}
-                        type="file"
-                        accept="image/*"
-                        className="hidden"
-                        onChange={e => {
-                          const file = e.target.files?.[0];
-                          if (file) {
-                            const reader = new FileReader();
-                            reader.onload = ev => {
-                              if (ev.target?.result) {
-                                setStagedWallpaperUrl(ev.target.result as string);
-                              }
-                            };
-                            reader.readAsDataURL(file);
-                          }
-                        }}
-                      />
-                      <button
-                        onClick={() => fileInputRef.current?.click()}
-                        className="px-3.5 py-1.5 rounded-xl bg-cyan-500/20 hover:bg-cyan-500/30 text-cyan-300 border border-cyan-500/40 text-xs font-semibold transition cursor-pointer flex items-center gap-1.5"
-                      >
-                        <Upload className="w-3.5 h-3.5" />
-                        <span>Choose Local File...</span>
-                      </button>
-                    </div>
-                  </div>
-
-                  {/* Optical Adjustments */}
-                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 pt-2 border-t border-white/5 text-xs">
-                    <div>
-                      <div className="flex justify-between mb-1.5 text-white/70">
-                        <span>Background Dimmer</span>
-                        <span className="text-cyan-400 font-mono">{stagedBgDimmer}%</span>
-                      </div>
-                      <input
-                        type="range"
-                        min="0"
-                        max="85"
-                        value={stagedBgDimmer}
-                        onChange={e => setStagedBgDimmer(parseInt(e.target.value))}
-                        className="w-full"
-                      />
-                    </div>
-
-                    <div>
-                      <div className="flex justify-between mb-1.5 text-white/70">
-                        <span>Wallpaper Blur</span>
-                        <span className="text-cyan-400 font-mono">{stagedBgBlur}px</span>
-                      </div>
-                      <input
-                        type="range"
-                        min="0"
-                        max="25"
-                        value={stagedBgBlur}
-                        onChange={e => setStagedBgBlur(parseInt(e.target.value))}
-                        className="w-full"
-                      />
-                    </div>
-
-                    <div>
-                      <div className="flex justify-between mb-1.5 text-white/70">
-                        <span>Saturation</span>
-                        <span className="text-cyan-400 font-mono">{stagedBgSaturation}%</span>
-                      </div>
-                      <input
-                        type="range"
-                        min="50"
-                        max="160"
-                        value={stagedBgSaturation}
-                        onChange={e => setStagedBgSaturation(parseInt(e.target.value))}
-                        className="w-full"
-                      />
-                    </div>
-
-                    <div>
-                      <div className="flex justify-between mb-1.5 text-white/70">
-                        <span>Brightness</span>
-                        <span className="text-cyan-400 font-mono">{stagedBgBrightness}%</span>
-                      </div>
-                      <input
-                        type="range"
-                        min="60"
-                        max="140"
-                        value={stagedBgBrightness}
-                        onChange={e => setStagedBgBrightness(parseInt(e.target.value))}
-                        className="w-full"
-                      />
-                    </div>
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {/* ================= 6. 12 BACKGROUND ATMOSPHERIC EFFECTS ================= */}
-            {activeTab === 'effects' && (
-              <div className="space-y-4">
-                <div>
-                  <h3 className="text-sm font-bold text-white uppercase tracking-wider">
-                    12 Background Atmospheric Effects
-                  </h3>
-                  <p className="text-xs text-white/50">
-                    Live dynamic canvas particle systems: Thor's thunder pulses, Stark digital streams, and cosmic nebulae
-                  </p>
-                </div>
-
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-                  {STUDIO_BACKGROUND_EFFECTS.map(fx => {
-                    const isSelected = stagedCanvasTheme === fx.id;
-
-                    return (
-                      <div
-                        key={fx.id}
-                        onClick={() => {
-                          setStagedCanvasTheme(fx.id);
-                          recordRecent(fx.id);
-                        }}
-                        className={`group p-4 rounded-2xl border transition-all duration-200 cursor-pointer flex items-start gap-3 ${
-                          isSelected
-                            ? 'border-cyan-400 bg-cyan-500/15 shadow-[0_0_20px_rgba(6,182,212,0.25)]'
-                            : 'border-white/10 bg-white/[0.03] hover:bg-white/[0.06] hover:border-white/20'
-                        }`}
-                      >
-                        <span className="text-2xl p-2 rounded-xl bg-black/40 border border-white/10 shrink-0">
-                          {fx.icon}
-                        </span>
-                        <div className="min-w-0 flex-1">
-                          <div className="flex items-center justify-between mb-1">
-                            <h4 className="text-xs font-bold text-white truncate">{fx.name}</h4>
-                            {isSelected && (
-                              <span className="p-0.5 rounded-full bg-cyan-400 text-black">
-                                <Check className="w-3 h-3 stroke-[3]" />
-                              </span>
-                            )}
-                          </div>
-                          <p className="text-[11px] text-white/50 leading-relaxed">
-                            {fx.description}
-                          </p>
+                          <input
+                            type="range"
+                            min="0"
+                            max="20"
+                            value={stagedBgBlur}
+                            onChange={e => setStagedBgBlur(Number(e.target.value))}
+                            className="w-full accent-emerald-400"
+                          />
                         </div>
                       </div>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
-
-            {/* ================= 7. 30 WIDGET APPEARANCE STYLES ================= */}
-            {activeTab === 'widgets' && (
-              <div className="space-y-4">
-                {/* Transparency Quick Controls */}
-                <div className="p-4 rounded-2xl bg-white/[0.04] border border-white/10 space-y-3">
-                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                    <div>
-                      <h4 className="text-xs font-bold uppercase tracking-wider text-white flex items-center gap-2">
-                        <Sparkles className="w-3.5 h-3.5 text-cyan-400" />
-                        <span>Widget Transparency & Glass Material</span>
-                      </h4>
-                      <p className="text-[11px] text-white/50">
-                        Choose whether widgets render with blurred glass backgrounds or pure seamless transparency.
-                      </p>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <button
-                        type="button"
-                        onClick={() => setAllStagedTransparency(true)}
-                        className={`px-3 py-1.5 rounded-xl text-xs font-semibold border transition cursor-pointer flex items-center gap-1.5 ${
-                          Object.values(stagedWidgetTransparency).every(Boolean)
-                            ? 'bg-amber-400/25 border-amber-400 text-amber-300 shadow-[0_0_12px_rgba(251,191,36,0.2)]'
-                            : 'bg-white/5 hover:bg-white/10 border-white/10 text-white/70'
-                        }`}
-                      >
-                        <span>Make All Transparent</span>
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setAllStagedTransparency(false)}
-                        className={`px-3 py-1.5 rounded-xl text-xs font-semibold border transition cursor-pointer flex items-center gap-1.5 ${
-                          Object.values(stagedWidgetTransparency).every(v => !v)
-                            ? 'bg-cyan-500/25 border-cyan-400 text-cyan-300 shadow-[0_0_12px_rgba(6,182,212,0.2)]'
-                            : 'bg-white/5 hover:bg-white/10 border-white/10 text-white/70'
-                        }`}
-                      >
-                        <span>Make All Glass</span>
-                      </button>
-                    </div>
-                  </div>
-
-                  {/* Individual widget transparency chips */}
-                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-1">
-                    {[
-                      { key: 'clock', label: 'Flocus Clock' },
-                      { key: 'countdown', label: 'Countdown' },
-                      { key: 'notification', label: 'Routine Alert' },
-                      { key: 'tasks', label: 'Quick Tasks' },
-                      { key: 'calendar', label: 'Calendar' },
-                      { key: 'motivation', label: 'Motivation' },
-                      { key: 'nameWidget', label: 'Centum Badge' },
-                      { key: 'pomodoro', label: 'Pomodoro' },
-                    ].map(item => {
-                      const isTrans = stagedWidgetTransparency[item.key as keyof typeof stagedWidgetTransparency];
-                      return (
-                        <button
-                          key={item.key}
-                          type="button"
-                          onClick={() => {
-                            setStagedWidgetTransparency(prev => ({
-                              ...prev,
-                              [item.key]: !prev[item.key as keyof typeof stagedWidgetTransparency],
-                            }));
-                          }}
-                          className={`p-2 rounded-xl border text-left transition cursor-pointer flex items-center justify-between ${
-                            isTrans
-                              ? 'bg-amber-400/15 border-amber-400/50 text-white'
-                              : 'bg-white/5 border-white/10 text-white/70 hover:bg-white/10'
-                          }`}
-                        >
-                          <span className="text-[11px] font-medium truncate">{item.label}</span>
-                          <span className={`text-[10px] font-mono px-1.5 py-0.2 rounded font-bold ${
-                            isTrans ? 'bg-amber-400 text-black' : 'bg-white/10 text-white/60'
-                          }`}>
-                            {isTrans ? 'Transp' : 'Glass'}
-                          </span>
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-
-                <div>
-                  <h3 className="text-sm font-bold text-white uppercase tracking-wider">
-                    30 Widget Appearance Styles
-                  </h3>
-                  <p className="text-xs text-white/50">
-                    Fully transparent, frosted glass, HUD technical panels, brushed metallic, neon outlines, and brutalist shapes
-                  </p>
-                </div>
-
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-                  {filteredWidgetStyles.map(ws => {
-                    const isSelected = stagedWidgetStyle === ws.id;
-
-                    return (
-                      <div
-                        key={ws.id}
-                        onClick={() => {
-                          setStagedWidgetStyle(ws.id);
-                          recordRecent(ws.id);
-                        }}
-                        className={`group p-3.5 rounded-2xl border transition-all duration-200 cursor-pointer flex flex-col justify-between ${
-                          isSelected
-                            ? 'border-cyan-400 bg-cyan-500/15 shadow-[0_0_20px_rgba(6,182,212,0.25)]'
-                            : 'border-white/10 bg-white/[0.03] hover:bg-white/[0.06] hover:border-white/20'
-                        }`}
-                      >
-                        <div>
-                          {/* Mini Sample Widget Card with that style */}
-                          <div
-                            className={`p-3 rounded-xl mb-2.5 flex items-center justify-between transition ${ws.cssClass}`}
-                            style={{ backgroundColor: ws.previewBg, borderColor: ws.previewBorder }}
-                          >
-                            <span className="text-xs font-bold text-white">Widget Preview</span>
-                            <span className="text-[10px] font-mono text-cyan-400">10:42</span>
-                          </div>
-
-                          <div className="flex items-center justify-between mb-1">
-                            <h4 className="text-xs font-bold text-white">{ws.name}</h4>
-                            {isSelected && (
-                              <span className="p-0.5 rounded-full bg-cyan-400 text-black">
-                                <Check className="w-3 h-3 stroke-[3]" />
-                              </span>
-                            )}
-                          </div>
-                          <p className="text-[11px] text-white/50 leading-relaxed">
-                            {ws.tagline}
-                          </p>
-                        </div>
-
-                        <div className="mt-3 pt-2 border-t border-white/5 flex items-center justify-between text-[10px] text-white/40">
-                          <span className="font-mono">{ws.id}</span>
-                          <span className="text-cyan-400 group-hover:underline">Select Style</span>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
-
-            {/* ================= 8. 25 WIDGET LAYOUT ARRANGEMENTS ================= */}
-            {activeTab === 'layouts' && (
-              <div className="space-y-4">
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                  <div>
-                    <h3 className="text-sm font-bold text-white uppercase tracking-wider">
-                      25 Drag & Drop Layout Arrangements
-                    </h3>
-                    <p className="text-xs text-white/50">
-                      Preset geometric layouts for study focus, exam countdowns, laptop viewports, and superhero docks
-                    </p>
-                  </div>
-                  <div className="flex items-center gap-1.5 overflow-x-auto text-xs">
-                    {['all', 'focus', 'desktop', 'minimal', 'cinematic', 'specialized'].map(cat => (
-                      <button
-                        key={cat}
-                        onClick={() => setLayoutCategory(cat)}
-                        className={`px-2.5 py-1 rounded-lg uppercase tracking-wider text-[10px] font-bold transition cursor-pointer ${
-                          layoutCategory === cat
-                            ? 'bg-cyan-500/30 text-cyan-200 border border-cyan-400/50'
-                            : 'bg-white/5 text-white/50 hover:text-white'
-                        }`}
-                      >
-                        {cat}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-                  {filteredLayouts.map(lay => {
-                    const isSelected = stagedLayoutPreset === lay.id;
-
-                    return (
-                      <div
-                        key={lay.id}
-                        onClick={() => {
-                          setStagedLayoutPreset(lay.id);
-                          recordRecent(lay.id);
-                        }}
-                        className={`group p-3.5 rounded-2xl border transition-all duration-200 cursor-pointer flex flex-col justify-between ${
-                          isSelected
-                            ? 'border-cyan-400 bg-cyan-500/15 shadow-[0_0_20px_rgba(6,182,212,0.25)]'
-                            : 'border-white/10 bg-white/[0.03] hover:bg-white/[0.06] hover:border-white/20'
-                        }`}
-                      >
-                        <div>
-                          <div className="flex items-center justify-between mb-2">
-                            <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full bg-white/10 text-cyan-300">
-                              {lay.badge}
-                            </span>
-                            {isSelected && (
-                              <span className="p-0.5 rounded-full bg-cyan-400 text-black">
-                                <Check className="w-3 h-3 stroke-[3]" />
-                              </span>
-                            )}
-                          </div>
-
-                          <h4 className="text-xs font-bold text-white mb-1">{lay.name}</h4>
-                          <p className="text-[11px] text-white/50 leading-relaxed mb-3">
-                            {lay.description}
-                          </p>
-                        </div>
-
-                        <div className="mt-2 pt-2 border-t border-white/5 flex items-center justify-between text-[10px] text-white/40">
-                          <span className="capitalize">{lay.category}</span>
-                          <span className="text-cyan-400 group-hover:underline">Apply Arrangement</span>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
-
-            {/* ================= 9. 19 COLOR PALETTES ================= */}
-            {activeTab === 'colours' && (
-              <div className="space-y-6">
-                <div>
-                  <h3 className="text-sm font-bold text-white uppercase tracking-wider">
-                    19 Color Palettes & Contrast Checker
-                  </h3>
-                  <p className="text-xs text-white/50">
-                    High-contrast colorways inspired by Avengers superheroes, titanium monochrome, and midnight hues
-                  </p>
-                </div>
-
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-                  {filteredPalettes.map(pal => {
-                    const isSelected = stagedAccentColor === pal.accent;
-
-                    return (
-                      <div
-                        key={pal.id}
-                        onClick={() => handleSelectPalette(pal)}
-                        className={`group p-3.5 rounded-2xl border transition-all duration-200 cursor-pointer flex flex-col justify-between ${
-                          isSelected
-                            ? 'border-cyan-400 bg-cyan-500/15 shadow-[0_0_20px_rgba(6,182,212,0.25)]'
-                            : 'border-white/10 bg-white/[0.03] hover:bg-white/[0.06] hover:border-white/20'
-                        }`}
-                      >
-                        <div>
-                          <div className="flex items-center justify-between mb-2">
-                            <span className="text-xs font-bold text-white">{pal.name}</span>
-                            {isSelected && (
-                              <span className="p-0.5 rounded-full bg-cyan-400 text-black">
-                                <Check className="w-3 h-3 stroke-[3]" />
-                              </span>
-                            )}
-                          </div>
-
-                          {/* Palette Preview Swatches */}
-                          <div className="h-8 rounded-xl overflow-hidden flex border border-white/10 shadow-sm mb-2">
-                            <div className="flex-1" style={{ backgroundColor: pal.surface }} title="Surface" />
-                            <div className="flex-1" style={{ backgroundColor: pal.accent }} title="Accent" />
-                            <div className="flex-1" style={{ backgroundColor: pal.highlight }} title="Highlight" />
-                            <div className="flex-1" style={{ backgroundColor: pal.secondaryText }} title="Secondary" />
-                          </div>
-                        </div>
-
-                        <div className="mt-2 pt-2 border-t border-white/5 flex items-center justify-between text-[10px] text-white/40">
-                          <span className="capitalize">{pal.category}</span>
-                          <span className="text-cyan-400 font-mono group-hover:underline">Apply Palette</span>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-
-                {/* Custom Color Pickers */}
-                <div className="p-4 rounded-2xl bg-white/[0.03] border border-white/10 space-y-3">
-                  <h4 className="text-xs font-bold uppercase tracking-wider text-white">
-                    Custom Hex Color Overrides
-                  </h4>
-                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
-                    <div>
-                      <span className="text-white/60 block mb-1">Accent Glow Color</span>
-                      <div className="flex items-center gap-2">
-                        <input
-                          type="color"
-                          value={stagedAccentColor}
-                          onChange={e => setStagedAccentColor(e.target.value)}
-                          className="w-7 h-7 rounded-lg cursor-pointer bg-transparent border-0"
-                        />
-                        <span className="font-mono text-white/80">{stagedAccentColor}</span>
-                      </div>
-                    </div>
-
-                    <div>
-                      <span className="text-white/60 block mb-1">Primary Text</span>
-                      <div className="flex items-center gap-2">
-                        <input
-                          type="color"
-                          value={stagedPrimaryText}
-                          onChange={e => setStagedPrimaryText(e.target.value)}
-                          className="w-7 h-7 rounded-lg cursor-pointer bg-transparent border-0"
-                        />
-                        <span className="font-mono text-white/80">{stagedPrimaryText}</span>
-                      </div>
-                    </div>
-
-                    <div>
-                      <span className="text-white/60 block mb-1">Secondary Text</span>
-                      <div className="flex items-center gap-2">
-                        <input
-                          type="color"
-                          value={stagedSecondaryText}
-                          onChange={e => setStagedSecondaryText(e.target.value)}
-                          className="w-7 h-7 rounded-lg cursor-pointer bg-transparent border-0"
-                        />
-                        <span className="font-mono text-white/80">{stagedSecondaryText}</span>
-                      </div>
-                    </div>
-
-                    <div>
-                      <span className="text-white/60 block mb-1">Surface Card Color</span>
-                      <div className="flex items-center gap-2">
-                        <input
-                          type="color"
-                          value={stagedSurfaceColor}
-                          onChange={e => setStagedSurfaceColor(e.target.value)}
-                          className="w-7 h-7 rounded-lg cursor-pointer bg-transparent border-0"
-                        />
-                        <span className="font-mono text-white/80">{stagedSurfaceColor}</span>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {/* ================= 10. 15+ COMBINATION PRESETS ================= */}
-            {activeTab === 'presets' && (
-              <div className="space-y-4">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <h3 className="text-sm font-bold text-white uppercase tracking-wider">
-                      Ready-to-Use Combination Presets
-                    </h3>
-                    <p className="text-xs text-white/50">
-                      Complete aesthetic combinations: wallpapers, fonts, clocks, colors, and layout arrangement
-                    </p>
-                  </div>
-                  <button
-                    onClick={() => setIsSavingPreset(true)}
-                    className="px-3 py-1.5 rounded-xl bg-cyan-500/20 hover:bg-cyan-500/30 text-cyan-300 border border-cyan-500/40 text-xs font-semibold transition cursor-pointer flex items-center gap-1.5"
-                  >
-                    <Plus className="w-3.5 h-3.5" />
-                    <span>Save Current as Preset</span>
-                  </button>
-                </div>
-
-                {/* Save New Preset Modal */}
-                {isSavingPreset && (
-                  <div className="p-4 rounded-2xl bg-cyan-500/10 border border-cyan-400/40 space-y-3">
-                    <h4 className="text-xs font-bold text-white">Save Custom Dashboard Combination</h4>
-                    <div className="flex gap-2">
-                      <input
-                        type="text"
-                        value={newPresetName}
-                        onChange={e => setNewPresetName(e.target.value)}
-                        placeholder="e.g., Midnight Chemistry Sprint"
-                        className="flex-1 bg-black/60 border border-white/20 rounded-xl px-3 py-1.5 text-xs text-white focus:outline-none focus:border-cyan-400"
-                      />
-                      <button
-                        onClick={handleSaveNewPreset}
-                        className="px-4 py-1.5 rounded-xl bg-cyan-500 hover:bg-cyan-400 text-black font-bold text-xs transition cursor-pointer"
-                      >
-                        Save
-                      </button>
-                      <button
-                        onClick={() => setIsSavingPreset(false)}
-                        className="px-3 py-1.5 rounded-xl bg-white/10 text-white/60 text-xs hover:text-white"
-                      >
-                        Cancel
-                      </button>
                     </div>
                   </div>
                 )}
 
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-                  {savedPresets.map(pre => (
-                    <div
-                      key={pre.id}
-                      onClick={() => handleApplyPreset(pre)}
-                      className="group p-4 rounded-2xl border border-white/10 bg-white/[0.03] hover:bg-white/[0.06] hover:border-cyan-400/50 transition cursor-pointer flex flex-col justify-between"
-                    >
-                      <div>
-                        <div className="flex items-center justify-between mb-1.5">
-                          <h4 className="text-xs font-bold text-white">{pre.name}</h4>
-                          <span className="p-1 rounded-lg text-white/40 group-hover:text-cyan-300 transition">
-                            <Bookmark className="w-3.5 h-3.5" />
-                          </span>
-                        </div>
-                        <p className="text-[11px] text-white/50 leading-relaxed mb-3">
-                          {pre.tagline || 'Saved customized configuration'}
-                        </p>
-                      </div>
-
-                      <div className="pt-2 border-t border-white/5 flex items-center justify-between text-[10px]">
-                        <span className="text-white/40 font-mono">
-                          {pre.config.clockArchitecture || 'minimal'}
-                        </span>
-                        <span className="text-cyan-400 group-hover:underline">Apply Combination</span>
+                {/* Sub-Tab Content: Wallpapers & Video */}
+                {appearanceSubTab === 'wallpapers' && (
+                  <div className="space-y-4">
+                    <div className="p-4 rounded-2xl bg-white/[0.02] border border-white/10 space-y-3">
+                      <h4 className="text-xs font-bold text-white uppercase tracking-wider">
+                        Looping Video Background or Custom Wallpaper URL
+                      </h4>
+                      <div className="flex gap-2">
+                        <input
+                          type="text"
+                          value={stagedVideoUrl || stagedWallpaperUrl}
+                          onChange={e => {
+                            const val = e.target.value;
+                            if (val.endsWith('.mp4') || val.endsWith('.webm')) {
+                              setStagedVideoUrl(val);
+                            } else {
+                              setStagedWallpaperUrl(val);
+                            }
+                          }}
+                          placeholder="Paste image or loopable .mp4 / .webm video URL..."
+                          className="flex-1 px-3 py-2 rounded-xl bg-black/50 border border-white/10 text-xs text-white placeholder-white/30 focus:outline-none focus:border-emerald-400"
+                        />
                       </div>
                     </div>
-                  ))}
-                </div>
-              </div>
-            )}
 
-            {/* ================= 11. CUSTOM NOTES & STICKY TEXT STUDIO ================= */}
-            {activeTab === 'notes' && (
-              <div className="space-y-6">
-                <div>
-                  <h3 className="text-sm font-bold text-white uppercase tracking-wider">
-                    Custom Study Notes & Motivational Sticky Reminders
-                  </h3>
-                  <p className="text-xs text-white/50">
-                    Pin customized study notes, exam reminders, and formula cards directly to your dashboard
-                  </p>
-                </div>
-
-                {/* Add New Note Card Form */}
-                <div className="p-4 rounded-2xl bg-white/[0.03] border border-white/10 space-y-3">
-                  <h4 className="text-xs font-bold uppercase tracking-wider text-white">Create New Sticky Note</h4>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    <input
-                      type="text"
-                      value={newNoteTitle}
-                      onChange={e => setNewNoteTitle(e.target.value)}
-                      placeholder="Note Title (e.g. Physics Formula Goal)"
-                      className="bg-black/50 border border-white/10 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-cyan-400"
-                    />
-                    <div className="flex items-center gap-2">
-                      <span className="text-xs text-white/60">Color:</span>
-                      {['#fbbf24', '#f43f5e', '#38bdf8', '#4ade80', '#c084fc'].map(c => (
-                        <button
-                          key={c}
-                          type="button"
-                          onClick={() => setNewNoteColor(c)}
-                          className={`w-6 h-6 rounded-full cursor-pointer transition ${newNoteColor === c ? 'scale-110 border-2 border-white' : 'opacity-60'}`}
-                          style={{ backgroundColor: c }}
-                        />
+                    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
+                      {STUDIO_WALLPAPERS.map(item => (
+                        <div
+                          key={item.id}
+                          onClick={() => {
+                            setStagedWallpaperUrl(item.fullUrl);
+                            setStagedVideoUrl('');
+                          }}
+                          className={`group relative rounded-2xl overflow-hidden border aspect-video cursor-pointer transition ${
+                            stagedWallpaperUrl === item.fullUrl
+                              ? 'border-emerald-400 ring-2 ring-emerald-400/40'
+                              : 'border-white/10 hover:border-white/30'
+                          }`}
+                        >
+                          <img src={item.thumbUrl || item.fullUrl} alt={item.title} className="w-full h-full object-cover group-hover:scale-105 transition duration-500" />
+                          <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent flex items-end p-2.5">
+                            <span className="text-[11px] font-bold text-white line-clamp-1">{item.title}</span>
+                          </div>
+                        </div>
                       ))}
                     </div>
                   </div>
-                  <textarea
-                    rows={2}
-                    value={newNoteContent}
-                    onChange={e => setNewNoteContent(e.target.value)}
-                    placeholder="Write your study intention, formula, or reminder..."
-                    className="w-full bg-black/50 border border-white/10 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-cyan-400 resize-none"
-                  />
-                  <div className="flex justify-end">
-                    <button
-                      type="button"
-                      disabled={!newNoteTitle.trim() && !newNoteContent.trim()}
-                      onClick={() => {
-                        const newNote: CustomTextItem = {
-                          id: `note-${Date.now()}`,
-                          title: newNoteTitle.trim() || 'Study Reminder',
-                          content: newNoteContent.trim() || 'Deep focus in progress.',
-                          fontFamily: stagedFontBody || 'inter',
-                          fontSize: 13,
-                          fontWeight: '500',
-                          color: newNoteColor,
-                          opacity: 1.0,
-                          letterSpacing: 0,
-                          textAlign: 'left',
-                          hasGlow: true,
-                          hasOutline: true,
-                          hasBackground: true,
-                          bgColor: 'rgba(15, 23, 42, 0.75)',
-                          width: 320,
-                          x: 100,
-                          y: 520,
-                          visible: true,
-                        };
-                        setStagedNotes(prev => [...prev, newNote]);
-                        setNewNoteTitle('');
-                        setNewNoteContent('');
-                      }}
-                      className="px-4 py-1.5 rounded-xl bg-cyan-500 hover:bg-cyan-400 text-black font-bold text-xs transition cursor-pointer disabled:opacity-40"
+                )}
+
+                {/* Sub-Tab Content: Clock Architecture */}
+                {appearanceSubTab === 'clocks' && (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
+                    {STUDIO_CLOCK_DESIGNS.map(arch => (
+                      <div
+                        key={arch.id}
+                        onClick={() => setStagedClockArch(arch.id)}
+                        className={`p-3.5 rounded-2xl border transition cursor-pointer flex flex-col justify-between ${
+                          stagedClockArch === arch.id
+                            ? 'bg-emerald-950/30 border-emerald-400 shadow-[0_0_20px_rgba(16,185,129,0.2)]'
+                            : 'bg-white/[0.02] hover:bg-white/[0.05] border-white/10'
+                        }`}
+                      >
+                        <div className="flex justify-between items-start mb-2">
+                          <h4 className="text-xs font-bold text-white">{arch.name}</h4>
+                          <span className="text-[10px] font-mono text-emerald-400 uppercase">{arch.badge}</span>
+                        </div>
+                        <p className="text-[11px] text-white/50">{arch.description}</p>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* ================= TAB 2: WIDGET STYLES (DYNAMIC OVERHAUL) ================= */}
+            {activeTab === 'widget-styles' && (
+              <div className="space-y-6 max-w-4xl">
+                {/* Target Widget Selector */}
+                <div className="p-4 rounded-2xl bg-white/[0.02] border border-white/10 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div>
+                    <h3 className="text-xs font-bold text-white uppercase tracking-wider flex items-center gap-2">
+                      <span>Widget Styling Target</span>
+                      <span className="text-[10px] px-2 py-0.5 rounded-full bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 font-mono">
+                        {selectedStyleWidget === 'global' ? 'Global Default' : 'Single Widget Override'}
+                      </span>
+                    </h3>
+                    <p className="text-xs text-white/50">
+                      Customize individual widgets independently, or edit global defaults for all widgets
+                    </p>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <select
+                      value={selectedStyleWidget}
+                      onChange={e => setSelectedStyleWidget(e.target.value)}
+                      className="px-3 py-1.5 rounded-xl bg-black/60 border border-white/15 text-xs text-white font-medium focus:outline-none focus:border-emerald-400 cursor-pointer"
                     >
-                      Add Sticky Note to Dashboard
+                      <option value="global">All Widgets (Global Default)</option>
+                      {ALL_WIDGET_KEYS.map(w => (
+                        <option key={w.id} value={w.id}>
+                          {w.label} {stagedWidgetOverrides[w.id] ? '★ [Customized]' : ''}
+                        </option>
+                      ))}
+                    </select>
+
+                    {selectedStyleWidget !== 'global' && (
+                      <button
+                        onClick={() => handleResetWidgetToDefault(selectedStyleWidget)}
+                        className="px-2.5 py-1.5 rounded-xl bg-white/5 hover:bg-white/10 text-amber-300 text-[11px] font-semibold border border-amber-400/30 transition cursor-pointer"
+                        title="Restore Global Theme Default for this widget"
+                      >
+                        Reset to Theme Default
+                      </button>
+                    )}
+                    <button
+                      onClick={handleApplyCurrentStyleToAll}
+                      className="px-2.5 py-1.5 rounded-xl bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 text-[11px] font-semibold border border-emerald-400/40 transition cursor-pointer"
+                      title="Copy these styling rules to all widgets"
+                    >
+                      Apply to All Widgets
                     </button>
                   </div>
                 </div>
 
-                {/* Staged Notes List */}
-                <div className="space-y-3">
-                  <h4 className="text-xs font-bold uppercase tracking-wider text-white">Active Sticky Notes ({stagedNotes.length})</h4>
-                  {stagedNotes.length === 0 ? (
-                    <div className="p-8 text-center text-xs text-white/40 border border-white/5 rounded-2xl">
-                      No custom study notes yet. Create one above to pin it to your dashboard!
+                {/* Surface Material Presets */}
+                <div className="space-y-2">
+                  <label className="text-xs font-bold text-white uppercase tracking-wider">
+                    Surface Material & Preset Armor
+                  </label>
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+                    {[
+                      { id: 'latverian-titanium', name: 'Latverian Titanium', bg: '#0c1a14', border: '#059669', blur: 18, radius: 20 },
+                      { id: 'stark-gold-crimson', name: 'Stark Hot-Rod Gold', bg: '#18080c', border: '#ef4444', blur: 20, radius: 22 },
+                      { id: 'vibranium-silver', name: 'Vibranium Silver Plate', bg: '#0a1020', border: '#3b82f6', blur: 16, radius: 18 },
+                      { id: 'obsidian-stealth', name: 'Obsidian Matte Stealth', bg: '#08080c', border: 'rgba(255,255,255,0.15)', blur: 24, radius: 24 },
+                      { id: 'frosted-glass', name: 'Nordic Frosted Glass', bg: 'rgba(255,255,255,0.06)', border: 'rgba(255,255,255,0.22)', blur: 28, radius: 24 },
+                      { id: 'pure-transparent', name: 'Frameless Minimal', bg: 'transparent', border: 'transparent', blur: 0, radius: 16 },
+                      { id: 'arc-hologram', name: 'Arc Reactor Hologram', bg: 'rgba(6,182,212,0.1)', border: '#00f0ff', blur: 16, radius: 20 },
+                      { id: 'oled-high-contrast', name: 'OLED High Contrast', bg: '#000000', border: '#fbbf24', blur: 0, radius: 12 },
+                    ].map(mat => (
+                      <button
+                        key={mat.id}
+                        onClick={() => {
+                          updateCurrentStyle({
+                            bgColor: mat.bg,
+                            borderColor: mat.border,
+                            blur: mat.blur,
+                            borderRadius: mat.radius,
+                          });
+                        }}
+                        className="p-2.5 rounded-xl bg-white/[0.02] hover:bg-white/[0.06] border border-white/10 hover:border-emerald-400/40 text-left transition cursor-pointer group"
+                      >
+                        <span className="block text-xs font-bold text-white group-hover:text-emerald-300">
+                          {mat.name}
+                        </span>
+                        <div className="flex items-center gap-1.5 mt-2">
+                          <span className="w-3 h-3 rounded" style={{ backgroundColor: mat.bg === 'transparent' ? '#333' : mat.bg }} />
+                          <span className="w-3 h-3 rounded" style={{ backgroundColor: mat.border === 'transparent' ? '#333' : mat.border }} />
+                          <span className="text-[10px] text-white/40 font-mono">{mat.blur}px blur</span>
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Fine-Tuning Sliders: Background, Opacity, Blur, Border */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 p-4 rounded-2xl bg-white/[0.02] border border-white/10">
+                  {/* Background Color & Opacity */}
+                  <div className="space-y-2">
+                    <div className="flex justify-between text-xs text-white/70">
+                      <span>Background Color:</span>
+                      <span className="font-mono text-emerald-300">{currentEditingStyle.bgColor}</span>
                     </div>
-                  ) : (
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                      {stagedNotes.map(note => (
-                        <div
-                          key={note.id}
-                          className="p-3.5 rounded-2xl bg-black/40 border border-white/10 space-y-2 relative group"
-                        >
-                          <div className="flex items-center justify-between">
-                            <span className="text-xs font-bold" style={{ color: note.color }}>
-                              {note.title}
-                            </span>
-                            <button
-                              type="button"
-                              onClick={() => setStagedNotes(prev => prev.filter(n => n.id !== note.id))}
-                              className="text-white/40 hover:text-rose-400 p-1 transition"
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </button>
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="color"
+                        value={currentEditingStyle.bgColor?.startsWith('#') ? currentEditingStyle.bgColor : '#0c1a14'}
+                        onChange={e => updateCurrentStyle({ bgColor: e.target.value })}
+                        className="w-9 h-9 rounded-xl bg-transparent border border-white/20 cursor-pointer"
+                      />
+                      <input
+                        type="text"
+                        value={currentEditingStyle.bgColor}
+                        onChange={e => updateCurrentStyle({ bgColor: e.target.value })}
+                        className="flex-1 px-2.5 py-1.5 rounded-lg bg-black/50 border border-white/10 text-xs text-white font-mono"
+                      />
+                    </div>
+
+                    <div className="flex justify-between text-xs text-white/70 pt-2">
+                      <span>Surface Opacity:</span>
+                      <span className="font-mono text-emerald-300">{currentEditingStyle.bgOpacity}%</span>
+                    </div>
+                    <input
+                      type="range"
+                      min="0"
+                      max="100"
+                      value={currentEditingStyle.bgOpacity ?? 80}
+                      onChange={e => updateCurrentStyle({ bgOpacity: Number(e.target.value) })}
+                      className="w-full accent-emerald-400"
+                    />
+                  </div>
+
+                  {/* Backdrop Blur & Corner Radius */}
+                  <div className="space-y-2">
+                    <div className="flex justify-between text-xs text-white/70">
+                      <span>Backdrop Blur:</span>
+                      <span className="font-mono text-emerald-300">{currentEditingStyle.blur}px</span>
+                    </div>
+                    <input
+                      type="range"
+                      min="0"
+                      max="32"
+                      value={currentEditingStyle.blur ?? 16}
+                      onChange={e => updateCurrentStyle({ blur: Number(e.target.value) })}
+                      className="w-full accent-emerald-400"
+                    />
+
+                    <div className="flex justify-between text-xs text-white/70 pt-2">
+                      <span>Corner Radius:</span>
+                      <span className="font-mono text-emerald-300">{currentEditingStyle.borderRadius}px</span>
+                    </div>
+                    <input
+                      type="range"
+                      min="0"
+                      max="40"
+                      value={currentEditingStyle.borderRadius ?? 20}
+                      onChange={e => updateCurrentStyle({ borderRadius: Number(e.target.value) })}
+                      className="w-full accent-emerald-400"
+                    />
+                  </div>
+
+                  {/* Border Color & Width */}
+                  <div className="space-y-2 pt-3 border-t border-white/5">
+                    <div className="flex justify-between text-xs text-white/70">
+                      <span>Border Color:</span>
+                      <span className="font-mono text-emerald-300">{currentEditingStyle.borderColor}</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="color"
+                        value={currentEditingStyle.borderColor?.startsWith('#') ? currentEditingStyle.borderColor : '#10b981'}
+                        onChange={e => updateCurrentStyle({ borderColor: e.target.value })}
+                        className="w-9 h-9 rounded-xl bg-transparent border border-white/20 cursor-pointer"
+                      />
+                      <input
+                        type="text"
+                        value={currentEditingStyle.borderColor}
+                        onChange={e => updateCurrentStyle({ borderColor: e.target.value })}
+                        className="flex-1 px-2.5 py-1.5 rounded-lg bg-black/50 border border-white/10 text-xs text-white font-mono"
+                      />
+                    </div>
+                    <div className="flex justify-between text-xs text-white/70 pt-2">
+                      <span>Border Thickness:</span>
+                      <span className="font-mono text-emerald-300">{currentEditingStyle.borderWidth}px</span>
+                    </div>
+                    <input
+                      type="range"
+                      min="0"
+                      max="4"
+                      step="0.5"
+                      value={currentEditingStyle.borderWidth ?? 1}
+                      onChange={e => updateCurrentStyle({ borderWidth: Number(e.target.value) })}
+                      className="w-full accent-emerald-400"
+                    />
+                  </div>
+
+                  {/* Glow Color & Intensity */}
+                  <div className="space-y-2 pt-3 border-t border-white/5">
+                    <div className="flex justify-between text-xs text-white/70">
+                      <span>Glow Color:</span>
+                      <span className="font-mono text-emerald-300">{currentEditingStyle.glowColor}</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="color"
+                        value={currentEditingStyle.glowColor?.startsWith('#') ? currentEditingStyle.glowColor : '#10b981'}
+                        onChange={e => updateCurrentStyle({ glowColor: e.target.value })}
+                        className="w-9 h-9 rounded-xl bg-transparent border border-white/20 cursor-pointer"
+                      />
+                      <input
+                        type="text"
+                        value={currentEditingStyle.glowColor}
+                        onChange={e => updateCurrentStyle({ glowColor: e.target.value })}
+                        className="flex-1 px-2.5 py-1.5 rounded-lg bg-black/50 border border-white/10 text-xs text-white font-mono"
+                      />
+                    </div>
+                    <div className="flex justify-between text-xs text-white/70 pt-2">
+                      <span>Glow Intensity:</span>
+                      <span className="font-mono text-emerald-300">{currentEditingStyle.glowIntensity}%</span>
+                    </div>
+                    <input
+                      type="range"
+                      min="0"
+                      max="100"
+                      value={currentEditingStyle.glowIntensity ?? 30}
+                      onChange={e => updateCurrentStyle({ glowIntensity: Number(e.target.value) })}
+                      className="w-full accent-emerald-400"
+                    />
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* ================= TAB 3: ARRANGE LAYOUT (50 PRESETS) ================= */}
+            {activeTab === 'arrange-layout' && (
+              <div className="space-y-6">
+                {/* Header with Mode Switcher & Category Filters */}
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-white/10">
+                  <div>
+                    <h3 className="text-xs font-bold text-white uppercase tracking-wider flex items-center gap-2">
+                      <span>50 Visual Grid Arrangement Designs</span>
+                      <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 font-mono border border-emerald-500/30">
+                        {filteredGridPresets.length} / 50 Available
+                      </span>
+                    </h3>
+                    <p className="text-xs text-white/50">
+                      Each preset features distinct geometric proportions designed for clock, countdown, and study tools
+                    </p>
+                  </div>
+
+                  <div className="flex items-center gap-1.5 overflow-x-auto text-xs">
+                    {(['all', 'bento', 'asymmetrical', 'symmetrical', 'magazine', 'sidebar', 'split', 'masonry', 'minimal'] as const).map(cat => (
+                      <button
+                        key={cat}
+                        onClick={() => setLayoutCategoryFilter(cat)}
+                        className={`px-2.5 py-1 rounded-lg uppercase tracking-wider text-[10px] font-bold transition cursor-pointer ${
+                          layoutCategoryFilter === cat
+                            ? 'bg-emerald-500/30 text-emerald-200 border border-emerald-400/50'
+                            : 'bg-white/5 text-white/50 hover:text-white'
+                        }`}
+                      >
+                        {cat}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Spacing & Gap Adjustment Sliders */}
+                <div className="p-3.5 rounded-2xl bg-white/[0.02] border border-white/10 flex flex-wrap items-center justify-between gap-4">
+                  <div className="flex items-center gap-4 text-xs">
+                    <span className="text-white/60 font-medium">Grid Gaps:</span>
+                    <input
+                      type="range"
+                      min="8"
+                      max="32"
+                      value={stagedGridGap}
+                      onChange={e => setStagedGridGap(Number(e.target.value))}
+                      className="w-28 accent-emerald-400"
+                    />
+                    <span className="font-mono text-emerald-300 font-bold">{stagedGridGap}px</span>
+                  </div>
+
+                  <div className="flex items-center gap-4 text-xs">
+                    <span className="text-white/60 font-medium">Canvas Margin:</span>
+                    <input
+                      type="range"
+                      min="12"
+                      max="48"
+                      value={stagedGridMargin}
+                      onChange={e => setStagedGridMargin(Number(e.target.value))}
+                      className="w-28 accent-emerald-400"
+                    />
+                    <span className="font-mono text-emerald-300 font-bold">{stagedGridMargin}px</span>
+                  </div>
+
+                  <div className="flex items-center gap-2 text-xs">
+                    <span className="text-white/60 font-medium">Alignment:</span>
+                    {(['center', 'top', 'stretch'] as const).map(align => (
+                      <button
+                        key={align}
+                        onClick={() => setStagedGridAlignment(align)}
+                        className={`px-2.5 py-1 rounded-lg uppercase font-bold text-[10px] transition cursor-pointer border ${
+                          stagedGridAlignment === align
+                            ? 'bg-emerald-500/25 border-emerald-400 text-emerald-300'
+                            : 'bg-white/5 border-white/10 text-white/50'
+                        }`}
+                      >
+                        {align}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* 50 Presets Visual Gallery Grid */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3.5">
+                  {filteredGridPresets.map(preset => {
+                    const isSelected = stagedGridPresetId === preset.id;
+
+                    return (
+                      <div
+                        key={preset.id}
+                        onClick={() => {
+                          setStagedGridPresetId(preset.id);
+                          setStagedLayoutMode('grid');
+                        }}
+                        className={`group relative p-3 rounded-2xl border transition-all cursor-pointer flex flex-col justify-between overflow-hidden ${
+                          isSelected
+                            ? 'bg-emerald-950/30 border-emerald-400 shadow-[0_0_20px_rgba(16,185,129,0.25)] ring-1 ring-emerald-400/50'
+                            : 'bg-white/[0.02] hover:bg-white/[0.06] border-white/10 hover:border-white/20'
+                        }`}
+                      >
+                        {/* Interactive Geometric Thumbnail Representation */}
+                        <div className="relative w-full aspect-[16/10] bg-black/60 rounded-xl border border-white/10 overflow-hidden p-1.5 mb-2.5 flex flex-col justify-between">
+                          <div className="relative w-full h-full">
+                            {preset.slots.map((slot, idx) => {
+                              const isHero = slot.isPrimary || slot.widgetKey === 'clock';
+                              return (
+                                <div
+                                  key={idx}
+                                  className={`absolute rounded transition-all text-[8px] flex items-center justify-center font-mono font-bold truncate px-0.5 border ${
+                                    isHero
+                                      ? 'bg-emerald-500/25 border-emerald-400/70 text-emerald-200'
+                                      : 'bg-white/5 border-white/10 text-white/50 group-hover:border-white/20'
+                                  }`}
+                                  style={{
+                                    left: `${slot.xPercent}%`,
+                                    top: `${slot.yPercent}%`,
+                                    width: `${slot.wPercent}%`,
+                                    height: `${slot.hPercent}%`,
+                                  }}
+                                  title={`${slot.widgetKey}: ${slot.label}`}
+                                >
+                                  {slot.widgetKey === 'clock'
+                                    ? 'CLOCK'
+                                    : slot.widgetKey === 'countdown'
+                                    ? 'EXAM'
+                                    : slot.widgetKey === 'nameWidget'
+                                    ? 'TITLE'
+                                    : slot.widgetKey === 'tasks'
+                                    ? 'TASKS'
+                                    : slot.widgetKey === 'notification'
+                                    ? 'ROUTINE'
+                                    : slot.widgetKey === 'calendar'
+                                    ? 'CAL'
+                                    : slot.widgetKey === 'pomodoro'
+                                    ? 'TIMER'
+                                    : 'QUOTE'}
+                                </div>
+                              );
+                            })}
                           </div>
-                          <p className="text-xs text-white/80 leading-relaxed font-sans">
-                            {note.content}
+                        </div>
+
+                        {/* Preset Metadata */}
+                        <div>
+                          <div className="flex items-center justify-between gap-1 mb-1">
+                            <span className="text-xs font-bold text-white group-hover:text-emerald-300 transition truncate">
+                              {preset.name}
+                            </span>
+                            <span className="text-[9px] px-1.5 py-0.2 rounded bg-white/5 text-emerald-400 font-mono uppercase shrink-0 border border-white/10">
+                              {preset.badge}
+                            </span>
+                          </div>
+                          <p className="text-[10px] text-white/50 line-clamp-1">
+                            {preset.description}
                           </p>
                         </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* ================= TAB 4: FREEFORM EDITOR ================= */}
+            {activeTab === 'freeform-editor' && (
+              <div className="space-y-6 max-w-4xl">
+                {/* Freeform Mode Switch Banner */}
+                <div className="p-4 rounded-2xl bg-white/[0.02] border border-white/10 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div>
+                    <h3 className="text-xs font-bold text-white uppercase tracking-wider flex items-center gap-2">
+                      <span>Canvas Freeform Mode</span>
+                      <span className={`text-[10px] px-2 py-0.5 rounded-full font-mono border ${
+                        stagedLayoutMode === 'freeform'
+                          ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30'
+                          : 'bg-white/5 text-white/50 border-white/10'
+                      }`}>
+                        {stagedLayoutMode === 'freeform' ? 'ACTIVE' : 'INACTIVE'}
+                      </span>
+                    </h3>
+                    <p className="text-xs text-white/50">
+                      Drag, resize, position, and layer widgets anywhere with pixel-level precision
+                    </p>
+                  </div>
+
+                  <button
+                    onClick={() => setStagedLayoutMode('freeform')}
+                    className={`px-4 py-2 rounded-xl text-xs font-bold transition cursor-pointer border flex items-center gap-1.5 ${
+                      stagedLayoutMode === 'freeform'
+                        ? 'bg-emerald-500/25 border-emerald-400 text-emerald-300 shadow-[0_0_15px_rgba(16,185,129,0.2)]'
+                        : 'bg-white/5 hover:bg-white/10 border-white/15 text-white'
+                    }`}
+                  >
+                    <Move className="w-3.5 h-3.5" />
+                    <span>Enable Freeform Mode</span>
+                  </button>
+                </div>
+
+                {/* Target Widget Coordinate Controls */}
+                <div className="p-4 rounded-2xl bg-white/[0.02] border border-white/10 space-y-4">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold text-white uppercase tracking-wider">
+                      Selected Widget Geometry
+                    </span>
+                    <select
+                      value={selectedFreeformWidget}
+                      onChange={e => setSelectedFreeformWidget(e.target.value as DashboardWidgetKey)}
+                      className="px-3 py-1.5 rounded-xl bg-black/60 border border-white/15 text-xs text-white font-medium focus:outline-none focus:border-emerald-400 cursor-pointer"
+                    >
+                      {ALL_WIDGET_KEYS.map(w => (
+                        <option key={w.id} value={w.id}>
+                          {w.label}
+                        </option>
                       ))}
+                    </select>
+                  </div>
+
+                  {/* 4 Coordinate Inputs: X, Y, Width, Height */}
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-2">
+                    <div className="space-y-1">
+                      <label className="text-[11px] text-white/60 font-mono">X Position (px):</label>
+                      <input
+                        type="number"
+                        value={stagedFreeformLayout[selectedFreeformWidget]?.x ?? 100}
+                        onChange={e => {
+                          const val = Number(e.target.value);
+                          setStagedFreeformLayout(prev => ({
+                            ...prev,
+                            [selectedFreeformWidget]: {
+                              ...(prev[selectedFreeformWidget] || { y: 100, width: 360, height: 160 }),
+                              x: val,
+                            },
+                          }));
+                        }}
+                        className="w-full px-3 py-2 rounded-xl bg-black/50 border border-white/10 text-xs text-white font-mono"
+                      />
                     </div>
-                  )}
+
+                    <div className="space-y-1">
+                      <label className="text-[11px] text-white/60 font-mono">Y Position (px):</label>
+                      <input
+                        type="number"
+                        value={stagedFreeformLayout[selectedFreeformWidget]?.y ?? 100}
+                        onChange={e => {
+                          const val = Number(e.target.value);
+                          setStagedFreeformLayout(prev => ({
+                            ...prev,
+                            [selectedFreeformWidget]: {
+                              ...(prev[selectedFreeformWidget] || { x: 100, width: 360, height: 160 }),
+                              y: val,
+                            },
+                          }));
+                        }}
+                        className="w-full px-3 py-2 rounded-xl bg-black/50 border border-white/10 text-xs text-white font-mono"
+                      />
+                    </div>
+
+                    <div className="space-y-1">
+                      <label className="text-[11px] text-white/60 font-mono">Width (px):</label>
+                      <input
+                        type="number"
+                        value={stagedFreeformLayout[selectedFreeformWidget]?.width ?? 360}
+                        onChange={e => {
+                          const val = Number(e.target.value);
+                          setStagedFreeformLayout(prev => ({
+                            ...prev,
+                            [selectedFreeformWidget]: {
+                              ...(prev[selectedFreeformWidget] || { x: 100, y: 100, height: 160 }),
+                              width: val,
+                            },
+                          }));
+                        }}
+                        className="w-full px-3 py-2 rounded-xl bg-black/50 border border-white/10 text-xs text-white font-mono"
+                      />
+                    </div>
+
+                    <div className="space-y-1">
+                      <label className="text-[11px] text-white/60 font-mono">Height (px):</label>
+                      <input
+                        type="number"
+                        value={stagedFreeformLayout[selectedFreeformWidget]?.height ?? 160}
+                        onChange={e => {
+                          const val = Number(e.target.value);
+                          setStagedFreeformLayout(prev => ({
+                            ...prev,
+                            [selectedFreeformWidget]: {
+                              ...(prev[selectedFreeformWidget] || { x: 100, y: 100, width: 360 }),
+                              height: val,
+                            },
+                          }));
+                        }}
+                        className="w-full px-3 py-2 rounded-xl bg-black/50 border border-white/10 text-xs text-white font-mono"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Alignment & Layering Controls */}
+                  <div className="flex flex-wrap items-center justify-between gap-3 pt-3 border-t border-white/5">
+                    <div className="flex items-center gap-1.5 text-xs">
+                      <span className="text-white/60 font-medium">Align on Canvas:</span>
+                      <button
+                        onClick={() => {
+                          setStagedFreeformLayout(prev => ({
+                            ...prev,
+                            [selectedFreeformWidget]: {
+                              ...(prev[selectedFreeformWidget] || { y: 100, width: 360, height: 160 }),
+                              x: 30,
+                            },
+                          }));
+                        }}
+                        className="px-2 py-1 rounded-lg bg-white/5 hover:bg-white/10 text-white/80 text-[10px] font-semibold transition"
+                      >
+                        Left
+                      </button>
+                      <button
+                        onClick={() => {
+                          const w = stagedFreeformLayout[selectedFreeformWidget]?.width ?? 360;
+                          setStagedFreeformLayout(prev => ({
+                            ...prev,
+                            [selectedFreeformWidget]: {
+                              ...(prev[selectedFreeformWidget] || { y: 100, width: 360, height: 160 }),
+                              x: Math.max(10, (window.innerWidth - w) / 2),
+                            },
+                          }));
+                        }}
+                        className="px-2 py-1 rounded-lg bg-white/5 hover:bg-white/10 text-white/80 text-[10px] font-semibold transition"
+                      >
+                        Center
+                      </button>
+                      <button
+                        onClick={() => {
+                          const w = stagedFreeformLayout[selectedFreeformWidget]?.width ?? 360;
+                          setStagedFreeformLayout(prev => ({
+                            ...prev,
+                            [selectedFreeformWidget]: {
+                              ...(prev[selectedFreeformWidget] || { y: 100, width: 360, height: 160 }),
+                              x: Math.max(10, window.innerWidth - w - 30),
+                            },
+                          }));
+                        }}
+                        className="px-2 py-1 rounded-lg bg-white/5 hover:bg-white/10 text-white/80 text-[10px] font-semibold transition"
+                      >
+                        Right
+                      </button>
+                    </div>
+
+                    <div className="flex items-center gap-2 text-xs">
+                      <label className="flex items-center gap-1.5 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={stagedSnapToGrid}
+                          onChange={e => setStagedSnapToGrid(e.target.checked)}
+                          className="w-3.5 h-3.5 rounded text-emerald-500 cursor-pointer"
+                        />
+                        <span className="text-white/70">Grid Snapping ({stagedSnapSize}px)</span>
+                      </label>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Widget Visibility & Replacement of Negative/Positive Controls */}
+                <div className="p-4 rounded-2xl bg-white/[0.02] border border-white/10 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <h4 className="text-xs font-bold text-white uppercase tracking-wider">
+                        Active Widgets on Dashboard
+                      </h4>
+                      <p className="text-xs text-white/50">
+                        Use (+) to add widgets or (−) to hide. Data is never deleted upon removal.
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                    {ALL_WIDGET_KEYS.map(w => {
+                      const isVis = stagedVisibility[w.id] !== false;
+                      const Icon = w.icon;
+
+                      return (
+                        <div
+                          key={w.id}
+                          className="flex items-center justify-between p-2.5 rounded-xl bg-white/[0.03] border border-white/5"
+                        >
+                          <div className="flex items-center gap-2">
+                            <Icon className={`w-4 h-4 ${isVis ? 'text-emerald-400' : 'text-white/30'}`} />
+                            <span className={`text-xs font-medium ${isVis ? 'text-white' : 'text-white/40 line-through'}`}>
+                              {w.label}
+                            </span>
+                          </div>
+
+                          <div className="flex items-center gap-1.5">
+                            {isVis ? (
+                              <button
+                                onClick={() => {
+                                  setConfirmDialog({
+                                    isOpen: true,
+                                    title: `Hide ${w.label}?`,
+                                    description: `Your tasks, routines, and configuration are safely preserved. You can re-enable this widget anytime with the (+) button.`,
+                                    onConfirm: () => {
+                                      setStagedVisibility(prev => ({ ...prev, [w.id]: false }));
+                                      setConfirmDialog(null);
+                                    },
+                                  });
+                                }}
+                                className="w-7 h-7 rounded-lg bg-red-500/15 hover:bg-red-500/25 border border-red-500/30 text-red-300 flex items-center justify-center transition cursor-pointer"
+                                title="Remove / Hide widget (−)"
+                              >
+                                <Minus className="w-3.5 h-3.5" />
+                              </button>
+                            ) : (
+                              <button
+                                onClick={() => {
+                                  setStagedVisibility(prev => ({ ...prev, [w.id]: true }));
+                                }}
+                                className="w-7 h-7 rounded-lg bg-emerald-500/20 hover:bg-emerald-500/30 border border-emerald-400/40 text-emerald-300 flex items-center justify-center transition cursor-pointer"
+                                title="Add widget (+)"
+                              >
+                                <Plus className="w-3.5 h-3.5" />
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* ================= TAB 5: TYPOGRAPHY STUDIO ================= */}
+            {activeTab === 'typography' && (
+              <div className="space-y-6 max-w-4xl">
+                <div className="p-4 rounded-2xl bg-white/[0.02] border border-white/10 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div>
+                    <h3 className="text-xs font-bold text-white uppercase tracking-wider">
+                      Typography Scale & Font Architecture
+                    </h3>
+                    <p className="text-xs text-white/50">
+                      Configure font families, scale ratios, and precision weights for clocks, countdowns, and widgets
+                    </p>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs text-white/60">Global Scale:</span>
+                    <button
+                      onClick={() => {
+                        setStagedTypography(prev => ({
+                          ...prev,
+                          globalScale: Math.max(0.7, (prev.globalScale ?? 1.0) - 0.05),
+                        }));
+                      }}
+                      className="w-7 h-7 rounded-lg bg-white/10 hover:bg-white/20 text-white flex items-center justify-center"
+                      title="Decrease Scale"
+                    >
+                      <Minus className="w-3.5 h-3.5" />
+                    </button>
+                    <span className="font-mono text-emerald-300 font-bold min-w-[38px] text-center text-xs">
+                      {Math.round((stagedTypography.globalScale ?? 1.0) * 100)}%
+                    </span>
+                    <button
+                      onClick={() => {
+                        setStagedTypography(prev => ({
+                          ...prev,
+                          globalScale: Math.min(1.6, (prev.globalScale ?? 1.0) + 0.05),
+                        }));
+                      }}
+                      className="w-7 h-7 rounded-lg bg-white/10 hover:bg-white/20 text-white flex items-center justify-center"
+                      title="Increase Scale"
+                    >
+                      <Plus className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                </div>
+
+                {/* Font Families Grid */}
+                <div className="space-y-2">
+                  <label className="text-xs font-bold text-white uppercase tracking-wider">
+                    Clock & Display Font Family
+                  </label>
+                  <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2.5">
+                    {STUDIO_FONTS.slice(0, 16).map(f => (
+                      <button
+                        key={f.id}
+                        onClick={() => {
+                          setStagedTypography(prev => ({
+                            ...prev,
+                            fontClock: f.id,
+                            fontHeading: f.id,
+                          }));
+                        }}
+                        className={`p-2.5 rounded-xl border text-left transition cursor-pointer ${
+                          stagedTypography.fontClock === f.id
+                            ? 'bg-emerald-950/30 border-emerald-400 text-emerald-300 shadow-[0_0_15px_rgba(16,185,129,0.2)]'
+                            : 'bg-white/[0.02] hover:bg-white/[0.05] border-white/10 text-white/80'
+                        }`}
+                      >
+                        <span className="block text-xs font-bold truncate">{f.name}</span>
+                        <span className="text-[10px] text-white/40 font-mono capitalize">{f.category}</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* ================= TAB 6: ADVANCED SETTINGS ================= */}
+            {activeTab === 'advanced' && (
+              <div className="space-y-6 max-w-4xl">
+                {/* Backup & Restore JSON */}
+                <div className="p-4 rounded-2xl bg-white/[0.02] border border-white/10 space-y-3">
+                  <h4 className="text-xs font-bold text-white uppercase tracking-wider flex items-center gap-2">
+                    <FileJson className="w-4 h-4 text-emerald-400" />
+                    <span>Configuration Backup & Export</span>
+                  </h4>
+                  <p className="text-xs text-white/50">
+                    Export your complete dashboard configuration to a JSON file or restore from a backup
+                  </p>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => {
+                        const dataStr = 'data:text/json;charset=utf-8,' + encodeURIComponent(JSON.stringify(currentConfig, null, 2));
+                        const downloadAnchor = document.createElement('a');
+                        downloadAnchor.setAttribute('href', dataStr);
+                        downloadAnchor.setAttribute('download', `flocus_dashboard_backup_${Date.now()}.json`);
+                        document.body.appendChild(downloadAnchor);
+                        downloadAnchor.click();
+                        downloadAnchor.remove();
+                      }}
+                      className="px-4 py-2 rounded-xl bg-white/5 hover:bg-white/10 text-white text-xs font-semibold border border-white/10 transition cursor-pointer flex items-center gap-1.5"
+                    >
+                      <Download className="w-3.5 h-3.5" />
+                      <span>Export JSON Backup</span>
+                    </button>
+                  </div>
+                </div>
+
+                {/* Reset to Factory Defaults */}
+                <div className="p-4 rounded-2xl bg-red-950/20 border border-red-500/30 space-y-3">
+                  <h4 className="text-xs font-bold text-red-300 uppercase tracking-wider flex items-center gap-2">
+                    <AlertCircle className="w-4 h-4 text-red-400" />
+                    <span>Factory Reset</span>
+                  </h4>
+                  <p className="text-xs text-white/60">
+                    Reverts all widget styles, 50 presets, freeform coordinates, and appearance settings to initial defaults.
+                  </p>
+                  <button
+                    onClick={() => {
+                      setConfirmDialog({
+                        isOpen: true,
+                        title: 'Restore Factory Defaults?',
+                        description: 'This will reset all your widget arrangements, customized styles, and themes back to factory defaults.',
+                        onConfirm: () => {
+                          localStorage.removeItem('flocus_dashboard_config_v2');
+                          window.location.reload();
+                        },
+                      });
+                    }}
+                    className="px-4 py-2 rounded-xl bg-red-500/20 hover:bg-red-500/30 text-red-300 text-xs font-bold border border-red-500/40 transition cursor-pointer"
+                  >
+                    Reset All Dashboard Settings
+                  </button>
                 </div>
               </div>
             )}
           </div>
 
-          {/* RIGHT: Live Interactive Dashboard Studio Preview */}
-          <div className="w-[340px] lg:w-[420px] border-l border-white/10 bg-black/60 hidden md:flex flex-col p-5 overflow-y-auto">
-            <div className="flex items-center justify-between pb-3 border-b border-white/10 mb-3">
-              <span className="text-xs font-bold uppercase tracking-wider text-cyan-400 flex items-center gap-1.5">
-                <Eye className="w-3.5 h-3.5" />
-                <span>Live Viewport Preview</span>
-              </span>
-              <span className="text-[10px] font-mono text-white/40">
-                1:1 Typography Scale
-              </span>
-            </div>
+          {/* RIGHT: Live Interactive Preview Card */}
+          <div className="hidden lg:flex w-96 border-l border-white/10 bg-black/50 p-5 flex-col justify-between overflow-y-auto">
+            <div>
+              <div className="flex items-center justify-between pb-3 border-b border-white/10 mb-4">
+                <span className="text-xs font-bold text-white uppercase tracking-wider flex items-center gap-1.5">
+                  <Eye className="w-3.5 h-3.5 text-emerald-400" />
+                  <span>Live Sandbox Preview</span>
+                </span>
+                <span className="text-[10px] font-mono text-emerald-400 capitalize">
+                  {stagedThemeId}
+                </span>
+              </div>
 
-            {/* Preview Mode Selector Pills */}
-            <div className="grid grid-cols-5 gap-1 mb-3 text-[10px] font-mono">
-              {[
-                { id: 'dashboard', label: 'All' },
-                { id: 'clock', label: 'Clock' },
-                { id: 'countdown', label: 'Exam' },
-                { id: 'timetable', label: 'Routine' },
-                { id: 'sandbox', label: 'Sandbox' },
-              ].map(m => (
-                <button
-                  key={m.id}
-                  type="button"
-                  onClick={() => setPreviewMode(m.id as any)}
-                  className={`py-1 rounded-lg transition cursor-pointer text-center ${
-                    previewMode === m.id
-                      ? 'bg-cyan-500 text-black font-bold shadow-sm'
-                      : 'bg-white/5 text-white/60 hover:text-white hover:bg-white/10'
-                  }`}
-                >
-                  {m.label}
-                </button>
-              ))}
-            </div>
-
-            {/* Simulated Desktop Preview Frame */}
-            <div
-              className="relative w-full h-80 rounded-2xl overflow-hidden border border-white/15 shadow-2xl flex flex-col justify-between p-4"
-              style={{
-                backgroundColor: '#030407',
-                backgroundImage: stagedWallpaperUrl ? `url(${stagedWallpaperUrl})` : undefined,
-                backgroundSize: stagedScaling,
-                backgroundPosition: 'center',
-              }}
-            >
-              {/* Wallpaper Dimmer Overlay */}
+              {/* Sandbox Widget Box Demonstrating Staged Dynamic Styling */}
               <div
-                className="absolute inset-0 pointer-events-none transition-all"
+                className="relative rounded-2xl p-4 transition-all duration-300 overflow-hidden flex flex-col justify-between"
                 style={{
-                  backgroundColor: `rgba(0, 0, 0, ${stagedBgDimmer / 100})`,
-                  backdropFilter: stagedBgBlur > 0 ? `blur(${stagedBgBlur}px)` : undefined,
+                  backgroundColor: currentEditingStyle.bgColor || '#0c1a14',
+                  opacity: (currentEditingStyle.bgOpacity ?? 82) / 100,
+                  backdropFilter: `blur(${currentEditingStyle.blur ?? 18}px)`,
+                  WebkitBackdropFilter: `blur(${currentEditingStyle.blur ?? 18}px)`,
+                  border: `${currentEditingStyle.borderWidth ?? 1}px solid ${currentEditingStyle.borderColor || '#059669'}`,
+                  borderRadius: `${currentEditingStyle.borderRadius ?? 20}px`,
+                  boxShadow: `0 15px 35px ${currentEditingStyle.shadowColor || 'rgba(0,0,0,0.6)'}, 0 0 ${Math.round((currentEditingStyle.glowIntensity ?? 30) / 3)}px ${currentEditingStyle.glowColor || '#10b981'}`,
+                  color: currentEditingStyle.textColor || '#ffffff',
                 }}
-              />
-
-              {/* View 1: Complete Dashboard */}
-              {previewMode === 'dashboard' && (
-                <>
-                  {/* Simulated Central Clock */}
-                  <div className="relative z-10 my-auto text-center">
-                    <div
-                      style={getInlineFontStyle(stagedTypography.elements.clockMain)}
-                      className="transition-all"
-                    >
-                      {previewHoursStr}:{previewMinutesStr}
-                    </div>
-                    <div
-                      style={getInlineFontStyle(stagedTypography.elements.clockDate)}
-                      className="mt-1 transition-all"
-                    >
-                      {stagedClockArch} • {new Date().toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}
-                    </div>
+              >
+                <div className="flex items-center justify-between pb-2 border-b border-white/10">
+                  <div className="flex items-center gap-1.5">
+                    <span className="w-2 h-2 rounded-full" style={{ backgroundColor: currentEditingStyle.accentColor || '#10b981' }} />
+                    <span className="text-xs font-bold font-mono uppercase tracking-wider">
+                      {selectedStyleWidget === 'global' ? 'PREVIEW WIDGET' : selectedStyleWidget.toUpperCase()}
+                    </span>
                   </div>
-
-                  {/* Simulated Widgets Row */}
-                  <div className="relative z-10 grid grid-cols-2 gap-2 mt-auto">
-                    <div
-                      className={`p-2.5 rounded-xl border text-[10px] text-white/90 overflow-hidden ${stagedWidgetStyle}`}
-                    >
-                      <div
-                        style={getInlineFontStyle(stagedTypography.elements.widgetTitle)}
-                        className="truncate text-cyan-300"
-                      >
-                        PUBLIC EXAM
-                      </div>
-                      <div
-                        style={getInlineFontStyle(stagedTypography.elements.countdownNumber)}
-                        className="truncate"
-                      >
-                        137 Days
-                      </div>
-                      <div
-                        style={getInlineFontStyle(stagedTypography.elements.countdownLabel)}
-                        className="truncate text-white/50 text-[9px]"
-                      >
-                        REMAINING
-                      </div>
-                    </div>
-
-                    <div
-                      className={`p-2.5 rounded-xl border text-[10px] text-white/90 overflow-hidden ${stagedWidgetStyle}`}
-                    >
-                      <div
-                        style={getInlineFontStyle(stagedTypography.elements.widgetTitle)}
-                        className="truncate text-emerald-300"
-                      >
-                        STUDY TASKS
-                      </div>
-                      <div
-                        style={getInlineFontStyle(stagedTypography.elements.taskText)}
-                        className="truncate"
-                      >
-                        Complete physics test
-                      </div>
-                      <div
-                        style={getInlineFontStyle(stagedTypography.elements.buttonLabel)}
-                        className="truncate text-[9px] text-cyan-400 mt-0.5"
-                      >
-                        2 / 3 COMPLETED
-                      </div>
-                    </div>
-                  </div>
-                </>
-              )}
-
-              {/* View 2: Clock Close-up */}
-              {previewMode === 'clock' && (
-                <div className="relative z-10 m-auto text-center w-full px-2">
-                  <div
-                    style={getInlineFontStyle(stagedTypography.elements.clockMain)}
-                    className="leading-none transition-all drop-shadow-lg"
-                  >
-                    {previewHoursStr}:{previewMinutesStr}:{previewSecondsStr}
-                  </div>
-                  <div
-                    style={getInlineFontStyle(stagedTypography.elements.clockDate)}
-                    className="mt-3 opacity-90 transition-all"
-                  >
-                    {new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}
-                  </div>
-                  <div className="mt-2 text-[10px] font-mono text-cyan-400/80 uppercase tracking-widest">
-                    Arch: {stagedClockArch} • Font: {stagedTypography.elements.clockMain?.fontFamily || stagedFontClock}
-                  </div>
+                  <span className="text-[10px] font-mono opacity-60">TARGET 100%</span>
                 </div>
-              )}
 
-              {/* View 3: Exam Countdown Close-up */}
-              {previewMode === 'countdown' && (
-                <div className="relative z-10 m-auto text-center w-full px-4 py-4 rounded-2xl bg-black/50 border border-white/10 backdrop-blur-md">
-                  <div
-                    style={getInlineFontStyle(stagedTypography.elements.countdownLabel)}
-                    className="mb-1 text-cyan-300 font-bold"
-                  >
-                    PUBLIC EXAMS BEGIN
-                  </div>
-                  <div
-                    style={getInlineFontStyle(stagedTypography.elements.countdownNumber)}
-                    className="leading-none py-1"
-                  >
-                    {sampleCountdownDays} DAYS
-                  </div>
-                  <div
-                    style={getInlineFontStyle(stagedTypography.elements.widgetBody)}
-                    className="mt-2 text-white/70 text-xs"
-                  >
-                    Target: Chemistry Centum & Advanced Mathematics
-                  </div>
+                <div className="my-4 text-center">
+                  <span className="text-3xl font-extrabold tracking-tight font-mono block">
+                    10:18:59
+                  </span>
+                  <span className="text-[11px] opacity-70 tracking-widest uppercase font-mono mt-1 block">
+                    PUBLIC EXAM COUNTDOWN
+                  </span>
                 </div>
-              )}
 
-              {/* View 4: Routine & Timetable Close-up */}
-              {previewMode === 'timetable' && (
-                <div className="relative z-10 m-auto w-full p-4 rounded-2xl bg-black/60 border border-white/10 backdrop-blur-md space-y-2">
-                  <div
-                    style={getInlineFontStyle(stagedTypography.elements.widgetTitle)}
-                    className="text-amber-300 font-bold"
-                  >
-                    TODAY'S STUDY TIMETABLE
-                  </div>
-                  <div className="space-y-1.5 pt-1">
-                    <div className="p-2 rounded-xl bg-white/5 border border-white/5 flex items-center justify-between">
-                      <span style={getInlineFontStyle(stagedTypography.elements.timetableSubject)}>
-                        Mathematics Calculus
-                      </span>
-                      <span style={getInlineFontStyle(stagedTypography.elements.timetableTime)} className="text-cyan-300">
-                        08:00 – 09:30
-                      </span>
-                    </div>
-                    <div className="p-2 rounded-xl bg-white/5 border border-white/5 flex items-center justify-between">
-                      <span style={getInlineFontStyle(stagedTypography.elements.timetableSubject)}>
-                        Physics Optics Lab
-                      </span>
-                      <span style={getInlineFontStyle(stagedTypography.elements.timetableTime)} className="text-amber-300">
-                        10:00 – 11:30
-                      </span>
-                    </div>
-                  </div>
+                <div className="pt-2 border-t border-white/10 flex justify-between text-[10px] font-mono opacity-60">
+                  <span>LATVERIAN TITANIUM</span>
+                  <span>ARC CORE STARK</span>
                 </div>
-              )}
+              </div>
 
-              {/* View 5: Selected Element Sandbox */}
-              {previewMode === 'sandbox' && (
-                <div className="relative z-10 m-auto text-center w-full p-4 rounded-2xl bg-black/60 border border-white/10 backdrop-blur-md">
-                  <div className="text-[10px] text-cyan-400 font-mono uppercase tracking-widest mb-2">
-                    Active Element: {selectedTypographyElement}
-                  </div>
-                  <div style={getInlineFontStyle(activeElementConfig)}>
-                    {selectedTypographyElement === 'clockMain'
-                      ? sampleClockTime
-                      : selectedTypographyElement === 'clockDate'
-                      ? 'WEDNESDAY, 17 OCTOBER 2026'
-                      : selectedTypographyElement === 'countdownNumber'
-                      ? `${sampleCountdownDays} DAYS`
-                      : selectedTypographyElement === 'countdownLabel'
-                      ? 'PUBLIC EXAM COUNTDOWN'
-                      : selectedTypographyElement === 'widgetTitle'
-                      ? sampleWidgetTitle
-                      : selectedTypographyElement === 'motivationText'
-                      ? `"${sampleQuoteText}"`
-                      : sampleHeadingText}
-                  </div>
+              {/* Staged Configuration Overview */}
+              <div className="mt-4 p-3 rounded-xl bg-white/[0.02] border border-white/5 space-y-1.5 text-[11px] font-mono text-white/60">
+                <div className="flex justify-between">
+                  <span>Layout Mode:</span>
+                  <span className="text-emerald-300 capitalize">{stagedLayoutMode}</span>
                 </div>
-              )}
-            </div>
-
-            {/* Currently Staged Configuration Specs */}
-            <div className="mt-4 p-3.5 rounded-2xl bg-white/[0.02] border border-white/5 space-y-2 text-[11px] text-white/60 font-mono">
-              <div className="flex justify-between">
-                <span>Theme:</span>
-                <strong className="text-white capitalize">{stagedThemeId}</strong>
-              </div>
-              <div className="flex justify-between">
-                <span>Clock Style:</span>
-                <strong className="text-white capitalize">{stagedClockArch}</strong>
-              </div>
-              <div className="flex justify-between">
-                <span>Clock Font:</span>
-                <strong className="text-white capitalize">{stagedFontClock}</strong>
-              </div>
-              <div className="flex justify-between">
-                <span>Widget Style:</span>
-                <strong className="text-white capitalize">{stagedWidgetStyle}</strong>
-              </div>
-              <div className="flex justify-between">
-                <span>Layout:</span>
-                <strong className="text-white capitalize">{stagedLayoutPreset}</strong>
-              </div>
-              <div className="flex justify-between">
-                <span>Effect:</span>
-                <strong className="text-white capitalize">{stagedCanvasTheme}</strong>
+                <div className="flex justify-between">
+                  <span>Selected Preset:</span>
+                  <span className="text-white truncate max-w-[140px]">{stagedGridPresetId}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span>Animation:</span>
+                  <span className={stagedAnimEnabled ? 'text-emerald-300' : 'text-white/40'}>
+                    {stagedAnimEnabled ? `ON (${stagedAnimIntensity})` : 'OFF'}
+                  </span>
+                </div>
+                <div className="flex justify-between">
+                  <span>Focal Anchor:</span>
+                  <span className="text-white capitalize">{stagedFocalPosition}</span>
+                </div>
               </div>
             </div>
 
-            {/* Fast Commit Button in Sidebar */}
-            <div className="mt-auto pt-4">
+            {/* Direct Commit Action */}
+            <div className="pt-4 border-t border-white/10">
               <button
-                onClick={handleApplyAllChanges}
-                className="w-full py-2.5 rounded-xl bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 text-white font-bold text-xs shadow-lg transition cursor-pointer flex items-center justify-center gap-1.5"
+                onClick={handleSaveAndApply}
+                className="w-full py-2.5 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-400 hover:to-teal-500 text-white font-bold text-xs shadow-lg transition cursor-pointer flex items-center justify-center gap-1.5"
               >
                 <Check className="w-4 h-4 stroke-[3]" />
-                <span>Apply to Live Dashboard</span>
+                <span>Save All Changes</span>
               </button>
             </div>
           </div>
         </div>
       </div>
+
+      {/* ================= GENUINE CONFIRMATION MODAL ================= */}
+      {confirmDialog && confirmDialog.isOpen && (
+        <div className="fixed inset-0 z-[60] bg-black/80 backdrop-blur-md flex items-center justify-center p-4">
+          <div className="w-full max-w-md rounded-2xl bg-[#0c101d] border border-white/20 p-5 shadow-2xl space-y-4">
+            <h3 className="text-sm font-bold text-white flex items-center gap-2">
+              <AlertCircle className="w-4 h-4 text-amber-400" />
+              <span>{confirmDialog.title}</span>
+            </h3>
+            <p className="text-xs text-white/70 leading-relaxed">
+              {confirmDialog.description}
+            </p>
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-white/10">
+              <button
+                onClick={() => setConfirmDialog(null)}
+                className="px-3.5 py-1.5 rounded-xl bg-white/5 hover:bg-white/10 text-white/70 text-xs font-medium transition cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={confirmDialog.onConfirm}
+                className="px-4 py-1.5 rounded-xl bg-red-500 hover:bg-red-600 text-white text-xs font-bold transition cursor-pointer"
+              >
+                Confirm
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
