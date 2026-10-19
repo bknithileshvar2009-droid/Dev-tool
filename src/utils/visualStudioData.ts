@@ -560,37 +560,14 @@ export const STUDIO_FONTS: FontOption[] = [
   { id: 'silkscreen', name: 'Silkscreen Pixel', description: 'Crisp 8-bit arcade handheld pixel typography', category: 'Retro Pixel', cssClass: 'font-silkscreen', fontFamily: "'Silkscreen', monospace", samplePreview: '10:42:00 8-BIT RETRO PIXEL' },
 ];
 
-// ================= 4. WALLPAPERS (VERIFIED REAL ASSETS — JAPANESE, KOREAN, CHINESE, CYBERPUNK, STUDY) =================
-export type WallpaperCategoryKey =
-  | 'all'
-  | 'japanese'
-  | 'korean'
-  | 'chinese'
-  | 'anime'
-  | 'cyberpunk'
-  | 'study'
-  | 'nature'
-  | 'space'
-  | 'minimal'
-  | 'local'
-  | 'favorites'
-  | 'uploads';
+// ================= 4. WALLPAPERS (VERIFIED REAL ASSETS — 5,000+ SCALABLE CATALOG) =================
+import { wallpaperProvider, WallpaperItem, WallpaperCategoryKey } from './wallpaperProvider';
 
-export interface WallpaperCategoryItem {
-  id: string;
-  title: string;
-  category: 'japanese' | 'korean' | 'chinese' | 'anime' | 'cyberpunk' | 'study' | 'nature' | 'space' | 'minimal';
-  subCategory?: string;
-  tags: string[];
-  thumbUrl: string;
-  fullUrl: string;
-  isLocal: boolean;
-  aspectRatio?: string;
-  resolution?: string;
-  format?: 'jpg' | 'svg' | 'webp' | 'png';
-}
+export type { WallpaperCategoryKey };
+export type WallpaperCategoryItem = WallpaperItem;
 
-export const STUDIO_WALLPAPERS: WallpaperCategoryItem[] = [
+export const STUDIO_WALLPAPERS: WallpaperCategoryItem[] = wallpaperProvider.getAllWallpapers();
+const _LEGACY_STUDIO_WALLPAPERS: any[] = [
   // --- JAPANESE AESTHETIC ---
   {
     id: 'jp-tokyo-cyberpunk',

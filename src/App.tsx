@@ -68,7 +68,10 @@ import {
   Bookmark,
   Smartphone,
   Laptop,
+  Image as ImageIcon,
+  Shuffle,
 } from 'lucide-react';
+import { wallpaperProvider } from './utils/wallpaperProvider';
 import {
   DAILY_MOTIVATION_QUOTES,
   DAILY_MOTIVATION_MAP,
@@ -6379,8 +6382,42 @@ export default function App() {
 
             <div>
               <div className="flex items-center justify-between mb-2">
-                <label className="text-[11px] font-semibold uppercase tracking-wider text-white/70">Curated Wallpapers</label>
-                <span className="text-[10px] text-cyan-400 font-medium">Click to Apply</span>
+                <div>
+                  <label className="text-[11px] font-semibold uppercase tracking-wider text-white/70 block">Wallpaper Gallery</label>
+                  <span className="text-[10px] text-emerald-400 font-mono">5,000+ Library</span>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const randomWp = wallpaperProvider.getRandomWallpaper();
+                      if (randomWp) {
+                        updateConfig(prev => ({
+                          ...prev,
+                          activeWallpaper: randomWp.id,
+                          wallpaperUrl: randomWp.fullUrl,
+                          canvasTheme: 'none',
+                        }));
+                      }
+                    }}
+                    title="Apply Random Wallpaper"
+                    className="p-1 rounded-lg bg-purple-500/20 hover:bg-purple-500/30 text-purple-300 border border-purple-500/30 text-[10px] flex items-center gap-1 cursor-pointer"
+                  >
+                    <Shuffle className="w-3 h-3" />
+                    <span>Shuffle</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setDrawerOpen(false);
+                      setStudioOpen(true);
+                    }}
+                    className="px-2 py-1 rounded-lg bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 border border-emerald-500/30 text-[10px] font-bold flex items-center gap-1 cursor-pointer"
+                  >
+                    <ImageIcon className="w-3 h-3" />
+                    <span>Open Studio</span>
+                  </button>
+                </div>
               </div>
               <div className="grid grid-cols-2 gap-2.5">
                 {CURATED_WALLPAPERS.map(wp => (
@@ -6396,7 +6433,7 @@ export default function App() {
                     }}
                     className={`custom-img-card ${config.activeWallpaper === wp.id ? 'active-wallpaper' : ''}`}
                   >
-                    <img src={wp.thumb} alt={wp.title} className="w-full h-20 object-cover pointer-events-none" />
+                    <img src={wp.thumb} alt={wp.title} className="w-full h-20 object-cover pointer-events-none" onError={e => { (e.target as HTMLImageElement).src = '/wallpapers/art_anime_cherry_blossom.svg'; }} />
                     <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent flex items-end p-2 pointer-events-none">
                       <span className="text-[10px] font-medium text-white truncate">{wp.title}</span>
                     </div>
