@@ -299,6 +299,13 @@ class WallpaperProvider {
     return Array.from(this.favoriteIds);
   }
 
+  public setFavoriteIds(ids: string[]): void {
+    if (Array.isArray(ids)) {
+      this.favoriteIds = new Set(ids);
+      this.saveFavorites();
+    }
+  }
+
   private saveFavorites() {
     if (typeof window !== 'undefined') {
       try {
@@ -319,6 +326,17 @@ class WallpaperProvider {
 
   public getRecentIds(): string[] {
     return this.recentIds;
+  }
+
+  public setRecentIds(ids: string[]): void {
+    if (Array.isArray(ids)) {
+      this.recentIds = ids.slice(0, 30);
+      if (typeof window !== 'undefined') {
+        try {
+          localStorage.setItem(RECENT_STORAGE_KEY, JSON.stringify(this.recentIds));
+        } catch {}
+      }
+    }
   }
 
   // User uploads

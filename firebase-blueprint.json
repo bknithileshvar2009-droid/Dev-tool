@@ -18,6 +18,34 @@
           "type": "array",
           "description": "Array of quick study tasks"
         },
+        "dailyRegister": {
+          "type": "array",
+          "description": "Array of daily study register entries"
+        },
+        "scratchpad": {
+          "type": "string",
+          "description": "User quick notes and scratchpad contents"
+        },
+        "presets": {
+          "type": "array",
+          "description": "Custom visual customization studio presets"
+        },
+        "wallpaperFavorites": {
+          "type": "array",
+          "description": "Favorited wallpaper IDs"
+        },
+        "wallpaperRecent": {
+          "type": "array",
+          "description": "Recently selected wallpaper IDs"
+        },
+        "favouriteQuotes": {
+          "type": "array",
+          "description": "User favorited motivational quotes"
+        },
+        "studyStreak": {
+          "type": "number",
+          "description": "Study and pomodoro streak counter"
+        },
         "updatedAt": {
           "type": "string",
           "description": "ISO timestamp string of when the data was saved",
@@ -25,12 +53,87 @@
         }
       },
       "required": ["userId", "config", "updatedAt"]
+    },
+    "DailyRegistryDay": {
+      "title": "Daily Registry Record",
+      "description": "User daily study registry, subject logs, completed tasks, focus duration, and end-of-day summary",
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "description": "Firebase Auth UID of the record owner",
+          "maxLength": 128
+        },
+        "date": {
+          "type": "string",
+          "description": "Local calendar date string (YYYY-MM-DD)",
+          "maxLength": 32
+        },
+        "dayOfWeek": {
+          "type": "string",
+          "description": "Day of the week name (e.g. Monday)",
+          "maxLength": 32
+        },
+        "subjectsStudied": {
+          "type": "array",
+          "description": "List of subjects studied on this date"
+        },
+        "plannedTasks": {
+          "type": "array",
+          "description": "List of planned study tasks"
+        },
+        "completedTasks": {
+          "type": "array",
+          "description": "List of tasks completed on this date"
+        },
+        "studySessions": {
+          "type": "array",
+          "description": "Pomodoro and focus study sessions recorded"
+        },
+        "totalStudyMinutes": {
+          "type": "number",
+          "description": "Total focus study minutes recorded"
+        },
+        "tuitionRevisionProgress": {
+          "type": "string",
+          "description": "Tuition and revision notes and progress",
+          "maxLength": 2048
+        },
+        "dailyGoals": {
+          "type": "array",
+          "description": "Daily targets and milestones"
+        },
+        "dailySummaryNotes": {
+          "type": "string",
+          "description": "User reflection and end-of-day study notes",
+          "maxLength": 4096
+        },
+        "examPrepProgress": {
+          "type": "string",
+          "description": "Board exam and revision preparation progress",
+          "maxLength": 2048
+        },
+        "entries": {
+          "type": "object",
+          "description": "Map of individual registry activity log items keyed by entryId"
+        },
+        "updatedAt": {
+          "type": "string",
+          "description": "ISO timestamp string of when the registry was saved",
+          "maxLength": 64
+        }
+      },
+      "required": ["userId", "date", "updatedAt"]
     }
   },
   "firestore": {
     "/users/{userId}/dashboard/data": {
       "schema": "UserDashboard",
       "description": "User-specific persistent study dashboard settings and quick task list"
+    },
+    "/users/{userId}/dailyRegistry/{date}": {
+      "schema": "DailyRegistryDay",
+      "description": "User daily study registry, activity history, and study summaries"
     }
   }
 }

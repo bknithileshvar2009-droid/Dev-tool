@@ -8,6 +8,9 @@ import {
   getAuth,
   GoogleAuthProvider,
   signInWithPopup,
+  signInAnonymously,
+  signInWithEmailAndPassword,
+  createUserWithEmailAndPassword,
   signOut,
   onAuthStateChanged,
   User,
@@ -20,6 +23,8 @@ import {
   setDoc,
   getDocFromServer,
   onSnapshot,
+  collection,
+  getDocs,
 } from 'firebase/firestore';
 import firebaseConfig from '../../firebase-applet-config.json';
 
@@ -28,6 +33,8 @@ import {
   ref as rtdbRef,
   set as rtdbSet,
   get as rtdbGet,
+  update as rtdbUpdate,
+  remove as rtdbRemove,
   onValue as rtdbOnValue,
   runTransaction as rtdbRunTransaction,
 } from 'firebase/database';
@@ -132,8 +139,48 @@ export async function signInWithGoogle(): Promise<User> {
   try {
     const result = await signInWithPopup(auth, provider);
     return result.user;
-  } catch (err) {
+  } catch (err: any) {
     console.error('Google Sign In failed:', err);
+    throw err;
+  }
+}
+
+/**
+ * Sign in as Guest / Anonymous user
+ * Allows immediate data testing without OAuth domain whitelisting
+ */
+export async function signInAsGuest(): Promise<User> {
+  try {
+    const result = await signInAnonymously(auth);
+    return result.user;
+  } catch (err: any) {
+    console.error('Guest Sign In failed:', err);
+    throw err;
+  }
+}
+
+/**
+ * Sign in with Email and Password
+ */
+export async function signInWithEmail(email: string, pass: string): Promise<User> {
+  try {
+    const result = await signInWithEmailAndPassword(auth, email.trim(), pass);
+    return result.user;
+  } catch (err: any) {
+    console.error('Email Sign In failed:', err);
+    throw err;
+  }
+}
+
+/**
+ * Sign up with Email and Password
+ */
+export async function signUpWithEmail(email: string, pass: string): Promise<User> {
+  try {
+    const result = await createUserWithEmailAndPassword(auth, email.trim(), pass);
+    return result.user;
+  } catch (err: any) {
+    console.error('Email Sign Up failed:', err);
     throw err;
   }
 }
@@ -145,69 +192,189 @@ export async function logOutUser(): Promise<void> {
   await signOut(auth);
 }
 
-/**
- * Save user dashboard data to Firestore under /users/{uid}/dashboard/data
- */
-export async function saveUserDashboard(uid: string, dashboardData: { config: any; tasks: any[]; dailyRegister?: any[]; updatedAt: string }): Promise<boolean> {
-  if (!uid) return false;
-  const path = `users/${uid}/dashboard/data`;
-  try {
-    const docRef = doc(db, 'users', uid, 'dashboard', 'data');
-    await setDoc(docRef, {
-      userId: uid,
-      config: dashboardData.config,
-      tasks: dashboardData.tasks,
-      dailyRegister: dashboardData.dailyRegister || dashboardData.config?.dailyRegister || [],
-      updatedAt: dashboardData.updatedAt || new Date().toISOString(),
-    }, { merge: true });
-    return true;
-  } catch (err) {
-    handleFirestoreError(err, OperationType.WRITE, path);
-  }
+export interface UserDashboardPayload {
+  userId: string;
+  config: any;
+  tasks: any[];
+  dailyRegister?: any[];
+  scratchpad?: string;
+  presets?: any[];
+  wallpaperFavorites?: string[];
+  wallpaperRecent?: string[];
+  favouriteQuotes?: string[];
+  studyStreak?: number;
+  pomoStreak?: number;
+  updatedAt: string;
 }
 
 /**
- * Load user dashboard data from Firestore
+ * Save user dashboard data to Firebase
+ * Primary: Realtime Database under users/{uid}/dashboard
+ * Redundancy: Firestore under users/{uid}/dashboard/data
  */
-export async function loadUserDashboard(uid: string): Promise<any | null> {
-  if (!uid) return null;
-  const path = `users/${uid}/dashboard/data`;
+export async function saveUserDashboard(uid: string, dashboardData: Partial<UserDashboardPayload> & { config?: any; tasks?: any[]; updatedAt?: string }): Promise<boolean> {
+  if (!uid) return false;
+
+  const payload: UserDashboardPayload = {
+    userId: uid,
+    config: dashboardData.config || {},
+    tasks: Array.isArray(dashboardData.tasks) ? dashboardData.tasks : [],
+    dailyRegister: Array.isArray(dashboardData.dailyRegister) ? dashboardData.dailyRegister : (dashboardData.config?.dailyRegister || []),
+    scratchpad: typeof dashboardData.scratchpad === 'string' ? dashboardData.scratchpad : '',
+    presets: Array.isArray(dashboardData.presets) ? dashboardData.presets : [],
+    wallpaperFavorites: Array.isArray(dashboardData.wallpaperFavorites) ? dashboardData.wallpaperFavorites : [],
+    wallpaperRecent: Array.isArray(dashboardData.wallpaperRecent) ? dashboardData.wallpaperRecent : [],
+    favouriteQuotes: Array.isArray(dashboardData.favouriteQuotes) ? dashboardData.favouriteQuotes : [],
+    studyStreak: typeof dashboardData.studyStreak === 'number' ? dashboardData.studyStreak : (typeof dashboardData.pomoStreak === 'number' ? dashboardData.pomoStreak : 0),
+    updatedAt: dashboardData.updatedAt || new Date().toISOString(),
+  };
+
+  let rtdbSuccess = false;
+  let firestoreSuccess = false;
+
+  // 1. Save to Realtime Database at users/{uid}/dashboard
   try {
+    const rtdbTargetRef = rtdbRef(rtdb, `users/${uid}/dashboard`);
+    await rtdbSet(rtdbTargetRef, payload);
+    rtdbSuccess = true;
+    console.log(`[Firebase RTDB] Write succeeded for UID: ${uid} at path: users/${uid}/dashboard (updatedAt: ${payload.updatedAt})`);
+  } catch (rtdbErr) {
+    console.warn(`[Firebase RTDB Error] Write failed for UID: ${uid} at path users/${uid}/dashboard:`, rtdbErr);
+  }
+
+  // 2. Dual-save to Cloud Firestore at users/{uid}/dashboard/data
+  const fsPath = `users/${uid}/dashboard/data`;
+  try {
+    const docRef = doc(db, 'users', uid, 'dashboard', 'data');
+    await setDoc(docRef, payload, { merge: true });
+    firestoreSuccess = true;
+    console.log(`[Firebase Firestore] Write succeeded for UID: ${uid} at path: ${fsPath}`);
+  } catch (fsErr) {
+    console.warn(`[Firebase Firestore Notice] Write notice for UID: ${uid} at path ${fsPath}:`, fsErr);
+  }
+
+  // Return true if at least one remote target saved successfully
+  if (rtdbSuccess || firestoreSuccess) {
+    return true;
+  }
+
+  // If both failed, throw error to alert UI and retry mechanism
+  throw new Error(`Failed to save dashboard for user ${uid} to both RTDB and Firestore.`);
+}
+
+/**
+ * Load user dashboard data from Firebase
+ * First queries Realtime Database (users/{uid}/dashboard).
+ * If empty or network issue, queries Firestore (users/{uid}/dashboard/data).
+ */
+export async function loadUserDashboard(uid: string): Promise<UserDashboardPayload | null> {
+  if (!uid) return null;
+
+  console.log(`[Firebase] Starting dashboard restoration query for UID: ${uid}`);
+
+  // 1. Try Realtime Database (Primary path: users/{uid}/dashboard)
+  try {
+    const rtdbTargetRef = rtdbRef(rtdb, `users/${uid}/dashboard`);
+    const snap = await rtdbGet(rtdbTargetRef);
+    if (snap.exists()) {
+      const val = snap.val();
+      if (val && (val.config || val.tasks)) {
+        console.log(`[Firebase RTDB] Found saved dashboard for UID: ${uid} at path users/${uid}/dashboard (saved at: ${val.updatedAt})`);
+        return val as UserDashboardPayload;
+      }
+    }
+    console.log(`[Firebase RTDB] No existing record at users/${uid}/dashboard`);
+  } catch (rtdbErr) {
+    console.warn(`[Firebase RTDB Notice] Read failed for UID: ${uid}:`, rtdbErr);
+  }
+
+  // 2. Try Cloud Firestore (Fallback path: users/{uid}/dashboard/data)
+  const fsPath = `users/${uid}/dashboard/data`;
+  try {
+    console.log(`[Firebase Firestore] Querying fallback document at path: ${fsPath}`);
     const docRef = doc(db, 'users', uid, 'dashboard', 'data');
     const snap = await getDoc(docRef);
     if (snap.exists()) {
-      return snap.data();
+      const val = snap.data();
+      if (val && (val.config || val.tasks)) {
+        console.log(`[Firebase Firestore] Found saved dashboard for UID: ${uid} at path ${fsPath}`);
+        // Mirror to RTDB for faster subsequent access
+        rtdbSet(rtdbRef(rtdb, `users/${uid}/dashboard`), val).catch(() => {});
+        return val as UserDashboardPayload;
+      }
     }
-    return null;
-  } catch (err) {
-    handleFirestoreError(err, OperationType.GET, path);
+    console.log(`[Firebase Firestore] No existing document at ${fsPath}`);
+  } catch (fsErr) {
+    console.warn(`[Firebase Firestore Notice] Read failed for UID: ${uid}:`, fsErr);
   }
+
+  console.log(`[Firebase] No previous saved record found in RTDB or Firestore for UID: ${uid}`);
+  return null;
 }
 
 /**
  * Real-time Auto-Sync Listener for User Dashboard
+ * Listens to Realtime Database changes under users/{uid}/dashboard,
+ * with Firestore onSnapshot fallback.
  */
 export function subscribeToUserDashboard(
   uid: string,
-  onData: (data: any) => void,
+  onData: (data: UserDashboardPayload) => void,
   onError?: (error: unknown) => void
 ): () => void {
   if (!uid) return () => {};
-  const path = `users/${uid}/dashboard/data`;
-  const docRef = doc(db, 'users', uid, 'dashboard', 'data');
-  return onSnapshot(
-    docRef,
-    (snap) => {
-      if (snap.exists()) {
-        onData(snap.data());
+
+  let activeUnsubscribe: (() => void) | null = null;
+
+  try {
+    const rtdbTargetRef = rtdbRef(rtdb, `users/${uid}/dashboard`);
+    const unsubscribeRtdb = rtdbOnValue(
+      rtdbTargetRef,
+      (snapshot) => {
+        if (snapshot.exists()) {
+          const val = snapshot.val();
+          if (val && (val.config || val.tasks)) {
+            onData(val as UserDashboardPayload);
+          }
+        }
+      },
+      (err) => {
+        console.warn(`[Firebase RTDB Sync Error] Listener notice for UID: ${uid}:`, err);
+        if (onError) onError(err);
       }
-    },
-    (err) => {
-      console.warn('Firestore real-time auto sync listener warning:', err);
-      if (onError) onError(err);
-      handleFirestoreError(err, OperationType.GET, path);
-    }
-  );
+    );
+    activeUnsubscribe = unsubscribeRtdb;
+  } catch (err) {
+    console.warn(`[Firebase RTDB] Failed to bind onValue listener for UID: ${uid}:`, err);
+  }
+
+  // Also bind Firestore onSnapshot as secondary channel
+  let unsubscribeFirestore: (() => void) | null = null;
+  try {
+    const docRef = doc(db, 'users', uid, 'dashboard', 'data');
+    unsubscribeFirestore = onSnapshot(
+      docRef,
+      (snap) => {
+        if (snap.exists()) {
+          const val = snap.data();
+          if (val && (val.config || val.tasks)) {
+            onData(val as UserDashboardPayload);
+          }
+        }
+      },
+      (err) => {
+        // Silently handle Firestore subscription warning if RTDB is active
+        if (onError) onError(err);
+      }
+    );
+  } catch {
+    // ignore
+  }
+
+  return () => {
+    if (activeUnsubscribe) activeUnsubscribe();
+    if (unsubscribeFirestore) unsubscribeFirestore();
+  };
 }
 
 export {
@@ -369,3 +536,348 @@ export function listenAndIncrementVisitorCount(
     return () => {};
   }
 }
+
+// ==============================================================================
+// 10. FIREBASE DAILY REGISTRY + PERSONAL HISTORY PERSISTENCE
+// ==============================================================================
+
+export interface DailyRegistryEntryItem {
+  id: string;
+  timestamp: string; // ISO string e.g. 2026-10-19T14:30:00.000Z
+  time: string; // HH:mm local e.g. 14:30
+  eventType: 'study_session' | 'task_completed' | 'revision' | 'syllabus_update' | 'manual_log' | 'exam_prep' | 'goal_achieved';
+  description: string;
+  subject: string;
+  topic?: string;
+  durationMinutes: number;
+  notes?: string;
+  status: 'completed' | 'in-progress' | 'review-needed';
+  rating?: number; // 1 to 5
+  createdAt: number;
+}
+
+export interface DailyRegistryDayRecord {
+  userId: string;
+  date: string; // YYYY-MM-DD
+  dayOfWeek: string; // e.g. Monday
+  subjectsStudied: string[];
+  plannedTasks: Array<{ id: string; text: string; completed: boolean; subject?: string; priority?: string }>;
+  completedTasks: Array<{ id: string; text: string; completedAt: string; subject?: string }>;
+  studySessions: Array<{ id: string; mode: string; durationMinutes: number; completedAt: string; subject?: string }>;
+  totalStudyMinutes: number;
+  tuitionRevisionProgress: string;
+  dailyGoals: string[];
+  dailySummaryNotes: string;
+  examPrepProgress: string;
+  entries: Record<string, DailyRegistryEntryItem>;
+  updatedAt: string;
+}
+
+export function getDayOfWeekName(d: Date = new Date()): string {
+  return d.toLocaleDateString('en-US', { weekday: 'long' });
+}
+
+/**
+ * Save or merge a full day's registry record in Firebase
+ * Primary: users/{uid}/dailyRegistry/{YYYY-MM-DD}
+ * Dual-save: Firestore users/{uid}/dailyRegistry/{YYYY-MM-DD}
+ */
+export async function saveDailyRegistryDay(
+  uid: string,
+  date: string,
+  record: Partial<DailyRegistryDayRecord>
+): Promise<boolean> {
+  if (!uid || !date) return false;
+
+  const nowIso = new Date().toISOString();
+  const dayOfWeek = record.dayOfWeek || getDayOfWeekName(new Date(date + 'T12:00:00'));
+
+  const payload: DailyRegistryDayRecord = {
+    userId: uid,
+    date,
+    dayOfWeek,
+    subjectsStudied: Array.isArray(record.subjectsStudied) ? record.subjectsStudied : [],
+    plannedTasks: Array.isArray(record.plannedTasks) ? record.plannedTasks : [],
+    completedTasks: Array.isArray(record.completedTasks) ? record.completedTasks : [],
+    studySessions: Array.isArray(record.studySessions) ? record.studySessions : [],
+    totalStudyMinutes: typeof record.totalStudyMinutes === 'number' ? record.totalStudyMinutes : 0,
+    tuitionRevisionProgress: record.tuitionRevisionProgress || '',
+    dailyGoals: Array.isArray(record.dailyGoals) ? record.dailyGoals : [],
+    dailySummaryNotes: record.dailySummaryNotes || '',
+    examPrepProgress: record.examPrepProgress || '',
+    entries: record.entries || {},
+    updatedAt: record.updatedAt || nowIso,
+  };
+
+  let rtdbSuccess = false;
+  let fsSuccess = false;
+
+  // 1. Primary RTDB write
+  try {
+    const targetRef = rtdbRef(rtdb, `users/${uid}/dailyRegistry/${date}`);
+    await rtdbSet(targetRef, payload);
+    rtdbSuccess = true;
+    console.log(`[DailyRegistry RTDB] Saved day ${date} for UID: ${uid}`);
+  } catch (err) {
+    console.warn(`[DailyRegistry RTDB Error] Failed to save day ${date} for UID ${uid}:`, err);
+  }
+
+  // 2. Dual Firestore backup
+  try {
+    const docRef = doc(db, 'users', uid, 'dailyRegistry', date);
+    await setDoc(docRef, payload, { merge: true });
+    fsSuccess = true;
+    console.log(`[DailyRegistry Firestore] Saved day ${date} for UID: ${uid}`);
+  } catch (err) {
+    console.warn(`[DailyRegistry Firestore Notice] Save notice for day ${date}:`, err);
+  }
+
+  if (rtdbSuccess || fsSuccess) return true;
+  throw new Error(`Failed to save Daily Registry for date ${date}`);
+}
+
+/**
+ * Save an individual activity entry to users/{uid}/dailyRegistry/{YYYY-MM-DD}/entries/{entryId}
+ * Safely adds or updates the entry without destroying other entries or overwriting the day!
+ */
+export async function saveDailyRegistryEntryItem(
+  uid: string,
+  date: string,
+  entry: DailyRegistryEntryItem,
+  dayMeta?: Partial<DailyRegistryDayRecord>
+): Promise<boolean> {
+  if (!uid || !date || !entry || !entry.id) return false;
+
+  const nowIso = new Date().toISOString();
+
+  try {
+    // 1. Write the entry specifically to RTDB path: users/{uid}/dailyRegistry/{date}/entries/{entry.id}
+    const entryRef = rtdbRef(rtdb, `users/${uid}/dailyRegistry/${date}/entries/${entry.id}`);
+    await rtdbSet(entryRef, entry);
+
+    // 2. Update day-level metadata
+    const dayRef = rtdbRef(rtdb, `users/${uid}/dailyRegistry/${date}`);
+    const updates: Record<string, any> = {
+      userId: uid,
+      date,
+      dayOfWeek: getDayOfWeekName(new Date(date + 'T12:00:00')),
+      updatedAt: nowIso,
+    };
+    if (dayMeta?.totalStudyMinutes !== undefined) {
+      updates.totalStudyMinutes = dayMeta.totalStudyMinutes;
+    }
+    if (dayMeta?.subjectsStudied !== undefined) {
+      updates.subjectsStudied = dayMeta.subjectsStudied;
+    }
+    if (dayMeta?.completedTasks !== undefined) {
+      updates.completedTasks = dayMeta.completedTasks;
+    }
+    if (dayMeta?.studySessions !== undefined) {
+      updates.studySessions = dayMeta.studySessions;
+    }
+    if (dayMeta?.tuitionRevisionProgress !== undefined) {
+      updates.tuitionRevisionProgress = dayMeta.tuitionRevisionProgress;
+    }
+    if (dayMeta?.examPrepProgress !== undefined) {
+      updates.examPrepProgress = dayMeta.examPrepProgress;
+    }
+    await rtdbUpdate(dayRef, updates);
+
+    console.log(`[DailyRegistry RTDB] Entry ${entry.id} (${entry.eventType}) saved for ${date}`);
+
+    // Dual-sync to Firestore doc
+    try {
+      const fsDocRef = doc(db, 'users', uid, 'dailyRegistry', date);
+      await setDoc(fsDocRef, {
+        userId: uid,
+        date,
+        updatedAt: nowIso,
+        [`entries.${entry.id}`]: entry,
+        ...(dayMeta || {}),
+      }, { merge: true });
+    } catch {}
+
+    return true;
+  } catch (err) {
+    console.error(`[DailyRegistry Save Error] Failed to record entry ${entry.id}:`, err);
+    throw err;
+  }
+}
+
+/**
+ * Update only the dailySummaryNotes without altering the underlying activity records
+ */
+export async function updateDailySummaryNotes(
+  uid: string,
+  date: string,
+  notes: string
+): Promise<boolean> {
+  if (!uid || !date) return false;
+  const nowIso = new Date().toISOString();
+
+  try {
+    const dayRef = rtdbRef(rtdb, `users/${uid}/dailyRegistry/${date}`);
+    await rtdbUpdate(dayRef, {
+      dailySummaryNotes: notes,
+      updatedAt: nowIso,
+    });
+
+    try {
+      const fsDocRef = doc(db, 'users', uid, 'dailyRegistry', date);
+      await setDoc(fsDocRef, {
+        dailySummaryNotes: notes,
+        updatedAt: nowIso,
+      }, { merge: true });
+    } catch {}
+
+    console.log(`[DailyRegistry] Updated summary notes for ${date}`);
+    return true;
+  } catch (err) {
+    console.error(`[DailyRegistry Error] Failed to update summary notes:`, err);
+    throw err;
+  }
+}
+
+/**
+ * Delete a single entry from users/{uid}/dailyRegistry/{date}/entries/{entryId}
+ */
+export async function deleteDailyRegistryEntry(
+  uid: string,
+  date: string,
+  entryId: string
+): Promise<boolean> {
+  if (!uid || !date || !entryId) return false;
+  try {
+    const entryRef = rtdbRef(rtdb, `users/${uid}/dailyRegistry/${date}/entries/${entryId}`);
+    await rtdbRemove(entryRef);
+
+    try {
+      const fsDocRef = doc(db, 'users', uid, 'dailyRegistry', date);
+      await setDoc(fsDocRef, {
+        updatedAt: new Date().toISOString(),
+        [`entries.${entryId}`]: null,
+      }, { merge: true });
+    } catch {}
+
+    return true;
+  } catch (err) {
+    console.warn(`[DailyRegistry Delete Notice] Entry delete notice:`, err);
+    throw err;
+  }
+}
+
+/**
+ * Load a specific day's Daily Registry record
+ */
+export async function loadDailyRegistryDay(
+  uid: string,
+  date: string
+): Promise<DailyRegistryDayRecord | null> {
+  if (!uid || !date) return null;
+
+  try {
+    const targetRef = rtdbRef(rtdb, `users/${uid}/dailyRegistry/${date}`);
+    const snap = await rtdbGet(targetRef);
+    if (snap.exists()) {
+      const val = snap.val();
+      if (val) {
+        return val as DailyRegistryDayRecord;
+      }
+    }
+  } catch (err) {
+    console.warn(`[DailyRegistry RTDB Read Notice] Day ${date}:`, err);
+  }
+
+  // Fallback to Firestore
+  try {
+    const docRef = doc(db, 'users', uid, 'dailyRegistry', date);
+    const snap = await getDoc(docRef);
+    if (snap.exists()) {
+      return snap.data() as DailyRegistryDayRecord;
+    }
+  } catch (err) {
+    console.warn(`[DailyRegistry Firestore Read Notice] Day ${date}:`, err);
+  }
+
+  return null;
+}
+
+/**
+ * Load entire user daily registry history across all dates
+ */
+export async function loadUserDailyRegistryAll(
+  uid: string
+): Promise<Record<string, DailyRegistryDayRecord>> {
+  if (!uid) return {};
+
+  try {
+    const targetRef = rtdbRef(rtdb, `users/${uid}/dailyRegistry`);
+    const snap = await rtdbGet(targetRef);
+    if (snap.exists()) {
+      const val = snap.val();
+      if (val && typeof val === 'object') {
+        console.log(`[DailyRegistry RTDB] Loaded ${Object.keys(val).length} days of history for UID: ${uid}`);
+        return val as Record<string, DailyRegistryDayRecord>;
+      }
+    }
+  } catch (err) {
+    console.warn(`[DailyRegistry RTDB All Read Notice]:`, err);
+  }
+
+  // Fallback to Firestore collection
+  try {
+    const collRef = collection(db, 'users', uid, 'dailyRegistry');
+    const snap = await getDocs(collRef);
+    if (!snap.empty) {
+      const result: Record<string, DailyRegistryDayRecord> = {};
+      snap.forEach(docSnap => {
+        result[docSnap.id] = docSnap.data() as DailyRegistryDayRecord;
+      });
+      console.log(`[DailyRegistry Firestore] Loaded ${Object.keys(result).length} days of history for UID: ${uid}`);
+      return result;
+    }
+  } catch (err) {
+    console.warn(`[DailyRegistry Firestore All Read Notice]:`, err);
+  }
+
+  return {};
+}
+
+/**
+ * Subscribe to real-time changes of the user's daily registry
+ */
+export function subscribeToUserDailyRegistry(
+  uid: string,
+  onUpdate: (data: Record<string, DailyRegistryDayRecord>) => void,
+  onError?: (err: unknown) => void
+): () => void {
+  if (!uid) return () => {};
+
+  try {
+    const targetRef = rtdbRef(rtdb, `users/${uid}/dailyRegistry`);
+    const unsubscribe = rtdbOnValue(
+      targetRef,
+      (snapshot) => {
+        if (snapshot.exists()) {
+          const val = snapshot.val();
+          if (val && typeof val === 'object') {
+            onUpdate(val as Record<string, DailyRegistryDayRecord>);
+          } else {
+            onUpdate({});
+          }
+        } else {
+          onUpdate({});
+        }
+      },
+      (err) => {
+        console.warn(`[DailyRegistry Listener Notice] UID ${uid}:`, err);
+        if (onError) onError(err);
+      }
+    );
+    return unsubscribe;
+  } catch (err) {
+    console.warn(`[DailyRegistry Listener Init Error]:`, err);
+    return () => {};
+  }
+}
+

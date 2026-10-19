@@ -70,6 +70,10 @@ import {
   Laptop,
   Image as ImageIcon,
   Shuffle,
+  Mail,
+  Key,
+  CheckCheck,
+  BookOpen,
 } from 'lucide-react';
 import { wallpaperProvider } from './utils/wallpaperProvider';
 import {
@@ -87,13 +91,29 @@ import {
   loadUserDashboard,
   subscribeToUserDashboard,
   signInWithGoogle,
+  signInAsGuest,
+  signInWithEmail,
+  signUpWithEmail,
   logOutUser,
   onAuthStateChanged,
   User,
   SyncStatus,
+  UserDashboardPayload,
+  DailyRegistryEntryItem,
+  DailyRegistryDayRecord,
+  saveDailyRegistryDay,
+  saveDailyRegistryEntryItem,
+  loadDailyRegistryDay,
+  loadUserDailyRegistryAll,
+  subscribeToUserDailyRegistry,
+  updateDailySummaryNotes,
+  deleteDailyRegistryEntry,
+  getLocalDateString,
+  getDayOfWeekName,
 } from './utils/firebase';
 import VisualCustomizationStudio from './components/VisualCustomizationStudio';
 import AnimatedCharacterBackdrop from './components/AnimatedCharacterBackdrop';
+import DailyRegistryHistoryModal from './components/DailyRegistryHistoryModal';
 import {
   STUDIO_LAYOUT_ARRANGEMENTS,
   computePresetWidgetCoordinates,
@@ -722,7 +742,7 @@ export default function App() {
 
   const [newTaskText, setNewTaskText] = useState('');
   const [drawerOpen, setDrawerOpen] = useState(false);
-  const [activeTab, setActiveTab] = useState<'features' | 'timetable' | 'routine' | 'tasks' | 'clock' | 'countdown' | 'wallpaper' | 'widgets' | 'personalization' | 'backup' | 'cloud'>('features');
+  const [activeTab, setActiveTab] = useState<'features' | 'timetable' | 'routine' | 'tasks' | 'clock' | 'countdown' | 'wallpaper' | 'widgets' | 'personalization' | 'backup' | 'cloud' | 'registry'>('features');
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [zenMode, setZenMode] = useState(false);
   const [isFocusModeActive, setIsFocusModeActive] = useState(false);
@@ -778,6 +798,13 @@ export default function App() {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [syncStatus, setSyncStatus] = useState<SyncStatus>('idle');
   const [authError, setAuthError] = useState<string | null>(null);
+  const [authSuccessMsg, setAuthSuccessMsg] = useState<string | null>(null);
+  const [unauthorizedDomain, setUnauthorizedDomain] = useState<string | null>(null);
+  const [copiedDomain, setCopiedDomain] = useState(false);
+  const [showEmailAuth, setShowEmailAuth] = useState(false);
+  const [authEmail, setAuthEmail] = useState('');
+  const [authPassword, setAuthPassword] = useState('');
+  const [isAuthSignUp, setIsAuthSignUp] = useState(false);
   const [authLoading, setAuthLoading] = useState(false);
   const [autoSyncEnabled, setAutoSyncEnabled] = useState<boolean>(() => {
     const saved = localStorage.getItem('flocus_auto_sync');
@@ -785,7 +812,15 @@ export default function App() {
   });
   const [lastSyncedTime, setLastSyncedTime] = useState<string | null>(null);
   const isRemoteUpdateRef = useRef<boolean>(false);
+  const isRestoringRef = useRef<boolean>(false);
+  const restoredUserUidRef = useRef<string | null>(null);
   const lastSyncedPayloadRef = useRef<string | null>(null);
+  const pendingSavePromiseRef = useRef<Promise<any> | null>(null);
+
+  // Firebase Daily Registry + Personal History State
+  const [dailyRegistryHistory, setDailyRegistryHistory] = useState<Record<string, DailyRegistryDayRecord>>({});
+  const [historyModalOpen, setHistoryModalOpen] = useState(false);
+  const dailyRegistryUnsubRef = useRef<(() => void) | null>(null);
 
   // Backup & Restore State
   const [backupPreview, setBackupPreview] = useState<{
@@ -853,6 +888,17 @@ export default function App() {
     }
     return DEFAULT_DAILY_REGISTER_ENTRIES;
   });
+
+  // Persisted Favourite Quotes (stored in localStorage and synced to cloud)
+  const [favouriteQuotes, setFavouriteQuotes] = useState<string[]>(() => {
+    try {
+      const saved = localStorage.getItem('flocus_favourite_quotes');
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
+  });
+
   const [dailySummaryOpen, setDailySummaryOpen] = useState(false);
   const [dailyRegViewMode, setDailyRegViewMode] = useState<'log' | 'notes'>('log');
   const [newRegSubject, setNewRegSubject] = useState('Mathematics');
@@ -972,25 +1018,57 @@ export default function App() {
       } catch {
         // ignore
       }
-      if (currentUser) {
-        saveUserDashboard(currentUser.uid, {
-          config,
-          tasks,
-          dailyRegister: next,
-          updatedAt: new Date().toISOString(),
-        }).catch(() => {});
-      }
       return next;
     });
-  }, [currentUser, config, tasks]);
+  }, []);
+
+  // Helper: Safely add an activity entry to Firebase Daily Registry under users/{uid}/dailyRegistry/{date}/entries/{id}
+  const recordDailyRegistryActivity = useCallback(async (
+    entryData: Omit<DailyRegistryEntryItem, 'id' | 'createdAt'>,
+    targetDate: string = getLocalDateString()
+  ) => {
+    if (!currentUser) {
+      console.log('[DailyRegistry Local] Activity noted (unauthenticated):', entryData.description);
+      return;
+    }
+
+    const entryId = `entry_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+    const fullEntry: DailyRegistryEntryItem = {
+      ...entryData,
+      id: entryId,
+      createdAt: Date.now(),
+    };
+
+    try {
+      const currentDay = dailyRegistryHistory[targetDate];
+      const prevEntries = currentDay?.entries ? Object.values(currentDay.entries) : [];
+      const updatedEntriesList = [...prevEntries, fullEntry];
+      const totalMinutes = updatedEntriesList.reduce((acc, e) => acc + (e.durationMinutes || 0), 0);
+      const subjectsSet = new Set<string>(currentDay?.subjectsStudied || []);
+      if (entryData.subject && entryData.subject !== 'General') {
+        subjectsSet.add(entryData.subject);
+      }
+
+      await saveDailyRegistryEntryItem(currentUser.uid, targetDate, fullEntry, {
+        totalStudyMinutes: totalMinutes,
+        subjectsStudied: Array.from(subjectsSet),
+      });
+
+      console.log(`[DailyRegistry] Recorded activity for ${targetDate}:`, entryData.description);
+    } catch (err) {
+      console.warn(`[DailyRegistry Notice] Failed to save entry:`, err);
+    }
+  }, [currentUser, dailyRegistryHistory]);
 
   const handleAddDailyRegisterEntry = useCallback(() => {
     if (!newRegTopic.trim() && !newRegNotes.trim()) return;
 
+    const localDate = getLocalDateString();
+    const localTime = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
     const newEntry: DailyRegisterEntry = {
       id: `entry-${Date.now()}`,
-      date: new Date().toISOString().slice(0, 10),
-      time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      date: localDate,
+      time: localTime,
       subject: newRegSubject,
       topic: newRegTopic.trim() || `${newRegSubject} Session`,
       notes: newRegNotes.trim() || 'Logged via Daily Register.',
@@ -1001,12 +1079,48 @@ export default function App() {
     };
 
     saveDailyRegisterList(prev => [newEntry, ...prev]);
+
+    // Automatically record to persistent Firebase Daily Registry under users/{uid}/dailyRegistry/{date}/entries
+    if (currentUser) {
+      recordDailyRegistryActivity({
+        timestamp: new Date().toISOString(),
+        time: localTime,
+        eventType: 'manual_log',
+        description: `${newRegSubject} — ${newRegTopic.trim() || 'Study Session'}`,
+        subject: newRegSubject,
+        topic: newRegTopic.trim() || undefined,
+        durationMinutes: newRegDuration,
+        notes: newRegNotes.trim() || undefined,
+        status: 'completed',
+        rating: newRegRating,
+      }, localDate);
+    }
+
     setNewRegTopic('');
     setNewRegNotes('');
     setRegisterSuccessPulse(true);
     playWebAudioChime('task');
     setTimeout(() => setRegisterSuccessPulse(false), 2000);
-  }, [newRegSubject, newRegTopic, newRegNotes, newRegDuration, newRegRating, saveDailyRegisterList]);
+  }, [newRegSubject, newRegTopic, newRegNotes, newRegDuration, newRegRating, saveDailyRegisterList, currentUser, recordDailyRegistryActivity]);
+
+  const handleSaveDayNotes = useCallback(async (date: string, notes: string) => {
+    if (!currentUser) return false;
+    return await updateDailySummaryNotes(currentUser.uid, date, notes);
+  }, [currentUser]);
+
+  const handleAddManualEntryModal = useCallback(async (
+    date: string,
+    entryData: Omit<DailyRegistryEntryItem, 'id' | 'createdAt'>
+  ) => {
+    if (!currentUser) return false;
+    await recordDailyRegistryActivity(entryData, date);
+    return true;
+  }, [currentUser, recordDailyRegistryActivity]);
+
+  const handleDeleteEntryModal = useCallback(async (date: string, entryId: string) => {
+    if (!currentUser) return false;
+    return await deleteDailyRegistryEntry(currentUser.uid, date, entryId);
+  }, [currentUser]);
 
   // Responsive Layout: Fit all widgets for Laptop screens
   const applyLaptopFitLayout = useCallback(() => {
@@ -1530,109 +1644,279 @@ export default function App() {
   }, [placementModal, config, updateConfig, ALL_WIDGET_REGISTRY]);
 
   // ================= 5. FIREBASE AUTH & REALTIME DATABASE AUTO-SYNC =================
+
+  // Helper: Compile complete user dashboard payload covering all user-customizable preferences
+  const buildCurrentDashboardPayload = useCallback((uid: string): UserDashboardPayload => {
+    return {
+      userId: uid,
+      config,
+      tasks,
+      dailyRegister: dailyRegisterEntries,
+      scratchpad: scratchpadText,
+      presets: savedPresets,
+      wallpaperFavorites: wallpaperProvider.getFavoriteIds(),
+      wallpaperRecent: wallpaperProvider.getRecentIds(),
+      favouriteQuotes,
+      studyStreak: pomoStreak,
+      updatedAt: new Date().toISOString(),
+    };
+  }, [config, tasks, dailyRegisterEntries, scratchpadText, savedPresets, favouriteQuotes, pomoStreak]);
+
+  // Helper: Safely restore complete state from Firebase without race condition overwrites
+  const restoreDashboardFromCloudData = useCallback((cloudData: any): boolean => {
+    if (!cloudData) return false;
+    isRemoteUpdateRef.current = true;
+
+    console.log('[Firebase Restore] Restoring full dashboard state from cloud payload...', {
+      updatedAt: cloudData.updatedAt,
+      hasConfig: !!cloudData.config,
+      tasksCount: Array.isArray(cloudData.tasks) ? cloudData.tasks.length : 0,
+      dailyCount: Array.isArray(cloudData.dailyRegister) ? cloudData.dailyRegister.length : 0,
+    });
+
+    // 1. Restore Config (Widgets, positions, sizes, titles, layouts, wallpapers, themes, typography, etc.)
+    if (cloudData.config && typeof cloudData.config === 'object') {
+      setConfig(prev => ({
+        ...DEFAULT_CONFIG,
+        ...cloudData.config,
+        optionalFeatures: { ...DEFAULT_OPTIONAL_FEATURES, ...(cloudData.config.optionalFeatures || {}) },
+        personalization: { ...DEFAULT_PERSONALIZATION, ...(cloudData.config.personalization || {}) },
+        typography: {
+          ...DEFAULT_CONFIG.typography,
+          ...(cloudData.config.typography || {}),
+          elements: {
+            ...DEFAULT_ELEMENT_TYPOGRAPHY,
+            ...(cloudData.config.typography?.elements || {}),
+          },
+        },
+        widgetStyles: {
+          global: {
+            ...(DEFAULT_CONFIG.widgetStyles?.global || {}),
+            ...(cloudData.config.widgetStyles?.global || {}),
+          },
+          overrides: {
+            ...(DEFAULT_CONFIG.widgetStyles?.overrides || {}),
+            ...(cloudData.config.widgetStyles?.overrides || {}),
+          },
+        },
+      }));
+      try {
+        localStorage.setItem('flocus_dashboard_config', JSON.stringify(cloudData.config));
+      } catch {}
+    }
+
+    // 2. Restore Quick Tasks
+    if (cloudData.tasks && Array.isArray(cloudData.tasks)) {
+      setTasks(cloudData.tasks);
+      try {
+        localStorage.setItem('flocus_quick_tasks', JSON.stringify(cloudData.tasks));
+      } catch {}
+    }
+
+    // 3. Restore Daily Register Entries
+    if (cloudData.dailyRegister && Array.isArray(cloudData.dailyRegister)) {
+      setDailyRegisterEntries(cloudData.dailyRegister);
+      try {
+        localStorage.setItem('flocus_daily_register_entries', JSON.stringify(cloudData.dailyRegister));
+      } catch {}
+    }
+
+    // 4. Restore Scratchpad Notes
+    if (typeof cloudData.scratchpad === 'string') {
+      setScratchpadText(cloudData.scratchpad);
+      try {
+        localStorage.setItem('flocus_scratchpad_notes', cloudData.scratchpad);
+      } catch {}
+    }
+
+    // 5. Restore Studio Presets
+    if (cloudData.presets && Array.isArray(cloudData.presets) && cloudData.presets.length > 0) {
+      setSavedPresets(cloudData.presets);
+      try {
+        localStorage.setItem('flocus_saved_presets', JSON.stringify(cloudData.presets));
+      } catch {}
+    }
+
+    // 6. Restore Wallpaper Favorites & Recent
+    if (cloudData.wallpaperFavorites && Array.isArray(cloudData.wallpaperFavorites)) {
+      wallpaperProvider.setFavoriteIds(cloudData.wallpaperFavorites);
+    }
+    if (cloudData.wallpaperRecent && Array.isArray(cloudData.wallpaperRecent)) {
+      wallpaperProvider.setRecentIds(cloudData.wallpaperRecent);
+    }
+
+    // 7. Restore Favourite Quotes
+    if (cloudData.favouriteQuotes && Array.isArray(cloudData.favouriteQuotes)) {
+      setFavouriteQuotes(cloudData.favouriteQuotes);
+      try {
+        localStorage.setItem('flocus_favourite_quotes', JSON.stringify(cloudData.favouriteQuotes));
+      } catch {}
+    }
+
+    // 8. Restore Study / Pomodoro Streak
+    if (typeof cloudData.studyStreak === 'number' || typeof cloudData.pomoStreak === 'number') {
+      const streakVal = cloudData.studyStreak ?? cloudData.pomoStreak ?? 0;
+      setPomoStreak(streakVal);
+      try {
+        localStorage.setItem('flocus_pomo_streak', String(streakVal));
+      } catch {}
+    }
+
+    if (cloudData.updatedAt) {
+      lastSyncedPayloadRef.current = cloudData.updatedAt;
+      setLastSyncedTime(new Date(cloudData.updatedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }));
+    }
+
+    return true;
+  }, []);
+
+  // Primary Auth Listener: Loads and restores saved user dashboard on login
   useEffect(() => {
+    let isCancelled = false;
+
     const unsubscribe = onAuthStateChanged(auth, async user => {
-      setCurrentUser(user);
+      if (isCancelled) return;
+
       if (user) {
+        console.log(`[Firebase Auth] Authenticated user confirmed: ${user.email} (UID: ${user.uid})`);
         setSyncStatus('saving');
+        isRestoringRef.current = true;
+        setCurrentUser(user);
+
         try {
+          // Read that user's saved dashboard data from Realtime Database (with Firestore fallback)
+          console.log(`[Firebase Auth] Reading previous dashboard state for UID: ${user.uid}`);
           const cloudData = await loadUserDashboard(user.uid);
-          if (cloudData && cloudData.config) {
-            isRemoteUpdateRef.current = true;
-            setConfig(prev => ({
-              ...prev,
-              ...cloudData.config,
-              optionalFeatures: { ...DEFAULT_OPTIONAL_FEATURES, ...(cloudData.config.optionalFeatures || {}) },
-              personalization: { ...DEFAULT_PERSONALIZATION, ...(cloudData.config.personalization || {}) },
-              typography: {
-                ...DEFAULT_CONFIG.typography,
-                ...(cloudData.config.typography || {}),
-                elements: {
-                  ...DEFAULT_ELEMENT_TYPOGRAPHY,
-                  ...(cloudData.config.typography?.elements || {}),
-                },
-              },
-            }));
-            if (cloudData.tasks && Array.isArray(cloudData.tasks)) {
-              setTasks(cloudData.tasks);
-              localStorage.setItem('flocus_quick_tasks', JSON.stringify(cloudData.tasks));
-            }
-            if (cloudData.dailyRegister && Array.isArray(cloudData.dailyRegister)) {
-              setDailyRegisterEntries(cloudData.dailyRegister);
-              localStorage.setItem('flocus_daily_register_entries', JSON.stringify(cloudData.dailyRegister));
-            }
-            if (cloudData.updatedAt) {
-              setLastSyncedTime(new Date(cloudData.updatedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }));
-            }
+
+          if (isCancelled) return;
+
+          if (cloudData && (cloudData.config || cloudData.tasks)) {
+            console.log(`[Firebase Auth] Existing dashboard record found for UID: ${user.uid}. Restoring all widgets, wallpapers, and settings...`);
+            restoreDashboardFromCloudData(cloudData);
+            setSyncStatus('saved');
+            console.log(`[Firebase Auth] User dashboard restored completely for UID: ${user.uid}`);
           } else {
-            // First time cloud user: auto-sync local state to cloud!
-            const nowIso = new Date().toISOString();
-            await saveUserDashboard(user.uid, {
-              config,
-              tasks,
-              dailyRegister: dailyRegisterEntries,
-              updatedAt: nowIso,
-            });
+            console.log(`[Firebase Auth] No previous cloud record found for UID: ${user.uid}. Initializing new account template...`);
+            const initialPayload = buildCurrentDashboardPayload(user.uid);
+            await saveUserDashboard(user.uid, initialPayload);
             setLastSyncedTime(new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }));
+            setSyncStatus('saved');
           }
-          setSyncStatus('saved');
+
+          // Load user's Daily Registry History
+          console.log(`[Firebase Auth] Loading Daily Registry & Personal History for UID: ${user.uid}`);
+          const historyAll = await loadUserDailyRegistryAll(user.uid);
+          if (!isCancelled) {
+            setDailyRegistryHistory(historyAll || {});
+          }
+
+          // Real-time listener for Daily Registry
+          if (dailyRegistryUnsubRef.current) {
+            dailyRegistryUnsubRef.current();
+          }
+          dailyRegistryUnsubRef.current = subscribeToUserDailyRegistry(user.uid, data => {
+            if (!isCancelled) {
+              setDailyRegistryHistory(data || {});
+            }
+          });
+
+          // Ensure today's registry record exists without overwriting existing entries
+          const today = getLocalDateString();
+          if (!historyAll || !historyAll[today]) {
+            console.log(`[DailyRegistry] Initializing today's record for ${today}`);
+            saveDailyRegistryDay(user.uid, today, {
+              userId: user.uid,
+              date: today,
+              dayOfWeek: getDayOfWeekName(),
+              subjectsStudied: [],
+              plannedTasks: [],
+              completedTasks: [],
+              studySessions: [],
+              totalStudyMinutes: 0,
+              tuitionRevisionProgress: '',
+              dailyGoals: [],
+              dailySummaryNotes: '',
+              examPrepProgress: '',
+              entries: {},
+            }).catch(() => {});
+          }
         } catch (err) {
-          console.warn('Error syncing with Firebase:', err);
+          console.error(`[Firebase Auth Error] Failed during dashboard restoration for UID: ${user.uid}:`, err);
           setSyncStatus('error');
+        } finally {
+          // Complete restoration lock after React state cycle settles
+          setTimeout(() => {
+            if (!isCancelled) {
+              isRestoringRef.current = false;
+              restoredUserUidRef.current = user.uid;
+              console.log(`[Firebase Auth] Auto-sync gate opened for UID: ${user.uid}`);
+            }
+          }, 350);
         }
       } else {
+        console.log('[Firebase Auth] User signed out or unauthenticated.');
+        restoredUserUidRef.current = null;
+        isRestoringRef.current = false;
+        setCurrentUser(null);
         setSyncStatus('offline');
+        if (dailyRegistryUnsubRef.current) {
+          dailyRegistryUnsubRef.current();
+          dailyRegistryUnsubRef.current = null;
+        }
+        setDailyRegistryHistory({});
       }
     });
 
-    return () => unsubscribe();
-  }, []);
+    return () => {
+      isCancelled = true;
+      unsubscribe();
+      if (dailyRegistryUnsubRef.current) {
+        dailyRegistryUnsubRef.current();
+        dailyRegistryUnsubRef.current = null;
+      }
+    };
+  }, [restoreDashboardFromCloudData, buildCurrentDashboardPayload]);
 
-  // Real-time bi-directional auto-sync listener from Firestore
+  // Real-time bi-directional auto-sync listener (Active only after initial restoration is safely completed)
   useEffect(() => {
     if (!currentUser || !autoSyncEnabled) return;
+    if (isRestoringRef.current || restoredUserUidRef.current !== currentUser.uid) return;
 
+    console.log(`[Firebase Sync] Binding real-time change listener for UID: ${currentUser.uid}`);
     const unsubscribe = subscribeToUserDashboard(
       currentUser.uid,
       cloudData => {
         if (!cloudData || !cloudData.config) return;
-        // Ignore remote echo if we just saved this payload
-        if (cloudData.updatedAt && lastSyncedPayloadRef.current === cloudData.updatedAt) return;
+        // Ignore echo of our own last saved payload
+        if (cloudData.updatedAt && lastSyncedPayloadRef.current === cloudData.updatedAt) {
+          return;
+        }
 
-        isRemoteUpdateRef.current = true;
-        setConfig(prev => ({
-          ...prev,
-          ...cloudData.config,
-          optionalFeatures: { ...DEFAULT_OPTIONAL_FEATURES, ...(cloudData.config.optionalFeatures || {}) },
-          personalization: { ...DEFAULT_PERSONALIZATION, ...(cloudData.config.personalization || {}) },
-        }));
-        if (cloudData.tasks && Array.isArray(cloudData.tasks)) {
-          setTasks(cloudData.tasks);
-          localStorage.setItem('flocus_quick_tasks', JSON.stringify(cloudData.tasks));
-        }
-        if (cloudData.dailyRegister && Array.isArray(cloudData.dailyRegister)) {
-          setDailyRegisterEntries(cloudData.dailyRegister);
-          localStorage.setItem('flocus_daily_register_entries', JSON.stringify(cloudData.dailyRegister));
-        }
+        console.log(`[Firebase Sync] Incoming remote update detected for UID: ${currentUser.uid}`);
+        restoreDashboardFromCloudData(cloudData);
         setSyncStatus('saved');
-        if (cloudData.updatedAt) {
-          setLastSyncedTime(new Date(cloudData.updatedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }));
-        }
       },
       err => {
-        console.warn('Real-time auto-sync notice:', err);
+        console.warn(`[Firebase Sync Notice] Real-time listener notice for UID: ${currentUser.uid}:`, err);
       }
     );
 
-    return () => unsubscribe();
-  }, [currentUser, autoSyncEnabled]);
+    return () => {
+      unsubscribe();
+    };
+  }, [currentUser, autoSyncEnabled, restoreDashboardFromCloudData]);
 
-  // Debounced Auto-Sync to Firebase when config or tasks change
+  // Debounced Auto-Sync to Firebase when user modifies anything on dashboard
   const syncTimeoutRef = useRef<number | null>(null);
   useEffect(() => {
     if (!currentUser || !autoSyncEnabled) return;
 
-    // Skip auto-sync write if this state update was triggered by remote incoming snapshot
+    // Critical guard: do not save while initial restoration is in progress or if user hasn't finished initial restore
+    if (isRestoringRef.current || restoredUserUidRef.current !== currentUser.uid) {
+      return;
+    }
+
+    // Skip if state update was triggered by remote incoming snapshot
     if (isRemoteUpdateRef.current) {
       isRemoteUpdateRef.current = false;
       return;
@@ -1644,31 +1928,44 @@ export default function App() {
 
     setSyncStatus('saving');
     syncTimeoutRef.current = window.setTimeout(async () => {
-      const nowIso = new Date().toISOString();
-      lastSyncedPayloadRef.current = nowIso;
+      const payload = buildCurrentDashboardPayload(currentUser.uid);
+      lastSyncedPayloadRef.current = payload.updatedAt;
+
       try {
-        await saveUserDashboard(currentUser.uid, {
-          config,
-          tasks,
-          updatedAt: nowIso,
-        });
+        const savePromise = saveUserDashboard(currentUser.uid, payload);
+        pendingSavePromiseRef.current = savePromise;
+        await savePromise;
         setSyncStatus('saved');
         setLastSyncedTime(new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }));
+        console.log(`[Firebase Auto-Sync] Changes successfully saved to Firebase for UID: ${currentUser.uid} (updatedAt: ${payload.updatedAt})`);
       } catch (err) {
-        console.warn('Firebase auto-sync error:', err);
+        console.error(`[Firebase Auto-Sync Error] Failed saving changes for UID: ${currentUser.uid}:`, err);
         setSyncStatus('error');
+      } finally {
+        pendingSavePromiseRef.current = null;
       }
-    }, 1000);
+    }, 1200);
 
     return () => {
       if (syncTimeoutRef.current) window.clearTimeout(syncTimeoutRef.current);
     };
-  }, [config, tasks, currentUser, autoSyncEnabled]);
+  }, [
+    config,
+    tasks,
+    dailyRegisterEntries,
+    scratchpadText,
+    savedPresets,
+    favouriteQuotes,
+    pomoStreak,
+    currentUser,
+    autoSyncEnabled,
+    buildCurrentDashboardPayload,
+  ]);
 
   // Online network reconnect auto-sync trigger
   useEffect(() => {
     const handleOnline = () => {
-      if (currentUser && autoSyncEnabled) {
+      if (currentUser && autoSyncEnabled && !isRestoringRef.current) {
         handleManualSyncNow();
       }
     };
@@ -1684,28 +1981,92 @@ export default function App() {
     }
     setSyncStatus('saving');
     try {
-      const nowIso = new Date().toISOString();
-      lastSyncedPayloadRef.current = nowIso;
-      await saveUserDashboard(currentUser.uid, {
-        config,
-        tasks,
-        updatedAt: nowIso,
-      });
+      const payload = buildCurrentDashboardPayload(currentUser.uid);
+      lastSyncedPayloadRef.current = payload.updatedAt;
+      const savePromise = saveUserDashboard(currentUser.uid, payload);
+      pendingSavePromiseRef.current = savePromise;
+      await savePromise;
       setSyncStatus('saved');
       setLastSyncedTime(new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }));
-    } catch {
+      console.log(`[Firebase Manual Sync] Dashboard saved to Firebase for UID: ${currentUser.uid}`);
+    } catch (err) {
+      console.error(`[Firebase Manual Sync Error] Failed for UID: ${currentUser.uid}:`, err);
       setSyncStatus('error');
+    } finally {
+      pendingSavePromiseRef.current = null;
     }
   };
 
   const handleGoogleSignIn = async () => {
     setAuthLoading(true);
     setAuthError(null);
+    setAuthSuccessMsg(null);
+    setUnauthorizedDomain(null);
     try {
       await signInWithGoogle();
     } catch (err: any) {
       console.warn('Google sign-in error:', err);
-      setAuthError(err.message || 'Google sign-in failed. Please try again.');
+      if (err?.code === 'auth/unauthorized-domain' || err?.message?.includes('unauthorized-domain')) {
+        const hostname = typeof window !== 'undefined' ? window.location.hostname : 'current domain';
+        setUnauthorizedDomain(hostname);
+        setAuthError(`Domain authorization required: "${hostname}" has not been added to Firebase Authorized Domains yet.`);
+      } else {
+        setAuthError(err.message || 'Google sign-in failed. Please try again.');
+      }
+    } finally {
+      setAuthLoading(false);
+    }
+  };
+
+  const handleGuestSignIn = async () => {
+    setAuthLoading(true);
+    setAuthError(null);
+    setAuthSuccessMsg(null);
+    setUnauthorizedDomain(null);
+    try {
+      await signInAsGuest();
+      setAuthSuccessMsg('Signed in as Guest! Full Firebase cloud sync is active.');
+    } catch (err: any) {
+      console.warn('Guest sign-in error:', err);
+      setAuthError(err.message || 'Guest sign-in failed. Please check Firebase settings.');
+    } finally {
+      setAuthLoading(false);
+    }
+  };
+
+  const handleEmailAuth = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!authEmail.trim() || !authPassword) {
+      setAuthError('Please enter both email and password.');
+      return;
+    }
+    setAuthLoading(true);
+    setAuthError(null);
+    setAuthSuccessMsg(null);
+    setUnauthorizedDomain(null);
+    try {
+      if (isAuthSignUp) {
+        await signUpWithEmail(authEmail, authPassword);
+        setAuthSuccessMsg(`Account created and signed in as ${authEmail}`);
+      } else {
+        await signInWithEmail(authEmail, authPassword);
+        setAuthSuccessMsg(`Signed in as ${authEmail}`);
+      }
+      setAuthEmail('');
+      setAuthPassword('');
+    } catch (err: any) {
+      console.warn('Email auth error:', err);
+      if (err?.code === 'auth/user-not-found' || err?.code === 'auth/invalid-credential' || err?.code === 'auth/wrong-password') {
+        setAuthError('Invalid email or password. If you do not have an account yet, switch to "Create Account" below.');
+      } else if (err?.code === 'auth/email-already-in-use') {
+        setAuthError('This email is already in use. Switch to "Sign In" or try another email.');
+      } else if (err?.code === 'auth/weak-password') {
+        setAuthError('Password must be at least 6 characters.');
+      } else if (err?.code === 'auth/operation-not-allowed') {
+        setAuthError('Email/Password provider is not enabled in Firebase Console. Please use Guest Sign In below!');
+      } else {
+        setAuthError(err.message || 'Authentication failed.');
+      }
     } finally {
       setAuthLoading(false);
     }
@@ -1714,39 +2075,43 @@ export default function App() {
   const handleLoadFromCloud = async () => {
     if (!currentUser) return;
     setSyncStatus('saving');
+    isRestoringRef.current = true;
     try {
       const cloudData = await loadUserDashboard(currentUser.uid);
-      if (cloudData && cloudData.config) {
-        setConfig(prev => ({
-          ...prev,
-          ...cloudData.config,
-          optionalFeatures: { ...DEFAULT_OPTIONAL_FEATURES, ...(cloudData.config.optionalFeatures || {}) },
-          personalization: { ...DEFAULT_PERSONALIZATION, ...(cloudData.config.personalization || {}) },
-          typography: {
-            ...DEFAULT_CONFIG.typography,
-            ...(cloudData.config.typography || {}),
-            elements: {
-              ...DEFAULT_ELEMENT_TYPOGRAPHY,
-              ...(cloudData.config.typography?.elements || {}),
-            },
-          },
-        }));
-        if (cloudData.tasks && Array.isArray(cloudData.tasks)) {
-          setTasks(cloudData.tasks);
-          localStorage.setItem('flocus_quick_tasks', JSON.stringify(cloudData.tasks));
-        }
+      if (cloudData && (cloudData.config || cloudData.tasks)) {
+        restoreDashboardFromCloudData(cloudData);
+        setSyncStatus('saved');
+        console.log(`[Firebase Manual Load] Dashboard successfully reloaded from cloud for UID: ${currentUser.uid}`);
+      } else {
+        console.log(`[Firebase Manual Load] No cloud data found for UID: ${currentUser.uid}`);
         setSyncStatus('saved');
       }
     } catch (err) {
-      console.warn('Load from cloud error:', err);
+      console.error(`[Firebase Manual Load Error] Failed for UID: ${currentUser.uid}:`, err);
       setSyncStatus('error');
+    } finally {
+      setTimeout(() => {
+        isRestoringRef.current = false;
+        restoredUserUidRef.current = currentUser.uid;
+      }, 350);
     }
   };
 
   const handleSignOut = async () => {
     try {
+      if (pendingSavePromiseRef.current) {
+        console.log('[Firebase Auth] Awaiting pending save before logging out...');
+        await pendingSavePromiseRef.current;
+      }
       await logOutUser();
+      restoredUserUidRef.current = null;
       setSyncStatus('offline');
+      if (dailyRegistryUnsubRef.current) {
+        dailyRegistryUnsubRef.current();
+        dailyRegistryUnsubRef.current = null;
+      }
+      setDailyRegistryHistory({});
+      console.log('[Firebase Auth] Logged out successfully. Daily registry state cleared.');
     } catch (err) {
       console.warn('Sign out error:', err);
     }
@@ -1776,16 +2141,6 @@ export default function App() {
   }, [selectedQuoteDate]);
 
   const isViewingToday = selectedQuoteDate === todayLocalDateStr;
-
-  // 5. Persisted Favourite Quotes (stored in localStorage and synced)
-  const [favouriteQuotes, setFavouriteQuotes] = useState<string[]>(() => {
-    try {
-      const saved = localStorage.getItem('flocus_favourite_quotes');
-      return saved ? JSON.parse(saved) : [];
-    } catch {
-      return [];
-    }
-  });
 
   const isCurrentQuoteFavorited = favouriteQuotes.includes(selectedQuoteDate);
 
@@ -2041,8 +2396,40 @@ export default function App() {
       setJustCompletedTaskId(prev => (prev === id ? null : prev));
     }, 750);
 
-    if (willBeCompleted) {
+    if (willBeCompleted && target) {
       playWebAudioChime('task');
+      if (currentUser) {
+        const today = getLocalDateString();
+        const now = new Date();
+        const timeStr = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+
+        recordDailyRegistryActivity({
+          timestamp: now.toISOString(),
+          time: timeStr,
+          eventType: 'task_completed',
+          description: `Completed task: ${target.text}`,
+          subject: (target as any).subject || 'General',
+          durationMinutes: 15,
+          status: 'completed',
+        }, today);
+
+        const currentDay = dailyRegistryHistory[today];
+        const existingCompleted = currentDay?.completedTasks || [];
+        const nextCompleted = [
+          ...existingCompleted.filter(t => t.id !== target.id),
+          {
+            id: target.id,
+            text: target.text,
+            completedAt: now.toISOString(),
+            subject: (target as any).subject || 'General',
+          },
+        ];
+
+        saveDailyRegistryDay(currentUser.uid, today, {
+          completedTasks: nextCompleted,
+          updatedAt: now.toISOString(),
+        }).catch(() => {});
+      }
     }
 
     saveTasksList(prev => {
@@ -2144,6 +2531,45 @@ export default function App() {
               }
               return next;
             });
+
+            // Automatically record study session into Firebase Daily Registry
+            if (currentUser) {
+              const today = getLocalDateString();
+              const now = new Date();
+              const timeStr = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+              const sessionMins = Math.round(pomoTotalSeconds / 60) || 25;
+
+              recordDailyRegistryActivity({
+                timestamp: now.toISOString(),
+                time: timeStr,
+                eventType: 'study_session',
+                description: `Completed ${sessionMins}m Pomodoro Focus Sprint`,
+                subject: 'Study Session',
+                durationMinutes: sessionMins,
+                status: 'completed',
+                rating: 5,
+              }, today);
+
+              const currentDay = dailyRegistryHistory[today];
+              const existingSessions = currentDay?.studySessions || [];
+              const nextSessions = [
+                ...existingSessions,
+                {
+                  id: `session_${Date.now()}`,
+                  mode: 'focus',
+                  durationMinutes: sessionMins,
+                  completedAt: now.toISOString(),
+                  subject: 'Focus Sprint',
+                },
+              ];
+              const totalMins = (currentDay?.totalStudyMinutes || 0) + sessionMins;
+
+              saveDailyRegistryDay(currentUser.uid, today, {
+                studySessions: nextSessions,
+                totalStudyMinutes: totalMins,
+                updatedAt: now.toISOString(),
+              }).catch(() => {});
+            }
           }
 
           return 0;
@@ -2153,7 +2579,7 @@ export default function App() {
     }, 1000);
 
     return () => clearInterval(interval);
-  }, [isPomoRunning, pomoMode, pomoSoundEnabled]);
+  }, [isPomoRunning, pomoMode, pomoSoundEnabled, currentUser, pomoTotalSeconds, recordDailyRegistryActivity, dailyRegistryHistory]);
 
   const handleDeleteTask = (id: string) => {
     saveTasksList(prev => prev.filter(task => task.id !== id));
@@ -2494,6 +2920,9 @@ export default function App() {
       } else if (key === 'v') {
         e.preventDefault();
         setStudioOpen(prev => !prev);
+      } else if (key === 'd') {
+        e.preventDefault();
+        setHistoryModalOpen(prev => !prev);
       } else if (key === 'c') {
         e.preventDefault();
         recenterWidgets();
@@ -2507,6 +2936,7 @@ export default function App() {
       } else if (key === 'escape') {
         setCommandMenuOpen(false);
         setDrawerOpen(false);
+        setHistoryModalOpen(false);
         setZenMode(false);
         setPlacementModal(null);
         setContextMenu(null);
@@ -3047,6 +3477,14 @@ export default function App() {
         available: config.optionalFeatures.focusMode,
       },
       {
+        id: 'daily-registry',
+        label: 'Open Daily Registry & Personal History',
+        category: 'Study',
+        shortcut: 'D',
+        action: () => { setHistoryModalOpen(true); setCommandMenuOpen(false); },
+        available: true,
+      },
+      {
         id: 'timetable',
         label: 'Open Public Exam Timetable',
         category: 'Study',
@@ -3286,6 +3724,19 @@ export default function App() {
           className="p-2.5 sm:p-3 min-w-[44px] min-h-[44px] sm:min-w-[48px] sm:min-h-[48px] rounded-2xl hud-btn cursor-pointer flex items-center justify-center bg-black/40 hover:bg-black/60 border border-white/10 text-emerald-300 hover:text-emerald-200 transition shadow-sm"
         >
           <Palette className="w-4 h-4 sm:w-5 sm:h-5" />
+        </button>
+
+        {/* Daily Registry & Personal History Button */}
+        <button
+          onClick={() => setHistoryModalOpen(true)}
+          title="Daily Registry & Personal History (Firebase Persistent Study Records)"
+          aria-label="Open Daily Registry & Personal History"
+          className="p-2.5 sm:p-3 min-w-[44px] min-h-[44px] sm:min-w-[48px] sm:min-h-[48px] rounded-2xl hud-btn cursor-pointer flex items-center justify-center bg-cyan-500/15 hover:bg-cyan-500/30 border border-cyan-400/40 text-cyan-300 transition shadow-[0_0_15px_rgba(6,182,212,0.2)] relative"
+        >
+          <BookOpen className="w-4 h-4 sm:w-5 sm:h-5 text-cyan-300" />
+          {Object.keys(dailyRegistryHistory).length > 0 && (
+            <span className="absolute -top-1 -right-1 w-2 h-2 rounded-full bg-cyan-400" />
+          )}
         </button>
 
         {/* Fullscreen Mode Icon */}
@@ -4465,17 +4916,17 @@ export default function App() {
             </div>
 
             <div className="flex items-center gap-1.5">
-              {/* Separate Section Trigger: View Daily Summary */}
+              {/* Separate Section Trigger: View Daily Registry & Personal History */}
               <button
                 type="button"
-                onClick={() => setDailySummaryOpen(true)}
-                title="Open Daily Summary & Study History"
-                className="px-2.5 py-1 rounded-lg bg-emerald-500/20 hover:bg-emerald-500/35 text-emerald-300 hover:text-white border border-emerald-500/40 text-[10px] font-bold transition cursor-pointer flex items-center gap-1 shadow-sm"
+                onClick={() => setHistoryModalOpen(true)}
+                title="Open Daily Registry & Personal History (Firebase Persistent)"
+                className="px-2.5 py-1 rounded-lg bg-cyan-500/20 hover:bg-cyan-500/35 text-cyan-300 hover:text-white border border-cyan-500/40 text-[10px] font-bold transition cursor-pointer flex items-center gap-1 shadow-sm"
               >
-                <FileText className="w-3 h-3 text-emerald-400" />
-                <span>Daily Summary</span>
-                <span className="ml-0.5 px-1 py-0.2 rounded-full bg-emerald-400/30 text-[9px]">
-                  {dailyRegisterEntries.length}
+                <BookOpen className="w-3 h-3 text-cyan-400" />
+                <span>Daily Registry & History</span>
+                <span className="ml-0.5 px-1 py-0.2 rounded-full bg-cyan-400/30 text-[9px]">
+                  {Object.keys(dailyRegistryHistory).length > 0 ? Object.keys(dailyRegistryHistory).length : dailyRegisterEntries.length}
                 </span>
               </button>
 
@@ -4626,10 +5077,10 @@ export default function App() {
             </span>
             <button
               type="button"
-              onClick={() => setDailySummaryOpen(true)}
-              className="text-emerald-300 hover:text-emerald-200 underline cursor-pointer"
+              onClick={() => setHistoryModalOpen(true)}
+              className="text-cyan-300 hover:text-cyan-200 underline cursor-pointer"
             >
-              View Daily Summary ({dailyRegisterEntries.length}) →
+              Open Daily Registry & History ({Object.keys(dailyRegistryHistory).length || dailyRegisterEntries.length} Days) →
             </button>
           </div>
 
@@ -5167,6 +5618,25 @@ export default function App() {
                 <div className="text-[10px] text-white/50">{formatMinutesSeconds(pomoSecondsLeft)}</div>
               </div>
             </button>
+
+            {/* 7. Daily Registry & History Quick Button */}
+            <button
+              type="button"
+              onClick={() => { setHistoryModalOpen(true); setDrawerOpen(false); }}
+              className="flex items-center gap-2 p-2.5 rounded-xl bg-cyan-500/10 hover:bg-cyan-500/25 border border-cyan-500/30 text-cyan-300 text-xs font-medium transition cursor-pointer text-left col-span-2 sm:col-span-3 min-h-[44px]"
+              title="Open Daily Registry & Personal History"
+            >
+              <BookOpen className="w-4 h-4 text-cyan-400 shrink-0" />
+              <div className="flex-1 flex items-center justify-between">
+                <div>
+                  <span className="font-semibold text-white text-xs">Daily Registry & Personal History</span>
+                  <span className="text-[10px] text-cyan-300/80 block">Firebase Persistent Daily Study Records</span>
+                </div>
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-mono font-bold bg-cyan-500/20 text-cyan-300 border border-cyan-500/30">
+                  {Object.keys(dailyRegistryHistory).length} Days Logged
+                </span>
+              </div>
+            </button>
           </div>
         </div>
 
@@ -5227,6 +5697,14 @@ export default function App() {
             }`}
           >
             Firebase
+          </button>
+          <button
+            onClick={() => setActiveTab('registry')}
+            className={`py-1.5 rounded-lg transition cursor-pointer truncate px-0.5 ${
+              activeTab === 'registry' ? 'text-white bg-cyan-500/25 border border-cyan-400/50 shadow-[0_0_10px_rgba(6,182,212,0.2)]' : 'text-cyan-400/80 hover:text-cyan-300 font-semibold'
+            }`}
+          >
+            Registry
           </button>
           <button
             onClick={() => setActiveTab('clock')}
@@ -5816,8 +6294,8 @@ export default function App() {
         {activeTab === 'cloud' && (
           <div className="space-y-6">
             <div className="pb-1">
-              <h3 className="text-xs font-bold uppercase tracking-wider text-white">Firebase Cloud Firestore Storage</h3>
-              <p className="text-[11px] text-white/50">Private cloud persistence under users/{'{uid}'}/dashboard/data</p>
+              <h3 className="text-xs font-bold uppercase tracking-wider text-white">Firebase Realtime & Cloud Storage</h3>
+              <p className="text-[11px] text-white/50">Primary: users/{'{uid}'}/dashboard • Redundancy: users/{'{uid}'}/dashboard/data</p>
             </div>
 
             {authError && (
@@ -5835,7 +6313,7 @@ export default function App() {
                     <span className="text-xs font-semibold text-white">Live Firebase Auto-Sync</span>
                   </div>
                   <p className="text-[11px] text-white/50 mt-0.5">
-                    Automatically saves and syncs widget layouts, themes, notes, and tasks
+                    Automatically saves and syncs widget layouts, wallpapers, themes, notes, and tasks
                   </p>
                 </div>
                 <button
@@ -5891,9 +6369,51 @@ export default function App() {
                       : 'bg-white/10 text-white/50'
                   }`}
                 >
-                  {syncStatus === 'saved' ? '● Auto-Synced to Firestore' : syncStatus === 'saving' ? '⟳ Syncing...' : 'Local Storage Only'}
+                  {syncStatus === 'saved' ? '● Synced to Firebase' : syncStatus === 'saving' ? '⟳ Syncing...' : 'Local Storage Only'}
                 </span>
               </div>
+
+              {authSuccessMsg && (
+                <div className="p-3 rounded-xl text-xs bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 flex items-center gap-2">
+                  <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-400" />
+                  <span>{authSuccessMsg}</span>
+                </div>
+              )}
+
+              {unauthorizedDomain && (
+                <div className="p-3.5 rounded-2xl bg-amber-500/10 border border-amber-500/30 text-xs space-y-2.5">
+                  <div className="flex items-start gap-2">
+                    <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+                    <div>
+                      <div className="font-semibold text-amber-200">Firebase OAuth Domain Setup Needed</div>
+                      <div className="text-[11px] text-amber-300/70 mt-0.5">
+                        Google Sign-In requires your preview domain to be authorized in Firebase Console.
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-2 bg-black/40 p-2 rounded-xl border border-white/10 font-mono text-[11px] text-white/90">
+                    <span className="truncate flex-1 select-all">{unauthorizedDomain}</span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        navigator.clipboard.writeText(unauthorizedDomain);
+                        setCopiedDomain(true);
+                        setTimeout(() => setCopiedDomain(false), 2000);
+                      }}
+                      className="px-2 py-1 bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 rounded-lg font-sans text-[10px] font-semibold flex items-center gap-1 shrink-0 transition cursor-pointer"
+                    >
+                      {copiedDomain ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
+                      <span>{copiedDomain ? 'Copied!' : 'Copy Domain'}</span>
+                    </button>
+                  </div>
+
+                  <div className="text-[11px] text-white/60 space-y-1">
+                    <p><strong>To enable Google Sign-In:</strong> Go to <em>Firebase Console &gt; Authentication &gt; Settings &gt; Authorized domains &gt; Add domain</em> and paste the preview hostname above.</p>
+                    <p className="text-emerald-300"><strong>Or test immediately:</strong> Use the <em>Guest Sign-In</em> below to test full Realtime Database saves, restores, and refreshes right now with no domain setup required!</p>
+                  </div>
+                </div>
+              )}
 
               {currentUser ? (
                 <div className="space-y-3">
@@ -5903,20 +6423,26 @@ export default function App() {
                         <img src={currentUser.photoURL} alt="User" className="w-8 h-8 rounded-full border border-white/20" />
                       ) : (
                         <div className="w-8 h-8 rounded-full bg-cyan-500/20 border border-cyan-400/30 flex items-center justify-center text-cyan-300 font-bold">
-                          {currentUser.displayName ? currentUser.displayName[0] : 'U'}
+                          {currentUser.isAnonymous ? 'G' : currentUser.email ? currentUser.email[0].toUpperCase() : 'U'}
                         </div>
                       )}
                       <div className="min-w-0 flex-1">
-                        <div className="font-semibold text-white truncate">
-                          {currentUser.displayName || currentUser.email || 'Authenticated User'}
+                        <div className="font-semibold text-white truncate flex items-center gap-1.5">
+                          <span>{currentUser.isAnonymous ? 'Guest Account (Authenticated)' : (currentUser.displayName || currentUser.email || 'Authenticated User')}</span>
+                          {currentUser.isAnonymous && (
+                            <span className="px-1.5 py-0.5 rounded text-[9px] bg-amber-500/20 text-amber-300 font-normal">Guest</span>
+                          )}
                         </div>
                         <div className="text-[10px] text-white/40 truncate">
-                          {currentUser.email}
+                          {currentUser.isAnonymous ? `Cloud UID: ${currentUser.uid}` : currentUser.email}
                         </div>
                       </div>
                     </div>
-                    <div className="pt-1 text-[10px] text-cyan-300/80 font-mono truncate">
-                      Firestore Path: users/{currentUser.uid}/dashboard/data
+                    <div className="pt-1 text-[10px] text-cyan-300/90 font-mono truncate">
+                      RTDB: users/{currentUser.uid}/dashboard
+                    </div>
+                    <div className="text-[10px] text-white/40 font-mono truncate">
+                      Firestore: users/{currentUser.uid}/dashboard/data
                     </div>
                   </div>
 
@@ -5933,7 +6459,7 @@ export default function App() {
                       className="py-2 px-3 rounded-xl bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 font-semibold text-xs border border-emerald-500/40 transition cursor-pointer flex items-center justify-center gap-1.5"
                     >
                       <Download className="w-3.5 h-3.5" />
-                      <span>Load from Cloud</span>
+                      <span>Restore from Cloud</span>
                     </button>
                   </div>
 
@@ -5948,9 +6474,10 @@ export default function App() {
               ) : (
                 <div className="space-y-3 pt-1">
                   <p className="text-xs text-white/60 leading-relaxed">
-                    Sign in with your Google account to automatically synchronize your timetable, study routine, quick tasks, daily motivation intentions, and widget layouts to your private Cloud Firestore database across devices.
+                    Sign in to your Firebase account to automatically save and restore widget layouts, wallpapers, custom studio themes, study timetables, tasks, and notes across sessions.
                   </p>
 
+                  {/* 1. Google Sign-In */}
                   <button
                     disabled={authLoading}
                     onClick={handleGoogleSignIn}
@@ -5962,8 +6489,81 @@ export default function App() {
                       <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z" />
                       <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z" />
                     </svg>
-                    <span>{authLoading ? 'Signing in...' : 'Sign In with Google'}</span>
+                    <span>{authLoading ? 'Connecting...' : 'Sign In with Google'}</span>
                   </button>
+
+                  {/* 2. Instant Guest Sign-In */}
+                  <button
+                    disabled={authLoading}
+                    onClick={handleGuestSignIn}
+                    className="w-full py-2.5 px-4 rounded-xl bg-cyan-500/20 hover:bg-cyan-500/30 text-cyan-300 border border-cyan-500/40 font-semibold text-xs transition cursor-pointer flex items-center justify-center gap-2 shadow-sm disabled:opacity-50"
+                  >
+                    <Zap className="w-4 h-4 text-cyan-400" />
+                    <span>{authLoading ? 'Connecting...' : '⚡ Quick Guest Sign-In (Instant Cloud Persistence)'}</span>
+                  </button>
+
+                  {/* 3. Email & Password Toggle Form */}
+                  <div className="pt-2">
+                    <button
+                      type="button"
+                      onClick={() => setShowEmailAuth(!showEmailAuth)}
+                      className="text-[11px] text-white/50 hover:text-white/80 transition flex items-center gap-1 mx-auto"
+                    >
+                      <Mail className="w-3.5 h-3.5" />
+                      <span>{showEmailAuth ? 'Hide Email / Password Options' : 'Or Sign In with Email / Password'}</span>
+                      {showEmailAuth ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+                    </button>
+
+                    {showEmailAuth && (
+                      <form onSubmit={handleEmailAuth} className="mt-3 p-3.5 rounded-xl bg-black/40 border border-white/10 space-y-3">
+                        <div className="text-[11px] font-semibold text-white/80">
+                          {isAuthSignUp ? 'Create New Firebase Account' : 'Sign In with Existing Account'}
+                        </div>
+
+                        <div className="space-y-2">
+                          <div className="relative">
+                            <Mail className="w-3.5 h-3.5 text-white/40 absolute left-3 top-2.5" />
+                            <input
+                              type="email"
+                              value={authEmail}
+                              onChange={e => setAuthEmail(e.target.value)}
+                              placeholder="student@example.com"
+                              required
+                              className="w-full pl-9 pr-3 py-2 rounded-lg bg-white/5 border border-white/15 text-xs text-white placeholder-white/30 focus:outline-none focus:border-cyan-400"
+                            />
+                          </div>
+                          <div className="relative">
+                            <Key className="w-3.5 h-3.5 text-white/40 absolute left-3 top-2.5" />
+                            <input
+                              type="password"
+                              value={authPassword}
+                              onChange={e => setAuthPassword(e.target.value)}
+                              placeholder="Password (min 6 chars)"
+                              required
+                              className="w-full pl-9 pr-3 py-2 rounded-lg bg-white/5 border border-white/15 text-xs text-white placeholder-white/30 focus:outline-none focus:border-cyan-400"
+                            />
+                          </div>
+                        </div>
+
+                        <div className="flex items-center justify-between gap-2 pt-1">
+                          <button
+                            type="button"
+                            onClick={() => setIsAuthSignUp(!isAuthSignUp)}
+                            className="text-[10px] text-cyan-300 hover:underline"
+                          >
+                            {isAuthSignUp ? 'Already have account? Sign in' : 'Need account? Create new'}
+                          </button>
+                          <button
+                            type="submit"
+                            disabled={authLoading}
+                            className="px-4 py-1.5 rounded-lg bg-cyan-500 hover:bg-cyan-600 text-white font-semibold text-xs transition disabled:opacity-50"
+                          >
+                            {authLoading ? 'Working...' : isAuthSignUp ? 'Create Account' : 'Sign In'}
+                          </button>
+                        </div>
+                      </form>
+                    )}
+                  </div>
                 </div>
               )}
             </div>
@@ -5971,10 +6571,112 @@ export default function App() {
             <div className="p-4 rounded-2xl bg-white/[0.03] border border-white/10 space-y-2 text-xs">
               <div className="flex items-center gap-2 text-white font-semibold">
                 <Shield className="w-4 h-4 text-emerald-400" />
-                <span>Zero-Trust Firestore Security</span>
+                <span>Zero-Trust Firebase Security</span>
               </div>
               <p className="text-[11px] text-white/50 leading-relaxed">
-                Your study data is encrypted and isolated under Cloud Firestore path <code>users/{'{uid}'}/dashboard/data</code>. Hardened ABAC security rules verify that only your authenticated Google account can read or write your personal preparation files.
+                Your study data is encrypted and isolated under path <code>users/{'{uid}'}/dashboard</code>. Hardened ABAC security rules verify that only your authenticated account can read or write your personal dashboard state.
+              </p>
+            </div>
+          </div>
+        )}
+
+        {/* ================= TAB: FIREBASE DAILY REGISTRY & PERSONAL HISTORY ================= */}
+        {activeTab === 'registry' && (
+          <div className="space-y-5">
+            <div className="pb-1">
+              <h3 className="text-xs font-bold uppercase tracking-wider text-white flex items-center gap-2">
+                <BookOpen className="w-4 h-4 text-cyan-400" />
+                <span>Daily Registry & Personal History</span>
+              </h3>
+              <p className="text-[11px] text-white/50">
+                Primary: users/{'{uid}'}/dailyRegistry/{'{YYYY-MM-DD}'}
+              </p>
+            </div>
+
+            {/* Launch Full Modal Card */}
+            <div className="p-4 rounded-2xl bg-gradient-to-r from-cyan-950/40 to-black/60 border border-cyan-500/30 space-y-3">
+              <div className="flex items-start justify-between">
+                <div>
+                  <h4 className="text-sm font-bold text-white">Full Registry & History Page</h4>
+                  <p className="text-xs text-white/50 mt-0.5">
+                    Calendar browser, date picker, weekly/monthly analytics, end-of-day summary, and search filters
+                  </p>
+                </div>
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-mono font-bold bg-cyan-500/20 text-cyan-300 border border-cyan-500/30">
+                  {Object.keys(dailyRegistryHistory).length} Days Logged
+                </span>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setHistoryModalOpen(true)}
+                className="w-full py-2.5 px-4 rounded-xl bg-cyan-500 hover:bg-cyan-400 text-black font-bold text-xs transition cursor-pointer flex items-center justify-center gap-2 shadow-[0_0_20px_rgba(6,182,212,0.3)]"
+              >
+                <BookOpen className="w-4 h-4" />
+                <span>Open Full History & Calendar Viewer</span>
+              </button>
+            </div>
+
+            {/* Today's Snapshot Card */}
+            {(() => {
+              const todayStr = getLocalDateString();
+              const todayRec = dailyRegistryHistory[todayStr];
+              const entriesCount = todayRec?.entries ? Object.keys(todayRec.entries).length : 0;
+              return (
+                <div className="p-4 rounded-2xl bg-white/[0.03] border border-white/10 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <div className="text-xs font-bold text-white flex items-center gap-2">
+                        <span>Today's Registry</span>
+                        <span className="text-[10px] font-mono text-cyan-300">({todayStr})</span>
+                      </div>
+                      <div className="text-[10px] text-white/40">{todayRec?.dayOfWeek || getDayOfWeekName()}</div>
+                    </div>
+
+                    <span className="px-2 py-0.5 rounded-lg text-[10px] font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                      {Math.floor((todayRec?.totalStudyMinutes || 0) / 60)}h {(todayRec?.totalStudyMinutes || 0) % 60}m Studied
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-2 text-xs">
+                    <div className="p-2.5 rounded-xl bg-black/40 border border-white/5">
+                      <span className="text-[10px] text-white/40 block">Completed Tasks</span>
+                      <span className="font-bold text-emerald-300">{todayRec?.completedTasks?.length || 0} Finished</span>
+                    </div>
+                    <div className="p-2.5 rounded-xl bg-black/40 border border-white/5">
+                      <span className="text-[10px] text-white/40 block">Timeline Logs</span>
+                      <span className="font-bold text-cyan-300">{entriesCount} Recorded</span>
+                    </div>
+                  </div>
+
+                  {todayRec?.dailySummaryNotes && (
+                    <div className="p-2.5 rounded-xl bg-black/30 border border-white/5 text-xs text-white/70">
+                      <span className="text-[10px] font-bold text-white/40 block mb-0.5 uppercase tracking-wider">End-of-Day Notes:</span>
+                      <p className="line-clamp-2">{todayRec.dailySummaryNotes}</p>
+                    </div>
+                  )}
+
+                  <div className="pt-1 flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setHistoryModalOpen(true)}
+                      className="flex-1 py-1.5 px-3 rounded-lg bg-white/5 hover:bg-white/10 text-white text-xs font-semibold border border-white/10 transition cursor-pointer text-center"
+                    >
+                      View or Edit Today's Notes
+                    </button>
+                  </div>
+                </div>
+              );
+            })()}
+
+            {/* Zero-Trust Security info */}
+            <div className="p-4 rounded-2xl bg-white/[0.03] border border-white/10 space-y-2 text-xs">
+              <div className="flex items-center gap-2 text-white font-semibold">
+                <Shield className="w-4 h-4 text-emerald-400" />
+                <span>Strict User Ownership & Isolation</span>
+              </div>
+              <p className="text-[11px] text-white/50 leading-relaxed">
+                Daily records are stored under <code>users/{currentUser?.uid ? currentUser.uid.slice(0, 8) + '...' : '{uid}'}/dailyRegistry/{'{date}'}</code>. Firebase rules prevent any other user from accessing or modifying your personal registry.
               </p>
             </div>
           </div>
@@ -7195,6 +7897,21 @@ export default function App() {
           }}
           savedPresets={savedPresets}
           onUpdatePresets={handleUpdatePresets}
+        />
+      )}
+
+      {/* ================= DAILY REGISTRY & PERSONAL HISTORY MODAL ================= */}
+      {historyModalOpen && (
+        <DailyRegistryHistoryModal
+          isOpen={historyModalOpen}
+          onClose={() => setHistoryModalOpen(false)}
+          uid={currentUser?.uid || null}
+          userEmail={currentUser?.email || (currentUser?.isAnonymous ? 'Guest Student' : null)}
+          historyMap={dailyRegistryHistory}
+          onSaveDayNotes={handleSaveDayNotes}
+          onAddManualEntry={handleAddManualEntryModal}
+          onDeleteEntry={handleDeleteEntryModal}
+          activeTasks={tasks}
         />
       )}
     </div>

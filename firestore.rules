@@ -33,6 +33,16 @@ service cloud.firestore {
              data.updatedAt.size() <= 64;
     }
 
+    function isValidDailyRegistry(data) {
+      return data.userId is string &&
+             data.userId.size() <= 128 &&
+             data.userId == request.auth.uid &&
+             data.date is string &&
+             data.date.size() <= 32 &&
+             data.updatedAt is string &&
+             data.updatedAt.size() <= 64;
+    }
+
     // Initial connection test probe
     match /test/connection {
       allow read: if true;
@@ -44,6 +54,18 @@ service cloud.firestore {
       allow create: if isValidId(userId) && isOwner(userId) && isValidUserDashboard(incoming());
       allow update: if isValidId(userId) && isOwner(userId) && isValidUserDashboard(incoming()) && incoming().userId == resource.data.userId;
       allow delete: if isValidId(userId) && isOwner(userId);
+    }
+
+    // User personal Daily Registry & History documents
+    match /users/{userId}/dailyRegistry/{date} {
+      allow get, list: if isValidId(userId) && isOwner(userId);
+      allow create: if isValidId(userId) && isOwner(userId) && isValidDailyRegistry(incoming());
+      allow update: if isValidId(userId) && isOwner(userId) && isValidDailyRegistry(incoming()) && incoming().userId == resource.data.userId;
+      allow delete: if isValidId(userId) && isOwner(userId);
+    }
+
+    match /users/{userId}/dailyRegistry/{date}/{subDoc=**} {
+      allow read, write: if isValidId(userId) && isOwner(userId);
     }
   }
 }
