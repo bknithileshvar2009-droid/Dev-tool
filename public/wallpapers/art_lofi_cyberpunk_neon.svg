@@ -1,0 +1,72 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1920 1080" width="100%" height="100%">
+      <defs>
+        <linearGradient id="nightSky" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stop-color="#05030a"/>
+          <stop offset="60%" stop-color="#0f0920"/>
+          <stop offset="100%" stop-color="#180b33"/>
+        </linearGradient>
+        <linearGradient id="neonFloor" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stop-color="#080512"/>
+          <stop offset="100%" stop-color="#020105"/>
+        </linearGradient>
+        <linearGradient id="cyanNeon" x1="0" y1="0" x2="1" y2="0">
+          <stop offset="0%" stop-color="#00f0ff" stop-opacity="0.8"/>
+          <stop offset="100%" stop-color="#0080ff" stop-opacity="0.2"/>
+        </linearGradient>
+        <linearGradient id="pinkNeon" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stop-color="#ff007f"/>
+          <stop offset="100%" stop-color="#7000ff"/>
+        </linearGradient>
+      </defs>
+      <!-- Dark City Sky -->
+      <rect width="1920" height="720" fill="url(#nightSky)"/>
+      <!-- Wet Reflective Street Floor -->
+      <rect y="720" width="1920" height="360" fill="url(#neonFloor)"/>
+      <!-- Grid Perspective Floor Lines -->
+      <g stroke="#00f0ff" stroke-width="1" opacity="0.2">
+        <line x1="960" y1="720" x2="0" y2="1080"/>
+        <line x1="960" y1="720" x2="300" y2="1080"/>
+        <line x1="960" y1="720" x2="600" y2="1080"/>
+        <line x1="960" y1="720" x2="800" y2="1080"/>
+        <line x1="960" y1="720" x2="960" y2="1080"/>
+        <line x1="960" y1="720" x2="1120" y2="1080"/>
+        <line x1="960" y1="720" x2="1320" y2="1080"/>
+        <line x1="960" y1="720" x2="1620" y2="1080"/>
+        <line x1="960" y1="720" x2="1920" y2="1080"/>
+      </g>
+      <!-- Distant Skyscrapers & Neon Windows -->
+      <g fill="#0b0717">
+        <rect x="120" y="240" width="140" height="480"/>
+        <rect x="300" y="160" width="180" height="560"/>
+        <rect x="520" y="300" width="160" height="420"/>
+        <rect x="720" y="180" width="220" height="540"/>
+        <rect x="980" y="220" width="200" height="500"/>
+        <rect x="1220" y="140" width="190" height="580"/>
+        <rect x="1450" y="260" width="170" height="460"/>
+        <rect x="1660" y="200" width="160" height="520"/>
+      </g>
+      <!-- Neon Billboards & Japanese Glyphs -->
+      <rect x="320" y="180" width="60" height="120" fill="url(#pinkNeon)" opacity="0.9" rx="4"/>
+      <rect x="750" y="220" width="160" height="40" fill="#00f0ff" opacity="0.85" rx="4"/>
+      <rect x="1250" y="160" width="50" height="180" fill="#a855f7" opacity="0.9" rx="4"/>
+      <rect x="1480" y="290" width="110" height="50" fill="#f43f5e" opacity="0.85" rx="4"/>
+      <!-- Atmospheric Rain Streaks -->
+      <g stroke="#ffffff" stroke-width="0.8" opacity="0.25">
+        <line x1="200" y1="100" x2="180" y2="220"/>
+        <line x1="450" y1="200" x2="430" y2="340"/>
+        <line x1="720" y1="120" x2="700" y2="280"/>
+        <line x1="940" y1="300" x2="920" y2="440"/>
+        <line x1="1180" y1="80" x2="1160" y2="240"/>
+        <line x1="1400" y1="220" x2="1380" y2="380"/>
+        <line x1="1680" y1="140" x2="1660" y2="290"/>
+        <line x1="320" y1="420" x2="300" y2="560"/>
+        <line x1="840" y1="480" x2="820" y2="620"/>
+        <line x1="1310" y1="450" x2="1290" y2="600"/>
+        <line x1="1600" y1="400" x2="1580" y2="540"/>
+      </g>
+      <!-- Wet Road Light Reflections -->
+      <ellipse cx="350" cy="800" rx="80" ry="12" fill="#ff007f" opacity="0.35"/>
+      <ellipse cx="830" cy="840" rx="140" ry="18" fill="#00f0ff" opacity="0.4"/>
+      <ellipse cx="1275" cy="810" rx="90" ry="14" fill="#a855f7" opacity="0.35"/>
+      <ellipse cx="1535" cy="830" rx="110" ry="16" fill="#f43f5e" opacity="0.35"/>
+    </svg>

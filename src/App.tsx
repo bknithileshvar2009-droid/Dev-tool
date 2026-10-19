@@ -64,8 +64,20 @@ import {
   ChevronUp,
   ChevronDown,
   FileText,
+  Heart,
+  Bookmark,
+  Smartphone,
+  Laptop,
 } from 'lucide-react';
-import { MOTIVATION_QUOTES, MotivationQuote } from './utils/quotes';
+import {
+  DAILY_MOTIVATION_QUOTES,
+  DAILY_MOTIVATION_MAP,
+  MOTIVATION_QUOTES,
+  DailyMotivationQuote,
+  getTodayLocalDateString,
+  getQuoteForDate,
+  getAdjacentQuoteDate,
+} from './utils/quotes';
 import {
   auth,
   saveUserDashboard,
@@ -175,40 +187,64 @@ interface CuratedWallpaper {
 
 const CURATED_WALLPAPERS: CuratedWallpaper[] = [
   {
-    id: 'lofi-tokyo',
+    id: 'jp-tokyo-cyberpunk',
     title: 'Cyber Tokyo Night',
-    thumb: 'https://images.unsplash.com/photo-1509198397868-475647b2a1e5?auto=format&fit=crop&w=400&q=80',
-    url: 'https://images.unsplash.com/photo-1509198397868-475647b2a1e5?auto=format&fit=crop&w=2400&q=85',
+    thumb: '/wallpapers/jp_tokyo_cyberpunk.jpg',
+    url: '/wallpapers/jp_tokyo_cyberpunk.jpg',
   },
   {
-    id: 'misty-forest',
-    title: 'Misty Alpine Pines',
-    thumb: 'https://images.unsplash.com/photo-1448375240586-882707db888b?auto=format&fit=crop&w=400&q=80',
-    url: 'https://images.unsplash.com/photo-1448375240586-882707db888b?auto=format&fit=crop&w=2400&q=85',
+    id: 'art-anime-cherry-blossom',
+    title: 'Mount Fuji & Cherry Blossoms (Vector)',
+    thumb: '/wallpapers/art_anime_cherry_blossom.svg',
+    url: '/wallpapers/art_anime_cherry_blossom.svg',
   },
   {
-    id: 'space-stars',
+    id: 'kr-seoul-night',
+    title: 'Seoul Han River Skyline',
+    thumb: '/wallpapers/kr_seoul_night.jpg',
+    url: '/wallpapers/kr_seoul_night.jpg',
+  },
+  {
+    id: 'kr-cozy-desk',
+    title: 'Korean Warm Study Desk',
+    thumb: '/wallpapers/kr_cozy_desk.jpg',
+    url: '/wallpapers/kr_cozy_desk.jpg',
+  },
+  {
+    id: 'cn-misty-mountains',
+    title: 'Guilin Karst Mountains & Mist',
+    thumb: '/wallpapers/cn_misty_mountains.jpg',
+    url: '/wallpapers/cn_misty_mountains.jpg',
+  },
+  {
+    id: 'cn-traditional-lanterns',
+    title: 'Traditional Chinese Lanterns',
+    thumb: '/wallpapers/cn_traditional_lanterns.jpg',
+    url: '/wallpapers/cn_traditional_lanterns.jpg',
+  },
+  {
+    id: 'art-lofi-cyberpunk-neon',
+    title: 'Lofi Cyberpunk Neon Grid (Vector)',
+    thumb: '/wallpapers/art_lofi_cyberpunk_neon.svg',
+    url: '/wallpapers/art_lofi_cyberpunk_neon.svg',
+  },
+  {
+    id: 'focus-alpine-pines',
+    title: 'Misty Alpine Pines & Fog',
+    thumb: '/wallpapers/focus_alpine_pines.jpg',
+    url: '/wallpapers/focus_alpine_pines.jpg',
+  },
+  {
+    id: 'focus-milky-way',
     title: 'Milky Way Observatory',
-    thumb: 'https://images.unsplash.com/photo-1506703719100-a0f3a48c0f86?auto=format&fit=crop&w=400&q=80',
-    url: 'https://images.unsplash.com/photo-1506703719100-a0f3a48c0f86?auto=format&fit=crop&w=2400&q=85',
+    thumb: '/wallpapers/focus_milky_way.jpg',
+    url: '/wallpapers/focus_milky_way.jpg',
   },
   {
-    id: 'minimal-gradient',
-    title: 'Sunset Gradient Calm',
-    thumb: 'https://images.unsplash.com/photo-1518495973542-4542c06a5843?auto=format&fit=crop&w=400&q=80',
-    url: 'https://images.unsplash.com/photo-1518495973542-4542c06a5843?auto=format&fit=crop&w=2400&q=85',
-  },
-  {
-    id: 'lofi-rain',
-    title: 'Cozy Rain Cafe',
-    thumb: 'https://images.unsplash.com/photo-1515694346937-94d85e41e6f0?auto=format&fit=crop&w=400&q=80',
-    url: 'https://images.unsplash.com/photo-1515694346937-94d85e41e6f0?auto=format&fit=crop&w=2400&q=85',
-  },
-  {
-    id: 'fuji-dawn',
-    title: 'Mount Fuji Twilight',
-    thumb: 'https://images.unsplash.com/photo-1493976040374-85c8e12f0c0e?auto=format&fit=crop&w=400&q=80',
-    url: 'https://images.unsplash.com/photo-1493976040374-85c8e12f0c0e?auto=format&fit=crop&w=2400&q=85',
+    id: 'focus-golden-sunset',
+    title: 'Sunset Gradient Calm Horizon',
+    thumb: '/wallpapers/focus_golden_sunset.jpg',
+    url: '/wallpapers/focus_golden_sunset.jpg',
   },
 ];
 
@@ -453,8 +489,8 @@ interface DashboardConfig {
 }
 
 const DEFAULT_CONFIG: DashboardConfig = {
-  activeWallpaper: 'lofi-tokyo',
-  wallpaperUrl: 'https://images.unsplash.com/photo-1518495973542-4542c06a5843?auto=format&fit=crop&w=2400&q=85',
+  activeWallpaper: 'jp-tokyo-cyberpunk',
+  wallpaperUrl: '/wallpapers/jp_tokyo_cyberpunk.jpg',
   canvasTheme: 'minimal',
   bgDimmer: 35,
   bgBlur: 0,
@@ -1713,18 +1749,81 @@ export default function App() {
     }
   };
 
-  // ================= 1. DAILY MOTIVATION =================
-  const currentQuote = MOTIVATION_QUOTES[config.motivation.quoteIndex % MOTIVATION_QUOTES.length];
+  // ================= 1. UNIQUE DAILY MOTIVATIONAL QUOTE SYSTEM =================
+  // 1. Device's local calendar date in unambiguous YYYY-MM-DD format
+  const todayLocalDateStr = useMemo(() => getTodayLocalDateString(currentTime), [currentTime]);
 
-  const handleNextQuote = () => {
-    updateConfig(prev => ({
-      ...prev,
-      motivation: {
-        ...prev.motivation,
-        quoteIndex: (prev.motivation.quoteIndex + 1) % MOTIVATION_QUOTES.length,
-      },
-    }));
-  };
+  // 2. Currently viewed quote date (strictly defaults to today's local date)
+  const [selectedQuoteDate, setSelectedQuoteDate] = useState<string>(() => getTodayLocalDateString());
+
+  // 3. Automatically update displayed quote when device's local calendar date changes (e.g. crossing midnight)
+  const prevTodayDateRef = useRef(todayLocalDateStr);
+  useEffect(() => {
+    if (prevTodayDateRef.current !== todayLocalDateStr) {
+      if (selectedQuoteDate === prevTodayDateRef.current) {
+        setSelectedQuoteDate(todayLocalDateStr);
+      }
+      prevTodayDateRef.current = todayLocalDateStr;
+    }
+  }, [todayLocalDateStr, selectedQuoteDate]);
+
+  // 4. Retrieve unique daily quote for the selected date
+  const activeQuote: DailyMotivationQuote = useMemo(() => {
+    return getQuoteForDate(selectedQuoteDate);
+  }, [selectedQuoteDate]);
+
+  const isViewingToday = selectedQuoteDate === todayLocalDateStr;
+
+  // 5. Persisted Favourite Quotes (stored in localStorage and synced)
+  const [favouriteQuotes, setFavouriteQuotes] = useState<string[]>(() => {
+    try {
+      const saved = localStorage.getItem('flocus_favourite_quotes');
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
+  });
+
+  const isCurrentQuoteFavorited = favouriteQuotes.includes(selectedQuoteDate);
+
+  const handleToggleFavouriteQuote = useCallback((dateStr: string) => {
+    setFavouriteQuotes(prev => {
+      const isFav = prev.includes(dateStr);
+      const next = isFav ? prev.filter(d => d !== dateStr) : [...prev, dateStr];
+      try {
+        localStorage.setItem('flocus_favourite_quotes', JSON.stringify(next));
+      } catch {
+        // ignore
+      }
+      return next;
+    });
+  }, []);
+
+  // 6. Date Navigation Handlers
+  const handlePrevQuoteDate = useCallback(() => {
+    setSelectedQuoteDate(prev => getAdjacentQuoteDate(prev, -1));
+  }, []);
+
+  const handleNextQuoteDate = useCallback(() => {
+    setSelectedQuoteDate(prev => getAdjacentQuoteDate(prev, 1));
+  }, []);
+
+  const handleResetQuoteToToday = useCallback(() => {
+    setSelectedQuoteDate(todayLocalDateStr);
+  }, [todayLocalDateStr]);
+
+  // Backward compatibility alias for command menu
+  const handleNextQuote = handleNextQuoteDate;
+
+  // 7. Copy quote text to clipboard with feedback
+  const [quoteCopied, setQuoteCopied] = useState(false);
+  const handleCopyQuote = useCallback(() => {
+    if (!activeQuote) return;
+    const formatted = `"${activeQuote.quote}"\n— [${activeQuote.category} • ${activeQuote.date}]`;
+    navigator.clipboard.writeText(formatted).catch(() => {});
+    setQuoteCopied(true);
+    setTimeout(() => setQuoteCopied(false), 2000);
+  }, [activeQuote]);
 
   // ================= 3. BACKUP & RESTORE =================
   const handleExportBackup = () => {
@@ -2993,9 +3092,23 @@ export default function App() {
       },
       {
         id: 'next-quote',
-        label: 'Show Another Motivational Quote',
+        label: "Browse Next Day's Motivational Quote",
         category: 'Motivation',
-        action: () => { handleNextQuote(); setCommandMenuOpen(false); },
+        action: () => { handleNextQuoteDate(); setCommandMenuOpen(false); },
+        available: config.optionalFeatures.dailyMotivation,
+      },
+      {
+        id: 'prev-quote',
+        label: "Browse Previous Day's Motivational Quote",
+        category: 'Motivation',
+        action: () => { handlePrevQuoteDate(); setCommandMenuOpen(false); },
+        available: config.optionalFeatures.dailyMotivation,
+      },
+      {
+        id: 'today-quote',
+        label: "Return to Today's Motivational Quote",
+        category: 'Motivation',
+        action: () => { handleResetQuoteToToday(); setCommandMenuOpen(false); },
         available: config.optionalFeatures.dailyMotivation,
       },
       {
@@ -3054,7 +3167,7 @@ export default function App() {
     if (!commandSearch.trim()) return list;
     const q = commandSearch.toLowerCase();
     return list.filter(item => item.label.toLowerCase().includes(q) || item.category.toLowerCase().includes(q));
-  }, [commandSearch, isFocusModeActive, isPomoRunning, config.optionalFeatures, config.routineMode, config.calendar.visible, recenterWidgets, handleToggleFocusMode, toggleRoutineMode, handleNextQuote, updateConfig, togglePomodoro, resetPomodoro]);
+  }, [commandSearch, isFocusModeActive, isPomoRunning, config.optionalFeatures, config.routineMode, config.calendar.visible, recenterWidgets, handleToggleFocusMode, toggleRoutineMode, handleNextQuoteDate, handlePrevQuoteDate, handleResetQuoteToToday, updateConfig, togglePomodoro, resetPomodoro]);
 
   const handleCommandKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'ArrowDown') {
@@ -3080,7 +3193,9 @@ export default function App() {
       id="app"
       onContextMenu={handleContextMenu}
       onClick={handleDashboardClick}
-      className={`relative w-screen h-screen min-h-screen h-[100dvh] overflow-hidden select-none bg-[#030407] text-slate-100 ${
+      className={`relative w-screen h-screen min-h-screen h-[100dvh] ${
+        isMobileScreen ? 'overflow-y-auto overflow-x-hidden' : 'overflow-hidden'
+      } select-none bg-[#030407] text-slate-100 ${
         isFullscreen ? 'is-fullscreen' : ''
       } ${
         isPlacementModeActive ? 'cursor-crosshair' : !config.optionalFeatures.widgetCustomization ? 'cursor-default' : ''
@@ -3100,9 +3215,14 @@ export default function App() {
         scaling={config.wallpaperScaling || 'cover'}
         controls={config.animationControls}
         activeThemeId={config.activeThemeId}
+        onWallpaperFallback={fallbackUrl => {
+          updateConfig(prev => ({
+            ...prev,
+            wallpaperUrl: fallbackUrl,
+            activeWallpaper: 'jp-tokyo-cyberpunk',
+          }));
+        }}
       />
-
-
 
       {/* ================= FLOATING ACTION CONTROLS (TOP RIGHT CORNER) ================= */}
       <div
@@ -3112,6 +3232,22 @@ export default function App() {
           isFullscreen ? 'hidden pointer-events-none opacity-0' : 'flex'
         }`}
       >
+        {/* Responsive Screen Auto-Fit Button (Laptop / Mobile) */}
+        <button
+          onClick={() => {
+            if (isMobileScreen) {
+              applyMobileFitLayout();
+            } else {
+              applyLaptopFitLayout();
+            }
+          }}
+          title={isMobileScreen ? 'Fit all widgets perfectly for Mobile Screen' : 'Fit all widgets perfectly for Laptop Screen'}
+          aria-label="Responsive Layout Auto-Fit"
+          className="p-2.5 sm:p-3 min-w-[44px] min-h-[44px] sm:min-w-[48px] sm:min-h-[48px] rounded-2xl hud-btn cursor-pointer flex items-center justify-center bg-black/40 hover:bg-black/60 border border-white/10 text-cyan-300 hover:text-white transition shadow-sm"
+        >
+          {isMobileScreen ? <Smartphone className="w-4 h-4 sm:w-5 sm:h-5 text-amber-400" /> : <Laptop className="w-4 h-4 sm:w-5 sm:h-5 text-cyan-400" />}
+        </button>
+
         {/* Click-to-Add Placement Mode Button */}
         <button
           onClick={() => {
@@ -3219,10 +3355,11 @@ export default function App() {
             config.optionalFeatures.widgetCustomization ? 'cursor-grab active:cursor-grabbing' : 'cursor-default'
           } ${getWidgetMaterialClass(config.motivation.glassBg)} ${focusedWidget === 'motivation' ? 'widget-focused' : ''} ${radiusClass}`}
           style={{
-            width: config.motivation.width || 440,
-            height: config.motivation.height || 140,
-            left: config.motivation.x ?? 30,
-            top: config.motivation.y ?? 24,
+            width: isMobileScreen ? Math.min(viewportWidth - 24, config.motivation.width || 480) : (config.motivation.width || 480),
+            height: isMobileScreen ? 'auto' : (config.motivation.height || 165),
+            minHeight: isMobileScreen ? 140 : 155,
+            left: isMobileScreen ? 12 : (config.motivation.x ?? 30),
+            top: isMobileScreen ? (config.motivation.y ?? 24) : (config.motivation.y ?? 24),
             ...getWidgetComputedStyle('motivation'),
           }}
         >
@@ -3244,30 +3381,127 @@ export default function App() {
             </>
           )}
 
-          <div className="flex items-center justify-between no-drag">
-            <div className="flex items-center gap-1.5 text-[10px] uppercase font-bold tracking-widest text-amber-300/90 font-['Plus_Jakarta_Sans']">
-              <Quote className="w-3 h-3 text-amber-400" />
-              <span>DAILY MOTIVATION</span>
+          {/* Top Bar with Date, Category, and Navigation Controls */}
+          <div className="flex items-center justify-between no-drag pb-2 border-b border-white/10 gap-2 flex-wrap">
+            <div className="flex items-center gap-2 min-w-0">
+              <div className="flex items-center gap-1.5 text-[10px] uppercase font-bold tracking-widest text-amber-300 font-['Plus_Jakarta_Sans'] shrink-0">
+                <Quote className="w-3.5 h-3.5 text-amber-400" />
+                <span className="hidden xs:inline">DAILY QUOTE</span>
+              </div>
+
+              {/* Exact Calendar Date Pill */}
+              <span
+                className={`px-2 py-0.5 rounded-md text-[10px] font-mono tracking-wide font-medium flex items-center gap-1 shrink-0 ${
+                  isViewingToday
+                    ? 'bg-amber-400/20 text-amber-300 border border-amber-400/35'
+                    : 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/35'
+                }`}
+                title={`Calendar Date: ${selectedQuoteDate}`}
+              >
+                <span>{selectedQuoteDate}</span>
+                {isViewingToday ? (
+                  <span className="text-[9px] uppercase font-bold text-amber-400">• Today</span>
+                ) : (
+                  <span className="text-[9px] uppercase font-bold text-cyan-400">• Browsing</span>
+                )}
+              </span>
+
+              {/* Category Pill */}
+              <span
+                className="hidden sm:inline-block px-2 py-0.5 rounded-md text-[10px] font-semibold bg-white/10 text-white/90 border border-white/10 truncate max-w-[130px]"
+                title={`Category: ${activeQuote.category} (${activeQuote.theme})`}
+              >
+                {activeQuote.category}
+              </span>
             </div>
-            <button
-              onClick={handleNextQuote}
-              title="Show another quote"
-              className="p-1 rounded-lg text-white/50 hover:text-white hover:bg-white/10 transition cursor-pointer"
-            >
-              <RefreshCw className="w-3 h-3" />
-            </button>
+
+            {/* Action Buttons: Return to Today, Prev, Next, Copy, Favorite */}
+            <div className="flex items-center gap-1 shrink-0">
+              {/* Return to Today Button (Visible if navigated away) */}
+              {!isViewingToday && (
+                <button
+                  type="button"
+                  onClick={handleResetQuoteToToday}
+                  title="Return to Today's Quote"
+                  className="px-2 py-0.5 rounded-md bg-amber-400/25 hover:bg-amber-400/40 text-amber-300 border border-amber-400/45 text-[10px] font-bold transition cursor-pointer flex items-center gap-1 shadow-sm"
+                >
+                  <RotateCcw className="w-2.5 h-2.5" />
+                  <span>Today</span>
+                </button>
+              )}
+
+              {/* Previous Day Date Button */}
+              <button
+                type="button"
+                onClick={handlePrevQuoteDate}
+                title="View Previous Day's Quote"
+                className="p-1 rounded-lg text-white/70 hover:text-white hover:bg-white/10 border border-transparent hover:border-white/10 transition cursor-pointer"
+              >
+                <ChevronLeft className="w-3.5 h-3.5" />
+              </button>
+
+              {/* Next Day Date Button */}
+              <button
+                type="button"
+                onClick={handleNextQuoteDate}
+                title="View Next Day's Quote"
+                className="p-1 rounded-lg text-white/70 hover:text-white hover:bg-white/10 border border-transparent hover:border-white/10 transition cursor-pointer"
+              >
+                <ChevronRight className="w-3.5 h-3.5" />
+              </button>
+
+              {/* Copy Quote Button */}
+              <button
+                type="button"
+                onClick={handleCopyQuote}
+                title={quoteCopied ? 'Quote copied to clipboard!' : 'Copy this quote'}
+                className={`p-1 rounded-lg transition cursor-pointer border ${
+                  quoteCopied
+                    ? 'text-emerald-400 bg-emerald-500/20 border-emerald-400/40 shadow-[0_0_10px_rgba(16,185,129,0.3)]'
+                    : 'text-white/70 hover:text-white hover:bg-white/10 border-transparent hover:border-white/10'
+                }`}
+              >
+                {quoteCopied ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+              </button>
+
+              {/* Favorite Toggle Button */}
+              <button
+                type="button"
+                onClick={() => handleToggleFavouriteQuote(selectedQuoteDate)}
+                title={isCurrentQuoteFavorited ? 'Remove from favourite quotes' : 'Add to favourite quotes'}
+                className={`p-1 rounded-lg transition cursor-pointer border ${
+                  isCurrentQuoteFavorited
+                    ? 'text-rose-400 bg-rose-500/20 border-rose-500/40 shadow-[0_0_10px_rgba(244,63,94,0.3)]'
+                    : 'text-white/60 hover:text-rose-300 hover:bg-white/10 border-transparent hover:border-white/10'
+                }`}
+              >
+                <Heart className={`w-3.5 h-3.5 ${isCurrentQuoteFavorited ? 'fill-rose-400 text-rose-400' : ''}`} />
+              </button>
+            </div>
           </div>
 
-          <div className="my-1 text-center no-drag">
-            <p className="text-xs sm:text-[13px] font-medium text-white/90 leading-snug italic">
-              "{currentQuote.quote}"
+          {/* Central Unique Daily Quote with Smooth Text Animation & High Legibility */}
+          <div
+            key={activeQuote.date}
+            className="my-2.5 text-center no-drag px-1 animate-in fade-in zoom-in-95 duration-200"
+          >
+            <p className="text-xs sm:text-[13.5px] font-medium text-white/95 leading-relaxed italic drop-shadow-[0_2px_10px_rgba(0,0,0,0.9)] font-['DM_Sans']">
+              "{activeQuote.quote}"
             </p>
-            <span className="block mt-1 text-[10px] text-amber-300/80 font-semibold tracking-wider uppercase">
-              — {currentQuote.author}
-            </span>
+            <div className="flex items-center justify-center gap-2 mt-1.5 text-[10px] font-semibold tracking-wider text-amber-300/90 uppercase flex-wrap">
+              <span>— {activeQuote.category}</span>
+              <span className="opacity-40">•</span>
+              <span className="text-white/60 font-mono text-[9px]">
+                Day {activeQuote.dayNumber} of 137 ({activeQuote.daysRemaining}d to Exam)
+              </span>
+              {isCurrentQuoteFavorited && (
+                <span className="text-rose-400 text-[10px] font-bold">♥ Favorited</span>
+              )}
+            </div>
           </div>
 
-          <div className="pt-1 border-t border-white/5 no-drag flex items-center justify-between text-[10px]">
+          {/* Bottom Intention / Target Input Bar */}
+          <div className="pt-1.5 border-t border-white/5 no-drag flex items-center justify-between text-[10px]">
             <input
               type="text"
               value={config.motivation.personalIntention}
@@ -6230,8 +6464,8 @@ export default function App() {
                   onClick={() => {
                     updateConfig(prev => ({
                       ...prev,
-                      activeWallpaper: 'lofi-tokyo',
-                      wallpaperUrl: 'https://images.unsplash.com/photo-1509198397868-475647b2a1e5?auto=format&fit=crop&w=2400&q=85',
+                      activeWallpaper: 'jp-tokyo-cyberpunk',
+                      wallpaperUrl: '/wallpapers/jp_tokyo_cyberpunk.jpg',
                       canvasTheme: 'none',
                       bgDimmer: 30,
                       bgBlur: 0,

@@ -63,6 +63,7 @@ import {
   FileJson,
   Volume2,
   VolumeX,
+  Shuffle,
 } from 'lucide-react';
 import {
   STUDIO_THEMES,
@@ -77,6 +78,7 @@ import {
   ClockDesignOption,
   FontOption,
   WallpaperCategoryItem,
+  WallpaperCategoryKey,
   BackgroundEffectOption,
   WidgetStyleOption,
   ColorPaletteOption,
@@ -166,12 +168,34 @@ export default function VisualCustomizationStudio({
     onConfirm: () => void;
   } | null>(null);
 
+  // Wallpaper Gallery State
+  const [wallpaperCategory, setWallpaperCategory] = useState<WallpaperCategoryKey>('all');
+  const [wallpaperSearch, setWallpaperSearch] = useState<string>('');
+  const [wallpaperPage, setWallpaperPage] = useState<number>(1);
+  const [showAllWallpapers, setShowAllWallpapers] = useState<boolean>(false);
+  const [favoriteWallpaperIds, setFavoriteWallpaperIds] = useState<string[]>(() => {
+    try {
+      const saved = localStorage.getItem('flocus_favorite_wallpapers');
+      return saved ? JSON.parse(saved) : ['jp-tokyo-cyberpunk', 'art-anime-cherry-blossom', 'kr-seoul-night', 'cn-misty-mountains'];
+    } catch {
+      return ['jp-tokyo-cyberpunk', 'art-anime-cherry-blossom', 'kr-seoul-night', 'cn-misty-mountains'];
+    }
+  });
+  const [uploadedWallpapers, setUploadedWallpapers] = useState<WallpaperCategoryItem[]>(() => {
+    try {
+      const saved = localStorage.getItem('flocus_custom_uploaded_wallpapers');
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
+  });
+
   // Staging State (Preview Before Commit)
   const [stagedThemeId, setStagedThemeId] = useState<string>(
     currentConfig.activeThemeId || currentConfig.activeWallpaper || 'obsidian-glass'
   );
   const [stagedWallpaperUrl, setStagedWallpaperUrl] = useState<string>(
-    currentConfig.wallpaperUrl || 'https://images.unsplash.com/photo-1518495973542-4542c06a5843?auto=format&fit=crop&w=2400&q=85'
+    currentConfig.wallpaperUrl || '/wallpapers/jp_tokyo_cyberpunk.jpg'
   );
   const [stagedVideoUrl, setStagedVideoUrl] = useState<string>(currentConfig.videoUrl || '');
   const [stagedCanvasTheme, setStagedCanvasTheme] = useState<CanvasThemeType>(currentConfig.canvasTheme || 'minimal');
@@ -365,6 +389,98 @@ export default function VisualCustomizationStudio({
       return matchesSearch && matchesCat;
     });
   }, [searchQuery, clockCategoryFilter]);
+
+  // Filtered Wallpapers Computation
+  const allWallpapersPool = useMemo(() => {
+    return [...uploadedWallpapers, ...STUDIO_WALLPAPERS];
+  }, [uploadedWallpapers]);
+
+  const filteredWallpapers = useMemo(() => {
+    return allWallpapersPool.filter(wp => {
+      // Category filter
+      if (wallpaperCategory === 'favorites') {
+        if (!favoriteWallpaperIds.includes(wp.id)) return false;
+      } else if (wallpaperCategory === 'uploads') {
+        if (!wp.id.startsWith('upload-')) return false;
+      } else if (wallpaperCategory === 'local') {
+        if (!wp.isLocal) return false;
+      } else if (wallpaperCategory !== 'all') {
+        if (wp.category !== wallpaperCategory) return false;
+      }
+
+      // Search filter
+      if (wallpaperSearch.trim() !== '') {
+        const query = wallpaperSearch.toLowerCase().trim();
+        const matchesTitle = wp.title.toLowerCase().includes(query);
+        const matchesCategory = wp.category.toLowerCase().includes(query);
+        const matchesSub = wp.subCategory ? wp.subCategory.toLowerCase().includes(query) : false;
+        const matchesTag = wp.tags.some(t => t.toLowerCase().includes(query));
+        return matchesTitle || matchesCategory || matchesSub || matchesTag;
+      }
+
+      return true;
+    });
+  }, [allWallpapersPool, wallpaperCategory, wallpaperSearch, favoriteWallpaperIds]);
+
+  // Immediate Wallpaper Application handler
+  const handleApplyWallpaperImmediate = (item: { fullUrl: string; id: string; title: string }) => {
+    setStagedWallpaperUrl(item.fullUrl);
+    setStagedVideoUrl('');
+    // Immediately apply to parent dashboard and persist!
+    onApply({
+      wallpaperUrl: item.fullUrl,
+      activeWallpaper: item.id,
+      videoUrl: '',
+    });
+  };
+
+  const handleToggleFavoriteWallpaper = (id: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setFavoriteWallpaperIds(prev => {
+      const next = prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id];
+      try {
+        localStorage.setItem('flocus_favorite_wallpapers', JSON.stringify(next));
+      } catch {}
+      return next;
+    });
+  };
+
+  const handleShuffleWallpaper = () => {
+    const pool = filteredWallpapers.length > 0 ? filteredWallpapers : allWallpapersPool;
+    if (pool.length === 0) return;
+    const randomItem = pool[Math.floor(Math.random() * pool.length)];
+    handleApplyWallpaperImmediate(randomItem);
+  };
+
+  const handleUploadWallpaperFile = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = ev => {
+      const dataUrl = ev.target?.result as string;
+      if (!dataUrl) return;
+      const newUpload: WallpaperCategoryItem = {
+        id: `upload-${Date.now()}`,
+        title: file.name.replace(/\.[^/.]+$/, ''),
+        category: 'study',
+        subCategory: 'User Device Upload',
+        tags: ['custom', 'upload', 'device', 'my'],
+        thumbUrl: dataUrl,
+        fullUrl: dataUrl,
+        isLocal: true,
+        resolution: 'User Device Image',
+        aspectRatio: 'Custom',
+        format: 'png',
+      };
+      const nextUploads = [newUpload, ...uploadedWallpapers];
+      setUploadedWallpapers(nextUploads);
+      try {
+        localStorage.setItem('flocus_custom_uploaded_wallpapers', JSON.stringify(nextUploads.slice(0, 10)));
+      } catch {}
+      handleApplyWallpaperImmediate(newUpload);
+    };
+    reader.readAsDataURL(file);
+  };
 
   // Helper to get active editing style (global or per-widget override)
   const currentEditingStyle = useMemo(() => {
@@ -903,12 +1019,247 @@ export default function VisualCustomizationStudio({
                   </div>
                 )}
 
-                {/* Sub-Tab Content: Wallpapers & Video */}
+                {/* Sub-Tab Content: Wallpapers & Video — Comprehensive 5,000+ Ready Gallery */}
                 {appearanceSubTab === 'wallpapers' && (
                   <div className="space-y-4">
-                    <div className="p-4 rounded-2xl bg-white/[0.02] border border-white/10 space-y-3">
-                      <h4 className="text-xs font-bold text-white uppercase tracking-wider">
-                        Looping Video Background or Custom Wallpaper URL
+                    {/* Top Action & Search Bar */}
+                    <div className="p-4 rounded-2xl bg-white/[0.03] border border-white/10 space-y-3">
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                        <div className="flex items-center gap-2">
+                          <ImageIcon className="w-4 h-4 text-emerald-400" />
+                          <h4 className="text-xs font-bold text-white uppercase tracking-wider">
+                            Asian Aesthetic & Study Wallpaper Gallery
+                          </h4>
+                          <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                            {filteredWallpapers.length} Wallpapers Available
+                          </span>
+                        </div>
+
+                        {/* Top Quick Actions: Random & Upload */}
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={handleShuffleWallpaper}
+                            title="Shuffle & Apply Random Wallpaper"
+                            className="px-3 py-1.5 rounded-xl bg-purple-500/20 hover:bg-purple-500/30 text-purple-300 border border-purple-500/30 text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer"
+                          >
+                            <Shuffle className="w-3.5 h-3.5" />
+                            <span>Random Wallpaper</span>
+                          </button>
+
+                          <label
+                            title="Upload Wallpaper Image from your Device"
+                            className="px-3 py-1.5 rounded-xl bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 border border-emerald-500/30 text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer"
+                          >
+                            <Upload className="w-3.5 h-3.5" />
+                            <span>Upload File</span>
+                            <input
+                              type="file"
+                              accept="image/*"
+                              className="hidden"
+                              onChange={handleUploadWallpaperFile}
+                            />
+                          </label>
+                        </div>
+                      </div>
+
+                      {/* Search Bar */}
+                      <div className="relative">
+                        <Search className="w-4 h-4 text-white/40 absolute left-3 top-1/2 -translate-y-1/2" />
+                        <input
+                          type="text"
+                          value={wallpaperSearch}
+                          onChange={e => {
+                            setWallpaperSearch(e.target.value);
+                            setWallpaperPage(1);
+                          }}
+                          placeholder="Search wallpapers (e.g., Tokyo, Seoul, Lantern, Rain, Fuji, Study Desk, Cyberpunk)..."
+                          className="w-full pl-9 pr-8 py-2 rounded-xl bg-black/60 border border-white/10 text-xs text-white placeholder-white/40 focus:outline-none focus:border-emerald-400"
+                        />
+                        {wallpaperSearch && (
+                          <button
+                            onClick={() => setWallpaperSearch('')}
+                            className="absolute right-2.5 top-1/2 -translate-y-1/2 text-white/40 hover:text-white p-0.5"
+                          >
+                            <X className="w-3.5 h-3.5" />
+                          </button>
+                        )}
+                      </div>
+
+                      {/* Category Filter Pills */}
+                      <div className="flex items-center gap-1.5 overflow-x-auto pb-1 text-xs no-scrollbar">
+                        {[
+                          { id: 'all', label: `All (${allWallpapersPool.length})` },
+                          { id: 'japanese', label: 'Japanese Aesthetic' },
+                          { id: 'korean', label: 'Korean Aesthetic' },
+                          { id: 'chinese', label: 'Chinese Aesthetic' },
+                          { id: 'anime', label: 'Anime & Vector' },
+                          { id: 'cyberpunk', label: 'Cyberpunk' },
+                          { id: 'study', label: 'Cozy Study' },
+                          { id: 'nature', label: 'Nature' },
+                          { id: 'space', label: 'Space' },
+                          { id: 'local', label: '⚡ Offline Local' },
+                          { id: 'favorites', label: `★ Favorites (${favoriteWallpaperIds.length})` },
+                          { id: 'uploads', label: `Uploads (${uploadedWallpapers.length})` },
+                        ].map(cat => (
+                          <button
+                            key={cat.id}
+                            onClick={() => {
+                              setWallpaperCategory(cat.id as any);
+                              setWallpaperPage(1);
+                            }}
+                            className={`px-3 py-1 rounded-xl text-[10px] font-bold uppercase tracking-wider shrink-0 transition cursor-pointer ${
+                              wallpaperCategory === cat.id
+                                ? 'bg-emerald-500/30 text-emerald-200 border border-emerald-400/50 shadow-[0_0_12px_rgba(16,185,129,0.25)]'
+                                : 'bg-white/5 text-white/50 hover:text-white border border-white/5 hover:border-white/10'
+                            }`}
+                          >
+                            {cat.label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Responsive Wallpaper Thumbnail Grid */}
+                    {filteredWallpapers.length === 0 ? (
+                      <div className="p-8 text-center rounded-2xl bg-white/[0.02] border border-white/10">
+                        <p className="text-xs text-white/60">No wallpapers found matching your filter or search query.</p>
+                        <button
+                          onClick={() => {
+                            setWallpaperCategory('all');
+                            setWallpaperSearch('');
+                          }}
+                          className="mt-3 px-3 py-1.5 rounded-xl bg-white/10 hover:bg-white/20 text-xs font-semibold text-white transition"
+                        >
+                          Clear Filters
+                        </button>
+                      </div>
+                    ) : (
+                      <>
+                        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3.5">
+                          {(showAllWallpapers ? filteredWallpapers : filteredWallpapers.slice((wallpaperPage - 1) * 12, wallpaperPage * 12)).map(item => {
+                            const isCurrentActive =
+                              stagedWallpaperUrl === item.fullUrl || currentConfig.wallpaperUrl === item.fullUrl;
+                            const isFav = favoriteWallpaperIds.includes(item.id);
+
+                            return (
+                              <div
+                                key={item.id}
+                                onClick={() => handleApplyWallpaperImmediate(item)}
+                                title={`Click to Apply: ${item.title}`}
+                                className={`group relative rounded-2xl overflow-hidden border aspect-video cursor-pointer transition-all duration-300 select-none ${
+                                  isCurrentActive
+                                    ? 'border-emerald-400 ring-2 ring-emerald-400/50 shadow-[0_0_20px_rgba(16,185,129,0.35)] scale-[1.02]'
+                                    : 'border-white/10 hover:border-white/30 hover:scale-[1.01]'
+                                }`}
+                              >
+                                <img
+                                  src={item.thumbUrl || item.fullUrl}
+                                  alt={item.title}
+                                  loading="lazy"
+                                  onError={e => {
+                                    // Graceful fallback to local SVG if thumbnail ever has network issue
+                                    (e.target as HTMLImageElement).src = '/wallpapers/art_anime_cherry_blossom.svg';
+                                  }}
+                                  className="w-full h-full object-cover group-hover:scale-105 transition duration-500"
+                                />
+
+                                {/* Gradient Overlay */}
+                                <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/30 to-transparent flex flex-col justify-between p-2.5 pointer-events-none">
+                                  {/* Top Badges: Active & Favorite */}
+                                  <div className="flex items-center justify-between pointer-events-auto">
+                                    {isCurrentActive ? (
+                                      <span className="px-1.5 py-0.5 rounded-md bg-emerald-500 text-black text-[9px] font-black uppercase tracking-wider flex items-center gap-1 shadow-md">
+                                        <Check className="w-2.5 h-2.5 stroke-[3]" />
+                                        <span>ACTIVE</span>
+                                      </span>
+                                    ) : (
+                                      <span className="px-1.5 py-0.5 rounded-md bg-black/60 backdrop-blur-sm text-[9px] font-mono text-white/70 uppercase">
+                                        {item.format || 'HD'}
+                                      </span>
+                                    )}
+
+                                    <button
+                                      type="button"
+                                      onClick={e => handleToggleFavoriteWallpaper(item.id, e)}
+                                      title={isFav ? 'Remove from favorites' : 'Add to favorites'}
+                                      className={`p-1 rounded-lg backdrop-blur-sm transition cursor-pointer ${
+                                        isFav
+                                          ? 'bg-amber-400/30 text-amber-300 border border-amber-400/40'
+                                          : 'bg-black/50 text-white/40 hover:text-white border border-white/10'
+                                      }`}
+                                    >
+                                      <Star className={`w-3.5 h-3.5 ${isFav ? 'fill-amber-400 text-amber-400' : ''}`} />
+                                    </button>
+                                  </div>
+
+                                  {/* Bottom Title & Tags */}
+                                  <div>
+                                    <div className="flex items-center gap-1.5 mb-0.5">
+                                      <span className="text-[9px] px-1.5 py-0.2 rounded bg-white/20 text-white/90 uppercase font-semibold">
+                                        {item.category}
+                                      </span>
+                                      {item.isLocal && (
+                                        <span className="text-[9px] text-cyan-300 font-mono font-medium">⚡ Offline</span>
+                                      )}
+                                    </div>
+                                    <span className="text-[11px] font-bold text-white line-clamp-1 group-hover:text-emerald-300 transition">
+                                      {item.title}
+                                    </span>
+                                  </div>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+
+                        {/* Pagination & Show All Controls */}
+                        {filteredWallpapers.length > 12 && (
+                          <div className="flex items-center justify-between pt-2 px-1 text-xs">
+                            <span className="text-white/50 text-[11px]">
+                              Showing {showAllWallpapers ? filteredWallpapers.length : Math.min(filteredWallpapers.length, 12)} of {filteredWallpapers.length} wallpapers
+                            </span>
+
+                            <div className="flex items-center gap-2">
+                              {!showAllWallpapers && Math.ceil(filteredWallpapers.length / 12) > 1 && (
+                                <div className="flex items-center gap-1">
+                                  <button
+                                    disabled={wallpaperPage === 1}
+                                    onClick={() => setWallpaperPage(p => Math.max(1, p - 1))}
+                                    className="px-2.5 py-1 rounded-lg bg-white/5 hover:bg-white/10 disabled:opacity-30 disabled:pointer-events-none text-white text-[11px]"
+                                  >
+                                    Previous
+                                  </button>
+                                  <span className="px-2 font-mono text-[11px] text-emerald-300">
+                                    {wallpaperPage} / {Math.ceil(filteredWallpapers.length / 12)}
+                                  </span>
+                                  <button
+                                    disabled={wallpaperPage >= Math.ceil(filteredWallpapers.length / 12)}
+                                    onClick={() => setWallpaperPage(p => p + 1)}
+                                    className="px-2.5 py-1 rounded-lg bg-white/5 hover:bg-white/10 disabled:opacity-30 disabled:pointer-events-none text-white text-[11px]"
+                                  >
+                                    Next
+                                  </button>
+                                </div>
+                              )}
+
+                              <button
+                                onClick={() => setShowAllWallpapers(p => !p)}
+                                className="px-3 py-1 rounded-lg bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 border border-emerald-500/30 text-[11px] font-semibold transition"
+                              >
+                                {showAllWallpapers ? 'Show Paginated' : 'Show All Wallpapers'}
+                              </button>
+                            </div>
+                          </div>
+                        )}
+                      </>
+                    )}
+
+                    {/* Custom Direct URL & Video Input Section */}
+                    <div className="p-4 rounded-2xl bg-white/[0.02] border border-white/10 space-y-3 mt-4">
+                      <h4 className="text-xs font-bold text-white uppercase tracking-wider flex items-center justify-between">
+                        <span>Direct Custom Wallpaper or Video Loop URL</span>
+                        <span className="text-[10px] text-white/40 lowercase font-normal">supports .jpg, .png, .webp, .mp4</span>
                       </h4>
                       <div className="flex gap-2">
                         <input
@@ -922,32 +1273,23 @@ export default function VisualCustomizationStudio({
                               setStagedWallpaperUrl(val);
                             }
                           }}
-                          placeholder="Paste image or loopable .mp4 / .webm video URL..."
+                          placeholder="Paste direct image or loopable .mp4 / .webm video URL..."
                           className="flex-1 px-3 py-2 rounded-xl bg-black/50 border border-white/10 text-xs text-white placeholder-white/30 focus:outline-none focus:border-emerald-400"
                         />
-                      </div>
-                    </div>
-
-                    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
-                      {STUDIO_WALLPAPERS.map(item => (
-                        <div
-                          key={item.id}
+                        <button
+                          type="button"
                           onClick={() => {
-                            setStagedWallpaperUrl(item.fullUrl);
-                            setStagedVideoUrl('');
+                            if (stagedVideoUrl) {
+                              onApply({ videoUrl: stagedVideoUrl });
+                            } else if (stagedWallpaperUrl) {
+                              onApply({ wallpaperUrl: stagedWallpaperUrl, videoUrl: '' });
+                            }
                           }}
-                          className={`group relative rounded-2xl overflow-hidden border aspect-video cursor-pointer transition ${
-                            stagedWallpaperUrl === item.fullUrl
-                              ? 'border-emerald-400 ring-2 ring-emerald-400/40'
-                              : 'border-white/10 hover:border-white/30'
-                          }`}
+                          className="px-4 py-2 rounded-xl bg-emerald-500/25 hover:bg-emerald-500/40 text-emerald-300 text-xs font-bold border border-emerald-500/40 transition cursor-pointer"
                         >
-                          <img src={item.thumbUrl || item.fullUrl} alt={item.title} className="w-full h-full object-cover group-hover:scale-105 transition duration-500" />
-                          <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent flex items-end p-2.5">
-                            <span className="text-[11px] font-bold text-white line-clamp-1">{item.title}</span>
-                          </div>
-                        </div>
-                      ))}
+                          Apply URL
+                        </button>
+                      </div>
                     </div>
                   </div>
                 )}

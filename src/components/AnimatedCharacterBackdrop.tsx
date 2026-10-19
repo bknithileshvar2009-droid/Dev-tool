@@ -3,8 +3,11 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { CanvasThemeType, AnimationControlsConfig } from '../utils/visualStudioData';
+import { Loader2, AlertCircle, X, RotateCcw } from 'lucide-react';
+
+export const VERIFIED_DEFAULT_WALLPAPER = '/wallpapers/jp_tokyo_cyberpunk.jpg';
 
 interface AnimatedCharacterBackdropProps {
   canvasTheme: CanvasThemeType;
@@ -19,6 +22,7 @@ interface AnimatedCharacterBackdropProps {
   scaling?: 'cover' | 'contain' | 'fill';
   controls?: Partial<AnimationControlsConfig>;
   activeThemeId?: string;
+  onWallpaperFallback?: (fallbackUrl: string) => void;
 }
 
 interface Particle {
@@ -45,16 +49,115 @@ export default function AnimatedCharacterBackdrop({
   saturation = 100,
   scaling = 'cover',
   controls,
+  onWallpaperFallback,
 }: AnimatedCharacterBackdropProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const [videoFailed, setVideoFailed] = useState(false);
+
+  // Wallpaper Loading, Fallback & Crossfade State
+  const [activeImageSrc, setActiveImageSrc] = useState<string>(() => wallpaperUrl || VERIFIED_DEFAULT_WALLPAPER);
+  const [previousWorkingSrc, setPreviousWorkingSrc] = useState<string>(() => wallpaperUrl || VERIFIED_DEFAULT_WALLPAPER);
+  const [isLoading, setIsLoading] = useState<boolean>(false);
+  const [errorInfo, setErrorInfo] = useState<{ message: string; failedUrl: string } | null>(null);
+  const [isCrossfading, setIsCrossfading] = useState<boolean>(false);
+
+  // Preload and validate wallpaper when wallpaperUrl prop changes
+  useEffect(() => {
+    // If no wallpaper is desired (pure canvas / dark theme)
+    if (!wallpaperUrl) {
+      setActiveImageSrc('');
+      setIsLoading(false);
+      setErrorInfo(null);
+      return;
+    }
+
+    // If target URL is already the active source, nothing to do
+    if (wallpaperUrl === activeImageSrc && !errorInfo) {
+      return;
+    }
+
+    let isCancelled = false;
+    setIsLoading(true);
+    setErrorInfo(null);
+
+    const img = new Image();
+    img.src = wallpaperUrl;
+
+    img.onload = () => {
+      if (isCancelled) return;
+      setIsCrossfading(true);
+      setPreviousWorkingSrc(activeImageSrc || VERIFIED_DEFAULT_WALLPAPER);
+      setActiveImageSrc(wallpaperUrl);
+      setIsLoading(false);
+      setErrorInfo(null);
+      setTimeout(() => setIsCrossfading(false), 400);
+    };
+
+    img.onerror = () => {
+      if (isCancelled) return;
+      setIsLoading(false);
+      // Keep previous working wallpaper, do not blank out screen
+      setErrorInfo({
+        message: 'Could not load requested wallpaper image.',
+        failedUrl: wallpaperUrl,
+      });
+      // If we don't even have a valid current wallpaper, fall back to verified default
+      if (!activeImageSrc) {
+        setActiveImageSrc(VERIFIED_DEFAULT_WALLPAPER);
+      }
+    };
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [wallpaperUrl]);
+
+  // Retry loading current wallpaper
+  const handleRetry = useCallback(() => {
+    if (!errorInfo) return;
+    const targetUrl = errorInfo.failedUrl;
+    setErrorInfo(null);
+    setIsLoading(true);
+
+    const retryImg = new Image();
+    // Append timestamp cache-buster if external URL
+    const cacheBuster = targetUrl.startsWith('http')
+      ? `${targetUrl}${targetUrl.includes('?') ? '&' : '?'}t=${Date.now()}`
+      : targetUrl;
+    retryImg.src = cacheBuster;
+
+    retryImg.onload = () => {
+      setActiveImageSrc(targetUrl);
+      setPreviousWorkingSrc(targetUrl);
+      setIsLoading(false);
+      setErrorInfo(null);
+    };
+
+    retryImg.onerror = () => {
+      setIsLoading(false);
+      setErrorInfo({
+        message: 'Retry failed. Retaining current wallpaper.',
+        failedUrl: targetUrl,
+      });
+    };
+  }, [errorInfo]);
+
+  // Fallback to verified local wallpaper
+  const handleUseDefault = useCallback(() => {
+    setErrorInfo(null);
+    setActiveImageSrc(VERIFIED_DEFAULT_WALLPAPER);
+    setPreviousWorkingSrc(VERIFIED_DEFAULT_WALLPAPER);
+    if (onWallpaperFallback) {
+      onWallpaperFallback(VERIFIED_DEFAULT_WALLPAPER);
+    }
+  }, [onWallpaperFallback]);
 
   const isAnimated = !isStatic && !reducedMotion && controls?.enabled !== false && canvasTheme !== 'none';
   const intensity = controls?.intensity === 'low' ? 0.5 : controls?.intensity === 'high' ? 1.8 : 1.0;
   const speed = controls?.speed ?? 1.0;
   const energyColor = controls?.energyColor;
 
-  // Clean atmospheric particle canvas simulation (No avatars or character silhouettes)
+  // Clean atmospheric particle canvas simulation
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -150,7 +253,6 @@ export default function AnimatedCharacterBackdrop({
           }
         }
       } else if (particles.length > 0) {
-        // Floating ambient study particles & stars
         for (let i = 0; i < particles.length; i++) {
           const p = particles[i];
           p.x += p.vx * dt;
@@ -206,18 +308,24 @@ export default function AnimatedCharacterBackdrop({
           <source src={videoUrl} type="video/mp4" />
           <source src={videoUrl} type="video/webm" />
         </video>
-      ) : wallpaperUrl ? (
-        /* ================= STATIC WALLPAPER IMAGE ================= */
+      ) : activeImageSrc ? (
+        /* ================= STATIC & DYNAMIC WALLPAPER IMAGE ================= */
         <img
-          src={wallpaperUrl}
-          alt="Wallpaper"
-          className="absolute inset-0 w-full h-full transition-opacity duration-700"
+          key={activeImageSrc}
+          src={activeImageSrc}
+          alt="Dashboard Wallpaper"
+          className={`absolute inset-0 w-full h-full transition-all duration-700 ${
+            isCrossfading ? 'opacity-80 scale-[1.01]' : 'opacity-100 scale-100'
+          }`}
           style={{
             objectFit: scaling,
             filter: `blur(${blur}px) brightness(${brightness}%) saturate(${saturation}%)`,
           }}
-          onError={e => {
-            (e.target as HTMLElement).style.display = 'none';
+          onError={() => {
+            // If active image unexpectedly fails after mounting, fall back to previous or local default
+            if (activeImageSrc !== VERIFIED_DEFAULT_WALLPAPER) {
+              setActiveImageSrc(VERIFIED_DEFAULT_WALLPAPER);
+            }
           }}
         />
       ) : (
@@ -243,6 +351,47 @@ export default function AnimatedCharacterBackdrop({
           background: 'radial-gradient(circle at center, transparent 35%, rgba(0,0,0,0.7) 100%)',
         }}
       />
+
+      {/* ================= LOADING INDICATOR ================= */}
+      {isLoading && (
+        <div className="fixed bottom-4 right-4 z-40 bg-black/80 backdrop-blur-md border border-cyan-400/40 text-cyan-300 px-3.5 py-2 rounded-2xl text-xs flex items-center gap-2.5 shadow-2xl animate-in fade-in zoom-in-95 pointer-events-auto">
+          <Loader2 className="w-4 h-4 animate-spin text-cyan-400" />
+          <span className="font-medium tracking-wide">Applying wallpaper...</span>
+        </div>
+      )}
+
+      {/* ================= ERROR NOTIFICATION WITH RETRY & DEFAULT ================= */}
+      {errorInfo && (
+        <div className="fixed bottom-4 right-4 z-50 bg-slate-900/90 backdrop-blur-md border border-rose-500/50 text-white px-4 py-2.5 rounded-2xl text-xs flex items-center gap-3 shadow-2xl pointer-events-auto max-w-md animate-in slide-in-from-bottom-3 duration-200">
+          <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
+          <div className="flex-1 min-w-0 pr-1">
+            <p className="font-semibold text-rose-300 text-xs truncate">Image unavailable</p>
+            <p className="text-[10px] text-slate-300/80">Retained previous wallpaper</p>
+          </div>
+          <div className="flex items-center gap-1.5 shrink-0">
+            <button
+              onClick={handleRetry}
+              className="px-2.5 py-1 bg-white/10 hover:bg-white/20 border border-white/15 rounded-lg text-[10px] font-bold text-white transition flex items-center gap-1 cursor-pointer"
+            >
+              <RotateCcw className="w-2.5 h-2.5" />
+              <span>Retry</span>
+            </button>
+            <button
+              onClick={handleUseDefault}
+              className="px-2.5 py-1 bg-cyan-500/25 hover:bg-cyan-500/35 border border-cyan-500/40 text-cyan-300 rounded-lg text-[10px] font-bold transition cursor-pointer"
+            >
+              Default
+            </button>
+            <button
+              onClick={() => setErrorInfo(null)}
+              className="p-1 text-slate-400 hover:text-white hover:bg-white/10 rounded-md transition cursor-pointer"
+              title="Dismiss"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

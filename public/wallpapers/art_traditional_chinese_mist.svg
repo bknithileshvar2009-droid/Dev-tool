@@ -1,0 +1,44 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1920 1080" width="100%" height="100%">
+      <defs>
+        <linearGradient id="inkPaper" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stop-color="#090d14"/>
+          <stop offset="50%" stop-color="#0f1622"/>
+          <stop offset="100%" stop-color="#141c2c"/>
+        </linearGradient>
+        <radialGradient id="moonGlow" cx="0.5" cy="0.5" r="0.5">
+          <stop offset="0%" stop-color="#fef3c7" stop-opacity="0.9"/>
+          <stop offset="50%" stop-color="#d97706" stop-opacity="0.3"/>
+          <stop offset="100%" stop-color="#000000" stop-opacity="0"/>
+        </radialGradient>
+      </defs>
+      <!-- Background Canvas -->
+      <rect width="1920" height="1080" fill="url(#inkPaper)"/>
+      <!-- Soft Full Moon -->
+      <circle cx="1400" cy="280" r="160" fill="url(#moonGlow)"/>
+      <circle cx="1400" cy="280" r="100" fill="#fffbeb" opacity="0.85"/>
+      <!-- Karst Mountain Layers (Chinese Ink Wash Style) -->
+      <!-- Distant Layer -->
+      <path d="M 0 600 Q 350 320 620 540 T 1200 480 Q 1550 280 1920 580 L 1920 1080 L 0 1080 Z" fill="#1b2537" opacity="0.4"/>
+      <!-- Middle Layer -->
+      <path d="M 120 700 Q 420 380 780 660 T 1480 540 Q 1700 400 1920 680 L 1920 1080 L 0 1080 Z" fill="#151e2d" opacity="0.7"/>
+      <!-- Foreground Layer -->
+      <path d="M 0 780 Q 280 500 580 740 T 1140 680 Q 1500 460 1920 790 L 1920 1080 L 0 1080 Z" fill="#0d131d"/>
+      <!-- Misty river reflections -->
+      <path d="M 0 880 Q 480 840 960 890 T 1920 860 L 1920 1080 L 0 1080 Z" fill="#080c13"/>
+      <!-- Traditional Chinese Roof Silhouette & Pine Branch -->
+      <g fill="#040609">
+        <!-- Elegant Pavilion Roof on right cliff -->
+        <path d="M1520 620 Q 1680 560 1840 620 L 1800 600 Q 1680 540 1560 600 Z"/>
+        <path d="M1560 560 Q 1680 510 1800 560 L 1780 545 Q 1680 500 1580 545 Z"/>
+        <polygon points="1680,450 1675,505 1685,505"/>
+        <rect x="1620" y="620" width="120" height="120"/>
+        <!-- Pine Tree silhouette on left -->
+        <path d="M0 640 Q 140 600 240 660 Q 300 710 380 690"/>
+        <ellipse cx="220" cy="630" rx="60" ry="20" fill="#040609"/>
+        <ellipse cx="320" cy="670" rx="70" ry="25" fill="#040609"/>
+        <ellipse cx="140" cy="590" rx="50" ry="18" fill="#040609"/>
+      </g>
+      <!-- Red Lantern glow -->
+      <circle cx="1640" cy="650" r="14" fill="#ef4444"/>
+      <circle cx="1720" cy="650" r="14" fill="#ef4444"/>
+    </svg>
