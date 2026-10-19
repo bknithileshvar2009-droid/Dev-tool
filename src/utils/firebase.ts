@@ -21,7 +21,6 @@ import {
   doc,
   getDoc,
   setDoc,
-  getDocFromServer,
   onSnapshot,
   collection,
   getDocs,
@@ -48,9 +47,9 @@ const customDbId = (firebaseConfig.firestoreDatabaseId &&
   ? firebaseConfig.firestoreDatabaseId
   : undefined;
 
-// Initialize Firestore with auto-detect long-polling to prevent 10s backend unreachable timeouts
+// Initialize Firestore with experimentalForceLongPolling to avoid WebChannel connection timeouts
 export const db = initializeFirestore(app, {
-  experimentalAutoDetectLongPolling: true,
+  experimentalForceLongPolling: true,
 }, customDbId);
 
 // Initialize Firebase Auth
@@ -109,11 +108,11 @@ export function handleFirestoreError(error: unknown, operationType: OperationTyp
 }
 
 /**
- * Validate Connection to Firestore on startup
+ * Validate Connection to Firestore on demand
  */
 export async function testConnection(): Promise<boolean> {
   try {
-    const probePromise = getDocFromServer(doc(db, 'test', 'connection'));
+    const probePromise = getDoc(doc(db, 'test', 'connection'));
     const timeoutPromise = new Promise<never>((_, reject) =>
       setTimeout(() => reject(new Error('the client is offline or timed out')), 3500)
     );
@@ -128,8 +127,6 @@ export async function testConnection(): Promise<boolean> {
     return false;
   }
 }
-// Run connection probe safely in background
-testConnection().catch(() => {});
 
 /**
  * Sign in using Google Auth Provider via Popup
@@ -363,8 +360,8 @@ export function subscribeToUserDashboard(
         }
       },
       (err) => {
-        // Silently handle Firestore subscription warning if RTDB is active
-        if (onError) onError(err);
+        // Secondary channel notice - RTDB remains the primary channel
+        console.warn(`[Firestore Secondary Sync Notice] UID: ${uid}:`, err?.message || err);
       }
     );
   } catch {
