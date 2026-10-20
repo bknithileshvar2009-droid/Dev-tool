@@ -2211,11 +2211,9 @@ export default function App() {
           }, 350);
         }
       } else {
-        console.log('[Firebase Auth] No active identity. Automatically connecting single-user background identity...');
+        console.log('[Firebase Auth] No active cloud session. Using local guest identity.');
         restoredUserUidRef.current = null;
         isRestoringRef.current = false;
-        setCurrentUser(null);
-        setSyncStatus('saving');
         if (dailyRegistryUnsubRef.current) {
           dailyRegistryUnsubRef.current();
           dailyRegistryUnsubRef.current = null;
@@ -2225,17 +2223,33 @@ export default function App() {
           focusSessionsUnsubRef.current = null;
         }
 
-        try {
-          const autoUser = await signInAsGuest();
-          console.log(`[Firebase Auth] Guest identity active: UID ${autoUser.uid}`);
-          if (autoUser && !auth.currentUser) {
-            setCurrentUser(autoUser);
-            setSyncStatus('saved');
-          }
-        } catch (autoAuthErr) {
-          console.warn('[Firebase Auth] Auto-background auth notice:', autoAuthErr);
-          setSyncStatus('offline');
+        let localUid = localStorage.getItem('flocus_local_guest_uid');
+        if (!localUid) {
+          localUid = `guest_user_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+          localStorage.setItem('flocus_local_guest_uid', localUid);
         }
+
+        const localUser: User = {
+          uid: localUid,
+          isAnonymous: true,
+          email: null,
+          displayName: 'Guest Student',
+          emailVerified: false,
+          phoneNumber: null,
+          photoURL: null,
+          providerData: [],
+          providerId: 'anonymous',
+          refreshToken: '',
+          tenantId: null,
+          delete: async () => {},
+          getIdToken: async () => '',
+          getIdTokenResult: async () => ({} as any),
+          reload: async () => {},
+          toJSON: () => ({}),
+        } as unknown as User;
+
+        setCurrentUser(localUser);
+        setSyncStatus('saved');
       }
     });
 
