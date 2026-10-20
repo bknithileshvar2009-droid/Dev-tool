@@ -118,7 +118,6 @@ import {
   subscribeToUserFocusSessions,
   FocusSessionRecord,
 } from './utils/firebase';
-import AuthModal from './components/AuthModal';
 import VisualCustomizationStudio from './components/VisualCustomizationStudio';
 import AnimatedCharacterBackdrop from './components/AnimatedCharacterBackdrop';
 import DailyRegistryHistoryModal from './components/DailyRegistryHistoryModal';
@@ -917,7 +916,6 @@ export default function App() {
   const [focusHistoryModalOpen, setFocusHistoryModalOpen] = useState<boolean>(false);
   const [focusStreakBadgeModalOpen, setFocusStreakBadgeModalOpen] = useState<boolean>(false);
   const [dayInReviewModalOpen, setDayInReviewModalOpen] = useState<boolean>(false);
-  const [authModalOpen, setAuthModalOpen] = useState<boolean>(false);
   const [emergencyExitModalOpen, setEmergencyExitModalOpen] = useState<boolean>(false);
   const [sessionRecoveryNotice, setSessionRecoveryNotice] = useState<string | null>(null);
   const [smartBreakModalOpen, setSmartBreakModalOpen] = useState<boolean>(false);
@@ -2211,7 +2209,7 @@ export default function App() {
           }, 350);
         }
       } else {
-        console.log('[Firebase Auth] No active cloud session. Using local guest identity.');
+        console.log('[Firebase Auth] No authenticated session. Automatically connecting single-user anonymous identity...');
         restoredUserUidRef.current = null;
         isRestoringRef.current = false;
         if (dailyRegistryUnsubRef.current) {
@@ -2223,33 +2221,19 @@ export default function App() {
           focusSessionsUnsubRef.current = null;
         }
 
-        let localUid = localStorage.getItem('flocus_local_guest_uid');
-        if (!localUid) {
-          localUid = `guest_user_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
-          localStorage.setItem('flocus_local_guest_uid', localUid);
-        }
-
-        const localUser: User = {
-          uid: localUid,
-          isAnonymous: true,
-          email: null,
-          displayName: 'Guest Student',
-          emailVerified: false,
-          phoneNumber: null,
-          photoURL: null,
-          providerData: [],
-          providerId: 'anonymous',
-          refreshToken: '',
-          tenantId: null,
-          delete: async () => {},
-          getIdToken: async () => '',
-          getIdTokenResult: async () => ({} as any),
-          reload: async () => {},
-          toJSON: () => ({}),
-        } as unknown as User;
-
-        setCurrentUser(localUser);
-        setSyncStatus('saved');
+        signInAsGuest()
+          .then(guestUser => {
+            if (guestUser && !isCancelled) {
+              console.log(`[Firebase Auth] Single-user background session established: UID ${guestUser.uid}`);
+              if (!auth.currentUser) {
+                setCurrentUser(guestUser);
+                setSyncStatus('saved');
+              }
+            }
+          })
+          .catch(err => {
+            console.warn('[Firebase Auth] Background session notice:', err);
+          });
       }
     });
 
@@ -4767,17 +4751,6 @@ export default function App() {
           )}
         </button>
 
-
-        {/* User Account & Firebase Sign In Button */}
-        <button
-          onClick={() => setAuthModalOpen(true)}
-          title={currentUser ? `Account: ${currentUser.email || (currentUser.isAnonymous ? "Guest Student" : "User")}` : "Sign In & Cloud Account"}
-          aria-label="Open Account Sign In Modal"
-          className="p-2.5 sm:p-3 min-w-[44px] min-h-[44px] sm:min-w-[48px] sm:min-h-[48px] rounded-2xl hud-btn cursor-pointer flex items-center justify-center bg-cyan-500/20 hover:bg-cyan-500/35 border border-cyan-400/50 text-cyan-300 transition shadow-[0_0_15px_rgba(6,182,212,0.25)] relative"
-        >
-          <UserCheck className="w-4 h-4 sm:w-5 sm:h-5 text-cyan-300" />
-          <span className="absolute -top-1 -right-1 w-2.5 h-2.5 rounded-full bg-emerald-400 border border-black shadow-[0_0_8px_rgba(16,185,129,0.8)]" />
-        </button>
 
         {/* MY DAY IN REVIEW Feature Button */}
         <button
@@ -8608,15 +8581,15 @@ export default function App() {
                       <span className="px-1.5 py-0.5 rounded text-[9px] bg-cyan-500/20 text-cyan-300 font-mono">Single-User</span>
                     </div>
                     <div className="text-[10px] text-white/40 truncate">
-                      Cloud UID: {currentUser?.uid || 'Initializing...'}
+                      Cloud UID: {currentUser?.uid || "Establishing session..."}
                     </div>
                   </div>
                 </div>
                 <div className="pt-1 text-[10px] text-cyan-300/90 font-mono truncate">
-                  RTDB: users/{currentUser?.uid || 'uid'}/dashboard
+                  RTDB: https://gen-lang-client-0079533925-default-rtdb.firebaseio.com
                 </div>
                 <div className="text-[10px] text-white/40 font-mono truncate">
-                  Firestore: users/{currentUser?.uid || 'uid'}/dailyActivity
+                  Path: users/{currentUser?.uid || "user"}/dashboard
                 </div>
               </div>
 
@@ -9991,29 +9964,6 @@ export default function App() {
         />
       )}
 
-
-      {/* ================= FIREBASE AUTHENTICATION & ACCOUNT MODAL ================= */}
-      {authModalOpen && (
-        <AuthModal
-          isOpen={authModalOpen}
-          onClose={() => setAuthModalOpen(false)}
-          currentUser={currentUser}
-          onGoogleSignIn={handleGoogleSignIn}
-          onGuestSignIn={handleGuestSignIn}
-          onEmailAuth={handleEmailAuth}
-          onSignOut={logOutUser}
-          authEmail={authEmail}
-          setAuthEmail={setAuthEmail}
-          authPassword={authPassword}
-          setAuthPassword={setAuthPassword}
-          isAuthSignUp={isAuthSignUp}
-          setIsAuthSignUp={setIsAuthSignUp}
-          authLoading={authLoading}
-          authError={authError}
-          authSuccessMsg={authSuccessMsg}
-          unauthorizedDomain={unauthorizedDomain}
-        />
-      )}
 
       {/* ================= MY DAY IN REVIEW HUB MODAL ================= */}
       {dayInReviewModalOpen && (

@@ -61,7 +61,7 @@ export const db = initializeFirestore(app, {
 export const auth = getAuth(app);
 
 // Initialize Realtime Database
-export const rtdb = getDatabase(app);
+export const rtdb = getDatabase(app, configAny.databaseURL || "https://gen-lang-client-0079533925-default-rtdb.firebaseio.com");
 
 export type SyncStatus = 'idle' | 'saving' | 'saved' | 'error' | 'offline';
 
@@ -166,53 +166,40 @@ export async function signInWithGoogle(): Promise<{ user: User; accessToken: str
  * Allows immediate data testing without OAuth domain whitelisting
  */
 export async function signInAsGuest(): Promise<User> {
-  const isRestricted = typeof window !== 'undefined' && localStorage.getItem('flocus_anon_auth_disabled') === 'true';
-
-  if (!isRestricted) {
-    try {
-      const result = await signInAnonymously(auth);
-      return result.user;
-    } catch (err: any) {
-      if (
-        err?.code === 'auth/admin-restricted-operation' ||
-        err?.code === 'auth/operation-not-allowed' ||
-        err?.message?.includes('admin-restricted-operation')
-      ) {
-        if (typeof window !== 'undefined') {
-          localStorage.setItem('flocus_anon_auth_disabled', 'true');
-        }
+  try {
+    const result = await signInAnonymously(auth);
+    return result.user;
+  } catch (err: any) {
+    console.warn('[Firebase Auth] Anonymous sign-in attempt notice:', err?.message || err);
+    let localUid = typeof window !== 'undefined' ? localStorage.getItem('flocus_local_guest_uid') : null;
+    if (!localUid) {
+      localUid = `guest_user_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+      if (typeof window !== 'undefined') {
+        localStorage.setItem('flocus_local_guest_uid', localUid);
       }
     }
+
+    const fallbackUser: User = {
+      uid: localUid,
+      isAnonymous: true,
+      email: null,
+      displayName: 'Single User',
+      emailVerified: false,
+      phoneNumber: null,
+      photoURL: null,
+      providerData: [],
+      providerId: 'anonymous',
+      refreshToken: '',
+      tenantId: null,
+      delete: async () => {},
+      getIdToken: async () => '',
+      getIdTokenResult: async () => ({} as any),
+      reload: async () => {},
+      toJSON: () => ({}),
+    } as unknown as User;
+
+    return fallbackUser;
   }
-
-  let localUid = typeof window !== 'undefined' ? localStorage.getItem('flocus_local_guest_uid') : null;
-  if (!localUid) {
-    localUid = `guest_user_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
-    if (typeof window !== 'undefined') {
-      localStorage.setItem('flocus_local_guest_uid', localUid);
-    }
-  }
-
-  const fallbackUser: User = {
-    uid: localUid,
-    isAnonymous: true,
-    email: null,
-    displayName: 'Guest Student',
-    emailVerified: false,
-    phoneNumber: null,
-    photoURL: null,
-    providerData: [],
-    providerId: 'anonymous',
-    refreshToken: '',
-    tenantId: null,
-    delete: async () => {},
-    getIdToken: async () => '',
-    getIdTokenResult: async () => ({} as any),
-    reload: async () => {},
-    toJSON: () => ({}),
-  } as unknown as User;
-
-  return fallbackUser;
 }
 
 /**
