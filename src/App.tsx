@@ -833,7 +833,16 @@ export default function App() {
   const pendingSavePromiseRef = useRef<Promise<any> | null>(null);
 
   // Firebase Daily Registry + Personal History State
-  const [dailyRegistryHistory, setDailyRegistryHistory] = useState<Record<string, DailyRegistryDayRecord>>({});
+  const [dailyRegistryHistory, setDailyRegistryHistory] = useState<Record<string, DailyRegistryDayRecord>>(() => {
+    try {
+      const cached = localStorage.getItem('flocus_daily_registry_history');
+      if (cached) {
+        const parsed = JSON.parse(cached);
+        if (parsed && typeof parsed === 'object') return parsed;
+      }
+    } catch {}
+    return {};
+  });
   const [historyModalOpen, setHistoryModalOpen] = useState(false);
   const dailyRegistryUnsubRef = useRef<(() => void) | null>(null);
 
@@ -1122,9 +1131,40 @@ export default function App() {
     setTimeout(() => setRegisterSuccessPulse(false), 2000);
   }, [newRegSubject, newRegTopic, newRegNotes, newRegDuration, newRegRating, saveDailyRegisterList, currentUser, recordDailyRegistryActivity]);
 
-  const handleSaveDayNotes = useCallback(async (date: string, notes: string) => {
+  const handleSaveDayNotes = useCallback(async (date: string, notes: string, aiSummary?: string) => {
     if (!currentUser) return false;
-    return await updateDailySummaryNotes(currentUser.uid, date, notes);
+    const success = await updateDailySummaryNotes(currentUser.uid, date, notes, aiSummary);
+    if (success) {
+      setDailyRegistryHistory(prev => {
+        const nextMap = {
+          ...prev,
+          [date]: {
+            ...(prev[date] || {
+              userId: currentUser.uid,
+              date,
+              dayOfWeek: getDayOfWeekName(new Date(date + 'T12:00:00')),
+              subjectsStudied: [],
+              plannedTasks: [],
+              completedTasks: [],
+              studySessions: [],
+              totalStudyMinutes: 0,
+              tuitionRevisionProgress: '',
+              dailyGoals: [],
+              examPrepProgress: '',
+              entries: {},
+            }),
+            dailySummaryNotes: notes,
+            ...(aiSummary !== undefined ? { aiSummary } : {}),
+            updatedAt: new Date().toISOString(),
+          },
+        };
+        try {
+          localStorage.setItem('flocus_daily_registry_history', JSON.stringify(nextMap));
+        } catch {}
+        return nextMap;
+      });
+    }
+    return success;
   }, [currentUser]);
 
   const handleAddManualEntryModal = useCallback(async (
@@ -1831,7 +1871,11 @@ export default function App() {
           console.log(`[Firebase Auth] Loading Daily Registry & Personal History for UID: ${user.uid}`);
           const historyAll = await loadUserDailyRegistryAll(user.uid);
           if (!isCancelled) {
-            setDailyRegistryHistory(historyAll || {});
+            const merged = { ...(historyAll || {}) };
+            setDailyRegistryHistory(merged);
+            try {
+              localStorage.setItem('flocus_daily_registry_history', JSON.stringify(merged));
+            } catch {}
           }
 
           // Real-time listener for Daily Registry
@@ -1840,7 +1884,11 @@ export default function App() {
           }
           dailyRegistryUnsubRef.current = subscribeToUserDailyRegistry(user.uid, data => {
             if (!isCancelled) {
-              setDailyRegistryHistory(data && typeof data === 'object' ? data : {});
+              const newData = data && typeof data === 'object' ? data : {};
+              setDailyRegistryHistory(newData);
+              try {
+                localStorage.setItem('flocus_daily_registry_history', JSON.stringify(newData));
+              } catch {}
             }
           });
 

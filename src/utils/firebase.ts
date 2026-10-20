@@ -690,37 +690,37 @@ export async function saveDailyRegistryEntryItem(
 export async function updateDailySummaryNotes(
   uid: string,
   date: string,
-  notes: string
+  notes: string,
+  aiSummary?: string
 ): Promise<boolean> {
   if (!uid || !date) return false;
   const nowIso = new Date().toISOString();
 
+  const payload: Record<string, any> = {
+    dailySummaryNotes: notes,
+    updatedAt: nowIso,
+  };
+  if (aiSummary !== undefined) {
+    payload.aiSummary = aiSummary;
+  }
+
   // Ensure record exists
   const existing = await loadDailyRegistryDay(uid, date);
   if (!existing) {
-    await saveDailyRegistryDay(uid, date, {
-      dailySummaryNotes: notes,
-      updatedAt: nowIso,
-    });
+    await saveDailyRegistryDay(uid, date, payload);
     return true;
   }
 
   try {
     const dayRef = rtdbRef(rtdb, `users/${uid}/dailyRegistry/${date}`);
-    await rtdbUpdate(dayRef, {
-      dailySummaryNotes: notes,
-      updatedAt: nowIso,
-    });
+    await rtdbUpdate(dayRef, payload);
 
     try {
       const fsDocRef = doc(db, 'users', uid, 'dailyRegistry', date);
-      await setDoc(fsDocRef, {
-        dailySummaryNotes: notes,
-        updatedAt: nowIso,
-      }, { merge: true });
+      await setDoc(fsDocRef, payload, { merge: true });
     } catch {}
 
-    console.log(`[DailyRegistry] Updated summary notes for ${date}`);
+    console.log(`[DailyRegistry] Updated summary notes and AI summary for ${date}`);
     return true;
   } catch (err) {
     console.error(`[DailyRegistry Error] Failed to update summary notes:`, err);

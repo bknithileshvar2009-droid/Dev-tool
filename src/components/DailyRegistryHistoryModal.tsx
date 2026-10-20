@@ -31,7 +31,7 @@ interface DailyRegistryHistoryModalProps {
   uid: string | null;
   userEmail: string | null;
   historyMap: Record<string, DailyRegistryDayRecord>;
-  onSaveDayNotes: (date: string, notes: string) => Promise<boolean>;
+  onSaveDayNotes: (date: string, notes: string, aiSummary?: string) => Promise<boolean>;
   onAddManualEntry?: any;
   onDeleteEntry?: any;
   activeTasks?: any[];
@@ -75,7 +75,7 @@ export const DailyRegistryHistoryModal: React.FC<DailyRegistryHistoryModalProps>
     setSaveStatus('idle');
     try {
       localStorage.setItem(`flocus_reflection_${selectedDate}`, reflectionText);
-      const success = await onSaveDayNotes(selectedDate, reflectionText);
+      const success = await onSaveDayNotes(selectedDate, reflectionText, aiSummary);
       if (success) {
         setSaveStatus('saved');
         setTimeout(() => setSaveStatus('idle'), 3000);
@@ -108,7 +108,7 @@ export const DailyRegistryHistoryModal: React.FC<DailyRegistryHistoryModalProps>
         throw new Error(data.error || 'Failed to generate AI summary.');
       }
       setAiSummary(data.summary);
-      await onSaveDayNotes(selectedDate, reflectionText);
+      await onSaveDayNotes(selectedDate, reflectionText, data.summary);
     } catch (err: any) {
       console.error('AI summary generation error:', err);
       setAiError(err.message || 'Failed to connect to AI summarization service.');
