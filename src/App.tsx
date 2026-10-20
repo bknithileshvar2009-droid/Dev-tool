@@ -4702,6 +4702,23 @@ export default function App() {
           <Crosshair className={`w-4 h-4 sm:w-5 sm:h-5 ${isPlacementModeActive ? 'animate-spin' : ''}`} />
         </button>
 
+
+
+        {/* Firebase User Profile / Cloud Status Badge */}
+        <button
+          onClick={() => { setStudioOpen(true); setActiveTab('cloud'); }}
+          title={currentUser ? `Signed in as ${currentUser.email || currentUser.uid}` : 'Click to sign in with Firebase'}
+          aria-label="Firebase Account Status"
+          className="px-3 py-2 min-h-[44px] sm:min-h-[48px] rounded-2xl hud-btn cursor-pointer flex items-center gap-2 bg-black/50 hover:bg-black/70 border border-white/10 text-xs text-white transition shadow-sm"
+        >
+          <div className="w-6 h-6 rounded-full bg-gradient-to-tr from-cyan-500 to-emerald-400 text-black font-extrabold flex items-center justify-center text-[10px] shrink-0">
+            {currentUser?.displayName ? currentUser.displayName.charAt(0).toUpperCase() : currentUser?.email ? currentUser.email.charAt(0).toUpperCase() : '👤'}
+          </div>
+          <span className="hidden lg:inline font-mono text-[11px] text-cyan-200 truncate max-w-[140px]">
+            {currentUser?.email || (currentUser ? 'Guest User' : 'Sign In')}
+          </span>
+        </button>
+
         {/* Visual Customization Studio Button (Themes, Wallpapers, 50 Presets) */}
         <button
           onClick={() => setStudioOpen(true)}
@@ -8409,28 +8426,28 @@ export default function App() {
                 </span>
               </div>
 
-              <div className="p-3.5 rounded-xl bg-black/40 border border-white/10 text-xs space-y-2">
-                <div className="flex items-center gap-2.5">
-                  <div className="w-8 h-8 rounded-full bg-cyan-500/20 border border-cyan-400/30 flex items-center justify-center text-cyan-300 font-bold">
-                    ⚡
+              <div className="p-4 rounded-xl bg-gradient-to-br from-cyan-950/40 via-black/60 to-black/80 border border-cyan-500/30 text-xs space-y-2.5 shadow-lg">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-full bg-gradient-to-tr from-cyan-500 to-emerald-400 text-black font-extrabold flex items-center justify-center text-base shadow-md shrink-0">
+                    {currentUser?.displayName ? currentUser.displayName.charAt(0).toUpperCase() : currentUser?.email ? currentUser.email.charAt(0).toUpperCase() : '⚡'}
                   </div>
                   <div className="min-w-0 flex-1">
-                    <div className="font-semibold text-white truncate flex items-center gap-1.5">
-                      <span>Firebase User Account</span>
-                      <span className="px-1.5 py-0.5 rounded text-[9px] bg-emerald-500/20 text-emerald-300 font-mono">
-                        {currentUser ? (currentUser.isAnonymous ? 'Guest User' : 'Authenticated') : 'Not Signed In'}
+                    <div className="font-bold text-white truncate flex items-center gap-2">
+                      <span className="text-sm text-cyan-200">
+                        {currentUser?.displayName || (currentUser?.email ? currentUser.email.split('@')[0] : currentUser ? 'Firebase Student' : 'Not Signed In')}
+                      </span>
+                      <span className="px-2 py-0.5 rounded-full text-[10px] bg-emerald-500/20 text-emerald-300 font-mono border border-emerald-500/30">
+                        {currentUser ? (currentUser.isAnonymous ? 'Guest User' : 'Verified Google Account') : 'Offline'}
                       </span>
                     </div>
-                    <div className="text-[10px] text-white/40 truncate">
-                      Cloud UID: {currentUser?.uid || "Sign in required"}
+                    <div className="text-[11px] text-white/70 font-mono truncate mt-0.5">
+                      {currentUser?.email || (currentUser?.uid ? `UID: ${currentUser.uid}` : 'Sign in to sync cloud data')}
                     </div>
                   </div>
                 </div>
-                <div className="pt-1 text-[10px] text-cyan-300/90 font-mono truncate">
-                  RTDB: https://gen-lang-client-0079533925-default-rtdb.firebaseio.com
-                </div>
-                <div className="text-[10px] text-white/40 font-mono truncate">
-                  Path: users/{currentUser?.uid || "user"}/dashboard
+                <div className="pt-2 border-t border-white/10 flex items-center justify-between text-[10px] text-white/50 font-mono">
+                  <span>RTDB Sync: Active</span>
+                  <span>Path: users/{currentUser?.uid ? currentUser.uid.slice(0, 8) + '...' : '{uid}'}/dashboard</span>
                 </div>
               </div>
 
