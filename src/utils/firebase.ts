@@ -567,6 +567,7 @@ export interface DailyRegistryDayRecord {
   tuitionRevisionProgress: string;
   dailyGoals: string[];
   dailySummaryNotes: string;
+  aiSummary?: string;
   examPrepProgress: string;
   entries: Record<string, DailyRegistryEntryItem>;
   updatedAt: string;
@@ -650,29 +651,19 @@ export async function saveDailyRegistryEntryItem(
   const nowIso = new Date().toISOString();
 
   try {
-    // Perform atomic update of entry AND daily registry day metadata
-    await rtdbRunTransaction(rtdb, async (transaction) => {
-      const entryRef = rtdbRef(rtdb, `users/${uid}/dailyRegistry/${date}/entries/${entry.id}`);
-      const dayRef = rtdbRef(rtdb, `users/${uid}/dailyRegistry/${date}`);
-      
-      transaction.set(entryRef, entry);
+    const entryRef = rtdbRef(rtdb, `users/${uid}/dailyRegistry/${date}/entries/${entry.id}`);
+    await rtdbSet(entryRef, entry);
 
-      const daySnap = await transaction.get(dayRef);
-      const dayData = daySnap.val() || {};
-      
-      const nowIso = new Date().toISOString();
-      const updates: Record<string, any> = {
-        userId: uid,
-        date,
-        dayOfWeek: dayData.dayOfWeek || getDayOfWeekName(new Date(date + 'T12:00:00')),
-        updatedAt: nowIso,
-        ...(dayMeta || {})
-      };
-      
-      transaction.update(dayRef, updates);
-    });
+    const dayRef = rtdbRef(rtdb, `users/${uid}/dailyRegistry/${date}`);
+    const updates: Record<string, any> = {
+      userId: uid,
+      date,
+      updatedAt: nowIso,
+      ...(dayMeta || {}),
+    };
+    await rtdbUpdate(dayRef, updates);
 
-    console.log(`[DailyRegistry RTDB] Atomic update: Entry ${entry.id} saved for ${date}`);
+    console.log(`[DailyRegistry RTDB] Entry ${entry.id} saved for ${date}`);
 
     // Dual-sync to Firestore doc
     try {

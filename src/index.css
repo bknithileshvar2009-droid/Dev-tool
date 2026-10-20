@@ -48,12 +48,16 @@ input[type=range] {
   position: absolute;
   touch-action: none;
   will-change: transform, width, height, left, top;
-  transition: box-shadow 0.2s ease, border-color 0.2s ease;
+  transition: left 0.45s cubic-bezier(0.175, 0.885, 0.32, 1.275), top 0.45s cubic-bezier(0.175, 0.885, 0.32, 1.275), width 0.45s cubic-bezier(0.175, 0.885, 0.32, 1.275), height 0.45s cubic-bezier(0.175, 0.885, 0.32, 1.275), transform 0.45s cubic-bezier(0.175, 0.885, 0.32, 1.275), box-shadow 0.2s ease, border-color 0.2s ease;
   border: 1px dashed transparent;
   border-radius: 24px;
 }
 
-body:not(.fullscreen-locked):not(.zen-mode) .dashboard-widget:hover {
+.dashboard-widget.dragging {
+  transition: none !important;
+}
+
+.dashboard-widget.dashboard-widget:hover {
   border-color: rgba(255, 255, 255, 0.2);
 }
 
