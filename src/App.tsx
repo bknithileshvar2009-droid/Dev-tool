@@ -2210,9 +2210,11 @@ export default function App() {
           }, 350);
         }
       } else {
-        console.log('[Firebase Auth] No authenticated session. Automatically connecting single-user anonymous identity...');
+        console.log('[Firebase Auth] No authenticated session.');
         restoredUserUidRef.current = null;
         isRestoringRef.current = false;
+        setCurrentUser(null);
+        setSyncStatus('idle');
         if (dailyRegistryUnsubRef.current) {
           dailyRegistryUnsubRef.current();
           dailyRegistryUnsubRef.current = null;
@@ -2221,20 +2223,6 @@ export default function App() {
           focusSessionsUnsubRef.current();
           focusSessionsUnsubRef.current = null;
         }
-
-        signInAsGuest()
-          .then(guestUser => {
-            if (guestUser && !isCancelled) {
-              console.log(`[Firebase Auth] Single-user background session established: UID ${guestUser.uid}`);
-              if (!auth.currentUser) {
-                setCurrentUser(guestUser);
-                setSyncStatus('saved');
-              }
-            }
-          })
-          .catch(err => {
-            console.warn('[Firebase Auth] Background session notice:', err);
-          });
       }
     });
 
@@ -8428,11 +8416,13 @@ export default function App() {
                   </div>
                   <div className="min-w-0 flex-1">
                     <div className="font-semibold text-white truncate flex items-center gap-1.5">
-                      <span>Personal Application Identity</span>
-                      <span className="px-1.5 py-0.5 rounded text-[9px] bg-cyan-500/20 text-cyan-300 font-mono">Single-User</span>
+                      <span>Firebase User Account</span>
+                      <span className="px-1.5 py-0.5 rounded text-[9px] bg-emerald-500/20 text-emerald-300 font-mono">
+                        {currentUser ? (currentUser.isAnonymous ? 'Guest User' : 'Authenticated') : 'Not Signed In'}
+                      </span>
                     </div>
                     <div className="text-[10px] text-white/40 truncate">
-                      Cloud UID: {currentUser?.uid || "Establishing session..."}
+                      Cloud UID: {currentUser?.uid || "Sign in required"}
                     </div>
                   </div>
                 </div>
@@ -8495,7 +8485,7 @@ export default function App() {
               )}
 
               <p className="text-[11px] text-white/50 leading-relaxed pt-1">
-                APESFLOW is running in <strong>Personal Single-User Mode</strong>. Authentication is handled automatically in the background using Firebase secure anonymous identity. No login forms or account creation are required.
+                Authenticate with Google or Guest mode to securely sync, load, and view your persistent records from Firebase Realtime Database and Firestore.
               </p>
             </div>
 
