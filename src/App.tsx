@@ -1944,12 +1944,20 @@ export default function App() {
 
       try {
         isSavingRef.current = true;
-        const savePromise = saveUserDashboard(currentUser.uid, payload);
-        pendingSavePromiseRef.current = savePromise;
-        await savePromise;
-        setSyncStatus('saved');
-        setLastSyncedTime(new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }));
-        console.log(`[Firebase Auto-Sync] Changes successfully saved to Firebase for UID: ${currentUser.uid} (updatedAt: ${payload.updatedAt})`);
+        
+        // Optimistic UI update
+        setSyncStatus('saving');
+        
+        const success = await saveUserDashboard(currentUser.uid, payload);
+        
+        if (success) {
+          setSyncStatus('saved');
+          setLastSyncedTime(new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }));
+          console.log(`[Firebase Auto-Sync] Changes successfully saved to Firebase for UID: ${currentUser.uid} (updatedAt: ${payload.updatedAt})`);
+        } else {
+          // Firebase failed but persisted locally in saveUserDashboard
+          setSyncStatus('idle'); // Or 'offline'
+        }
       } catch (err) {
         console.error(`[Firebase Auto-Sync Error] Failed saving changes for UID: ${currentUser.uid}:`, err);
         setSyncStatus('error');

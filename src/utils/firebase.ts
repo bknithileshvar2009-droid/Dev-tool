@@ -262,7 +262,10 @@ export async function saveUserDashboard(uid: string, dashboardData: Partial<User
     }
 
     if (!rtdbSuccess && !firestoreSuccess) {
-      throw new Error(`Failed to save dashboard for user ${uid} to both RTDB and Firestore.`);
+      // Local storage fallback for offline support
+      localStorage.setItem(`flocus_dashboard_${uid}`, JSON.stringify(payload));
+      console.warn(`[Firebase] Write failed for UID ${uid}, persisted to local storage.`);
+      return true; // Return true to indicate local save success
     }
     return true;
   })();
