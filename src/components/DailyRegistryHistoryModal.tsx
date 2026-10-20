@@ -9,7 +9,6 @@ import {
   getLocalDateString,
   saveDailyRegister,
   loadDailyRegisters,
-  DailyRegistryDayRecord,
 } from '../utils/firebase';
 
 interface DailyRegistryHistoryModalProps {
@@ -17,11 +16,6 @@ interface DailyRegistryHistoryModalProps {
   onClose: () => void;
   uid: string | null;
   userEmail: string | null;
-  historyMap?: Record<string, DailyRegistryDayRecord>;
-  onSaveDayNotes?: (date: string, notes: string) => Promise<boolean>;
-  onAddManualEntry?: (date: string, entryData: any) => Promise<boolean>;
-  onDeleteEntry?: (date: string, entryId: string) => Promise<boolean>;
-  activeTasks?: Array<{ id: string; text: string; completed: boolean; subject?: string; priority?: string }>;
 }
 
 export const DailyRegistryHistoryModal: React.FC<DailyRegistryHistoryModalProps> = ({

@@ -28,19 +28,7 @@ import {
   query,
   orderBy,
 } from 'firebase/firestore';
-const firebaseConfig = {
-  projectId: "gen-lang-client-0079533925",
-  appId: "1:66925364916:web:61fa295a62e85f1f6379e1",
-  apiKey: "AIzaSyAHlYr4erSpNAdPZALgTuDinl7PKzwK1Fw",
-  authDomain: "gen-lang-client-0079533925.firebaseapp.com",
-  databaseURL: "https://gen-lang-client-0079533925-default-rtdb.firebaseio.com",
-  firestoreDatabaseId: "(default)",
-  storageBucket: "gen-lang-client-0079533925.firebasestorage.app",
-  messagingSenderId: "66925364916",
-  measurementId: "",
-  oAuthClientId: "",
-  recaptchaSiteKey: ""
-};
+import firebaseConfig from '../../firebase-applet-config.json';
 
 import {
   getDatabase,
@@ -54,36 +42,24 @@ import {
 } from 'firebase/database';
 
 // Initialize Firebase App
-let app;
-let db: any = null;
-let auth: any = null;
-let rtdb: any = null;
+export const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
 
-try {
-  app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
+const customDbId = (firebaseConfig.firestoreDatabaseId &&
+  firebaseConfig.firestoreDatabaseId !== '(default)' &&
+  firebaseConfig.firestoreDatabaseId.trim() !== '')
+  ? firebaseConfig.firestoreDatabaseId
+  : undefined;
 
-  const customDbId = (firebaseConfig.firestoreDatabaseId &&
-    firebaseConfig.firestoreDatabaseId !== '(default)' &&
-    firebaseConfig.firestoreDatabaseId.trim() !== '')
-    ? firebaseConfig.firestoreDatabaseId
-    : undefined;
+// Initialize Firestore with experimentalForceLongPolling to avoid WebChannel connection timeouts
+export const db = initializeFirestore(app, {
+  experimentalForceLongPolling: true,
+}, customDbId);
 
-  // Initialize Firestore
-  db = initializeFirestore(app, {
-    experimentalForceLongPolling: true,
-  }, customDbId);
+// Initialize Firebase Auth
+export const auth = getAuth(app);
 
-  // Initialize Firebase Auth
-  auth = getAuth(app);
-
-  // Initialize Realtime Database
-  rtdb = getDatabase(app);
-} catch (error) {
-  console.error("Fatal: Firebase initialization failed. App will run in mock mode.", error);
-  // Optional: Add mock implementation here if necessary
-}
-
-export { app, db, auth, rtdb };
+// Initialize Realtime Database
+export const rtdb = getDatabase(app);
 
 export type SyncStatus = 'idle' | 'saving' | 'saved' | 'error' | 'offline';
 
@@ -122,7 +98,7 @@ export function handleFirestoreError(error: unknown, operationType: OperationTyp
       emailVerified: auth.currentUser?.emailVerified,
       isAnonymous: auth.currentUser?.isAnonymous,
       tenantId: auth.currentUser?.tenantId,
-      providerInfo: auth.currentUser?.providerData?.map((provider: any) => ({
+      providerInfo: auth.currentUser?.providerData?.map(provider => ({
         providerId: provider.providerId,
         email: provider.email,
       })) || [],
@@ -239,59 +215,51 @@ export interface UserDashboardPayload {
 export async function saveUserDashboard(uid: string, dashboardData: Partial<UserDashboardPayload> & { config?: any; tasks?: any[]; updatedAt?: string }): Promise<boolean> {
   if (!uid) return false;
 
-  const savePromise = (async () => {
-    const payload: UserDashboardPayload = {
-      userId: uid,
-      config: dashboardData.config || {},
-      tasks: Array.isArray(dashboardData.tasks) ? dashboardData.tasks : [],
-      dailyRegister: Array.isArray(dashboardData.dailyRegister) ? dashboardData.dailyRegister : (dashboardData.config?.dailyRegister || []),
-      scratchpad: typeof dashboardData.scratchpad === 'string' ? dashboardData.scratchpad : '',
-      presets: Array.isArray(dashboardData.presets) ? dashboardData.presets : [],
-      wallpaperFavorites: Array.isArray(dashboardData.wallpaperFavorites) ? dashboardData.wallpaperFavorites : [],
-      wallpaperRecent: Array.isArray(dashboardData.wallpaperRecent) ? dashboardData.wallpaperRecent : [],
-      favouriteQuotes: Array.isArray(dashboardData.favouriteQuotes) ? dashboardData.favouriteQuotes : [],
-      studyStreak: typeof dashboardData.studyStreak === 'number' ? dashboardData.studyStreak : (typeof dashboardData.pomoStreak === 'number' ? dashboardData.pomoStreak : 0),
-      updatedAt: dashboardData.updatedAt || new Date().toISOString(),
-    };
+  const payload: UserDashboardPayload = {
+    userId: uid,
+    config: dashboardData.config || {},
+    tasks: Array.isArray(dashboardData.tasks) ? dashboardData.tasks : [],
+    dailyRegister: Array.isArray(dashboardData.dailyRegister) ? dashboardData.dailyRegister : (dashboardData.config?.dailyRegister || []),
+    scratchpad: typeof dashboardData.scratchpad === 'string' ? dashboardData.scratchpad : '',
+    presets: Array.isArray(dashboardData.presets) ? dashboardData.presets : [],
+    wallpaperFavorites: Array.isArray(dashboardData.wallpaperFavorites) ? dashboardData.wallpaperFavorites : [],
+    wallpaperRecent: Array.isArray(dashboardData.wallpaperRecent) ? dashboardData.wallpaperRecent : [],
+    favouriteQuotes: Array.isArray(dashboardData.favouriteQuotes) ? dashboardData.favouriteQuotes : [],
+    studyStreak: typeof dashboardData.studyStreak === 'number' ? dashboardData.studyStreak : (typeof dashboardData.pomoStreak === 'number' ? dashboardData.pomoStreak : 0),
+    updatedAt: dashboardData.updatedAt || new Date().toISOString(),
+  };
 
-    let rtdbSuccess = false;
-    let firestoreSuccess = false;
+  let rtdbSuccess = false;
+  let firestoreSuccess = false;
 
-    try {
-      const rtdbTargetRef = rtdbRef(rtdb, `users/${uid}/dashboard`);
-      await rtdbSet(rtdbTargetRef, payload);
-      rtdbSuccess = true;
-    } catch (rtdbErr) {
-      console.warn(`[Firebase RTDB Error] Write failed:`, rtdbErr);
-    }
-
-    try {
-      const docRef = doc(db, 'users', uid, 'dashboard', 'data');
-      await setDoc(docRef, payload, { merge: true });
-      firestoreSuccess = true;
-    } catch (fsErr) {
-      console.warn(`[Firebase Firestore Error] Write failed:`, fsErr);
-    }
-
-    if (!rtdbSuccess && !firestoreSuccess) {
-      // Local storage fallback for offline support
-      localStorage.setItem(`flocus_dashboard_${uid}`, JSON.stringify(payload));
-      console.warn(`[Firebase] Write failed for UID ${uid}, persisted to local storage.`);
-      return true; // Return true to indicate local save success
-    }
-    return true;
-  })();
-
-  const timeoutPromise = new Promise<boolean>((_, reject) =>
-    setTimeout(() => reject(new Error('Firebase save timed out')), 10000)
-  );
-
+  // 1. Save to Realtime Database at users/{uid}/dashboard
   try {
-    return await Promise.race([savePromise, timeoutPromise]);
-  } catch (err) {
-    console.error('[Firebase] Save failed or timed out:', err);
-    return false;
+    const rtdbTargetRef = rtdbRef(rtdb, `users/${uid}/dashboard`);
+    await rtdbSet(rtdbTargetRef, payload);
+    rtdbSuccess = true;
+    console.log(`[Firebase RTDB] Write succeeded for UID: ${uid} at path: users/${uid}/dashboard (updatedAt: ${payload.updatedAt})`);
+  } catch (rtdbErr) {
+    console.warn(`[Firebase RTDB Error] Write failed for UID: ${uid} at path users/${uid}/dashboard:`, rtdbErr);
   }
+
+  // 2. Dual-save to Cloud Firestore at users/{uid}/dashboard/data
+  const fsPath = `users/${uid}/dashboard/data`;
+  try {
+    const docRef = doc(db, 'users', uid, 'dashboard', 'data');
+    await setDoc(docRef, payload, { merge: true });
+    firestoreSuccess = true;
+    console.log(`[Firebase Firestore] Write succeeded for UID: ${uid} at path: ${fsPath}`);
+  } catch (fsErr) {
+    console.warn(`[Firebase Firestore Notice] Write notice for UID: ${uid} at path ${fsPath}:`, fsErr);
+  }
+
+  // Return true if at least one remote target saved successfully
+  if (rtdbSuccess || firestoreSuccess) {
+    return true;
+  }
+
+  // If both failed, throw error to alert UI and retry mechanism
+  throw new Error(`Failed to save dashboard for user ${uid} to both RTDB and Firestore.`);
 }
 
 /**

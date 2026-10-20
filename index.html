@@ -18,12 +18,5 @@
   <body class="bg-[#030407] text-slate-100 overflow-hidden select-none w-screen h-screen min-h-screen">
     <div id="root" class="w-full h-full min-h-screen overflow-hidden"></div>
     <script type="module" src="/src/main.tsx"></script>
-    <script>
-      if ('serviceWorker' in navigator) {
-        window.addEventListener('load', () => {
-          navigator.serviceWorker.register('/sw.js').catch(err => console.warn('Service Worker registration skipped:', err));
-        });
-      }
-    </script>
   </body>
 </html>

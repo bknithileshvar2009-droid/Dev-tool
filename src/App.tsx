@@ -758,19 +758,6 @@ export default function App() {
   const [pomoSecondsLeft, setPomoSecondsLeft] = useState<number>(25 * 60);
   const [pomoTotalSeconds, setPomoTotalSeconds] = useState<number>(25 * 60);
   const [isPomoRunning, setIsPomoRunning] = useState<boolean>(false);
-
-  // Offline detection state
-  const [isOffline, setIsOffline] = useState(!navigator.onLine);
-  useEffect(() => {
-    const handleOnline = () => setIsOffline(false);
-    const handleOffline = () => setIsOffline(true);
-    window.addEventListener('online', handleOnline);
-    window.addEventListener('offline', handleOffline);
-    return () => {
-      window.removeEventListener('online', handleOnline);
-      window.removeEventListener('offline', handleOffline);
-    };
-  }, []);
   const [pomoStreak, setPomoStreak] = useState<number>(() => {
     try {
       const saved = localStorage.getItem('flocus_pomo_streak');
@@ -826,7 +813,6 @@ export default function App() {
   });
   const [lastSyncedTime, setLastSyncedTime] = useState<string | null>(null);
   const isRemoteUpdateRef = useRef<boolean>(false);
-  const isSavingRef = useRef<boolean>(false);
   const isRestoringRef = useRef<boolean>(false);
   const restoredUserUidRef = useRef<string | null>(null);
   const lastSyncedPayloadRef = useRef<string | null>(null);
@@ -1793,10 +1779,6 @@ export default function App() {
   useEffect(() => {
     let isCancelled = false;
 
-    if (!auth) {
-      console.warn('[Firebase Auth] Auth service not initialized, skipping listener.');
-      return;
-    }
     const unsubscribe = onAuthStateChanged(auth, async user => {
       if (isCancelled) return;
 
@@ -1910,7 +1892,7 @@ export default function App() {
     const unsubscribe = subscribeToUserDashboard(
       currentUser.uid,
       cloudData => {
-        if (!cloudData || !cloudData.config || isSavingRef.current) return;
+        if (!cloudData || !cloudData.config) return;
         // Ignore echo of our own last saved payload
         if (cloudData.updatedAt && lastSyncedPayloadRef.current === cloudData.updatedAt) {
           return;
@@ -1956,29 +1938,19 @@ export default function App() {
       lastSyncedPayloadRef.current = payload.updatedAt;
 
       try {
-        isSavingRef.current = true;
-        
-        // Optimistic UI update
-        setSyncStatus('saving');
-        
-        const success = await saveUserDashboard(currentUser.uid, payload);
-        
-        if (success) {
-          setSyncStatus('saved');
-          setLastSyncedTime(new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }));
-          console.log(`[Firebase Auto-Sync] Changes successfully saved to Firebase for UID: ${currentUser.uid} (updatedAt: ${payload.updatedAt})`);
-        } else {
-          // Firebase failed but persisted locally in saveUserDashboard
-          setSyncStatus('idle'); // Or 'offline'
-        }
+        const savePromise = saveUserDashboard(currentUser.uid, payload);
+        pendingSavePromiseRef.current = savePromise;
+        await savePromise;
+        setSyncStatus('saved');
+        setLastSyncedTime(new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }));
+        console.log(`[Firebase Auto-Sync] Changes successfully saved to Firebase for UID: ${currentUser.uid} (updatedAt: ${payload.updatedAt})`);
       } catch (err) {
         console.error(`[Firebase Auto-Sync Error] Failed saving changes for UID: ${currentUser.uid}:`, err);
         setSyncStatus('error');
       } finally {
-        isSavingRef.current = false;
         pendingSavePromiseRef.current = null;
       }
-    }, 2000);
+    }, 1200);
 
     return () => {
       if (syncTimeoutRef.current) window.clearTimeout(syncTimeoutRef.current);
@@ -7945,13 +7917,6 @@ export default function App() {
           onDeleteEntry={handleDeleteEntryModal}
           activeTasks={tasks}
         />
-      )}
-
-      {/* Offline Status Banner */}
-      {isOffline && (
-        <div className="fixed top-0 left-0 right-0 z-[100] bg-amber-500/95 backdrop-blur-md text-black font-bold text-xs px-4 py-2 text-center flex items-center justify-center gap-2 shadow-2xl">
-          <span>⚠️ You are currently offline. Changes are saved locally and will sync when reconnected.</span>
-        </div>
       )}
     </div>
   );
