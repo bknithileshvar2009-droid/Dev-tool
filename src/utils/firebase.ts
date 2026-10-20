@@ -28,7 +28,19 @@ import {
   query,
   orderBy,
 } from 'firebase/firestore';
-import firebaseConfig from '../../firebase-applet-config.json';
+const firebaseConfig = {
+  projectId: "gen-lang-client-0079533925",
+  appId: "1:66925364916:web:61fa295a62e85f1f6379e1",
+  apiKey: "AIzaSyAHlYr4erSpNAdPZALgTuDinl7PKzwK1Fw",
+  authDomain: "gen-lang-client-0079533925.firebaseapp.com",
+  databaseURL: "https://gen-lang-client-0079533925-default-rtdb.firebaseio.com",
+  firestoreDatabaseId: "(default)",
+  storageBucket: "gen-lang-client-0079533925.firebasestorage.app",
+  messagingSenderId: "66925364916",
+  measurementId: "",
+  oAuthClientId: "",
+  recaptchaSiteKey: ""
+};
 
 import {
   getDatabase,
