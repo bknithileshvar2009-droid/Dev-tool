@@ -312,13 +312,16 @@ export const DayInReviewHubModal: React.FC<DayInReviewHubModalProps> = ({
   const handleStopTimer = async () => {
     if (!activeTimer) return;
 
+    const currentTimer = { ...activeTimer };
+    setActiveTimer(null); // Clear timer immediately from UI so user feels instantaneous response
+
     const now = Date.now();
-    const finalMs = activeTimer.isPaused
-      ? activeTimer.accumulatedMs
-      : activeTimer.accumulatedMs + (now - activeTimer.startTimestamp);
+    const finalMs = currentTimer.isPaused
+      ? currentTimer.accumulatedMs
+      : currentTimer.accumulatedMs + (now - currentTimer.startTimestamp);
 
     const durationMins = Math.max(1, Math.round(finalMs / 60000));
-    const startDate = new Date(activeTimer.createdAt);
+    const startDate = new Date(currentTimer.createdAt);
     const startHH = String(startDate.getHours()).padStart(2, '0');
     const startMM = String(startDate.getMinutes()).padStart(2, '0');
 
@@ -327,33 +330,48 @@ export const DayInReviewHubModal: React.FC<DayInReviewHubModalProps> = ({
     const endMM = String(endDate.getMinutes()).padStart(2, '0');
 
     const record: ActivityRecord = {
-      id: activeTimer.activityId,
+      id: currentTimer.activityId,
       userId: effectiveUid,
-      title: activeTimer.title,
-      categoryId: activeTimer.categoryId,
-      date: activeTimer.date,
+      title: currentTimer.title,
+      categoryId: currentTimer.categoryId,
+      date: currentTimer.date,
       startTime: `${startHH}:${startMM}`,
       endTime: `${endHH}:${endMM}`,
-      startTimestamp: activeTimer.createdAt,
+      startTimestamp: currentTimer.createdAt,
       endTimestamp: now,
       durationMinutes: durationMins,
-      notes: activeTimer.notes || '',
-      tags: activeTimer.tags || [],
+      notes: currentTimer.notes || '',
+      tags: currentTimer.tags || [],
       trackingMethod: 'timer',
       status: 'completed',
-      goalId: activeTimer.goalId || '',
-      createdAt: activeTimer.createdAt,
+      goalId: currentTimer.goalId || '',
+      createdAt: currentTimer.createdAt,
       updatedAt: now,
     };
 
-    // Save Record
-    await saveActivityRecordToFirebase(effectiveUid, record);
+    // Prepend record to activities list immediately
     setActivities(prev => [record, ...prev.filter(a => a.id !== record.id)]);
-
-    // Clear Active Timer
-    setActiveTimer(null);
-    await saveActiveTimerStateToFirebase(effectiveUid, null);
     showToast(`Stopped timer. Logged ${formatDurationMinutes(durationMins)} for "${record.title}"`);
+
+    // Async save to cloud & clear active timer in Firebase
+    try {
+      await Promise.all([
+        saveActivityRecordToFirebase(effectiveUid, record),
+        saveActiveTimerStateToFirebase(effectiveUid, null),
+      ]);
+    } catch (err) {
+      console.warn('Firebase save on stop timer error:', err);
+    }
+  };
+
+  const handleCancelTimer = async () => {
+    if (!activeTimer) return;
+    if (!window.confirm('Discard active timer without saving?')) return;
+    setActiveTimer(null);
+    try {
+      await saveActiveTimerStateToFirebase(effectiveUid, null);
+    } catch {}
+    showToast('Active timer discarded');
   };
 
   // Manual Activity Create / Edit
@@ -686,10 +704,18 @@ export const DayInReviewHubModal: React.FC<DayInReviewHubModalProps> = ({
                         )}
                         <button
                           onClick={handleStopTimer}
-                          className="py-2.5 px-4 rounded-xl bg-rose-500 hover:bg-rose-400 text-white font-bold text-xs transition cursor-pointer flex items-center gap-1.5"
+                          className="py-2.5 px-4 rounded-xl bg-rose-500 hover:bg-rose-400 text-white font-bold text-xs transition cursor-pointer flex items-center gap-1.5 shadow-[0_0_15px_rgba(244,63,94,0.3)]"
                         >
                           <Square className="w-4 h-4 fill-current" />
                           <span>Stop & Save</span>
+                        </button>
+                        <button
+                          onClick={handleCancelTimer}
+                          className="py-2.5 px-3 rounded-xl bg-white/10 hover:bg-white/20 text-white/70 hover:text-white font-semibold text-xs transition cursor-pointer flex items-center gap-1"
+                          title="Discard timer without saving"
+                        >
+                          <X className="w-4 h-4" />
+                          <span>Discard</span>
                         </button>
                       </div>
                     )}

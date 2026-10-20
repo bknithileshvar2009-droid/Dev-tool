@@ -246,13 +246,15 @@ export async function saveUserDashboard(uid: string, dashboardData: Partial<User
     updatedAt: dashboardData.updatedAt || new Date().toISOString(),
   };
 
+  const cleanedPayload = JSON.parse(JSON.stringify(payload));
+
   let firestoreSuccess = false;
 
   // 1. Primary Cloud Firestore write
   const fsPath = `users/${uid}/dashboard/data`;
   try {
     const docRef = doc(db, 'users', uid, 'dashboard', 'data');
-    await setDoc(docRef, payload, { merge: true });
+    await setDoc(docRef, cleanedPayload, { merge: true });
     firestoreSuccess = true;
     console.log(`[Firebase Firestore] Write succeeded for UID: ${uid} at path: ${fsPath}`);
   } catch (fsErr) {
@@ -611,15 +613,17 @@ export async function saveDailyRegistryDay(
     updatedAt: record.updatedAt || nowIso,
   };
 
+  const cleanedPayload = JSON.parse(JSON.stringify(payload));
+
   try {
     const docRef = doc(db, 'users', uid, 'dailyRegistry', date);
-    await setDoc(docRef, payload, { merge: true });
+    await setDoc(docRef, cleanedPayload, { merge: true });
     console.log(`[DailyRegistry Firestore] Saved day ${date} for UID: ${uid}`);
 
     // Optional non-blocking RTDB mirror
     try {
       const targetRef = rtdbRef(rtdb, `users/${uid}/dailyRegistry/${date}`);
-      rtdbSet(targetRef, payload).catch(() => {});
+      rtdbSet(targetRef, cleanedPayload).catch(() => {});
     } catch {}
 
     return true;
@@ -642,18 +646,20 @@ export async function saveDailyRegistryEntryItem(
   if (!uid || !date || !entry || !entry.id) return false;
 
   const nowIso = new Date().toISOString();
+  const rawPayload = {
+    userId: uid,
+    date,
+    updatedAt: nowIso,
+    entries: {
+      [entry.id]: entry,
+    },
+    ...(dayMeta || {}),
+  };
+  const cleanedPayload = JSON.parse(JSON.stringify(rawPayload));
 
   try {
     const docRef = doc(db, 'users', uid, 'dailyRegistry', date);
-    await setDoc(docRef, {
-      userId: uid,
-      date,
-      updatedAt: nowIso,
-      entries: {
-        [entry.id]: entry,
-      },
-      ...(dayMeta || {}),
-    }, { merge: true });
+    await setDoc(docRef, cleanedPayload, { merge: true });
 
     console.log(`[DailyRegistry Firestore] Entry ${entry.id} saved for ${date}`);
 

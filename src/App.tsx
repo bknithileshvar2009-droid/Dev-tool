@@ -48,6 +48,7 @@ import {
   Timer,
   Play,
   Pause,
+  Square,
   Volume2,
   VolumeX,
   Minimize,
@@ -4834,6 +4835,17 @@ export default function App() {
             <span>Request 5m Break</span>
           </button>
 
+          {/* Turn Off Focus Timer Button */}
+          <button
+            type="button"
+            onClick={endFocusSession}
+            className="px-3 py-1.5 rounded-full bg-rose-500/20 hover:bg-rose-500/35 text-rose-300 border border-rose-500/40 text-[11px] font-bold transition cursor-pointer flex items-center gap-1.5 shadow-sm"
+            title="Turn off focus timer & end session"
+          >
+            <Square className="w-3.5 h-3.5 fill-current text-rose-400" />
+            <span>Turn Off Timer</span>
+          </button>
+
           {/* Fullscreen Button */}
           <button
             type="button"
@@ -5896,8 +5908,8 @@ export default function App() {
                 <span>Request 5m Break</span>
               </button>
 
-              {/* Reset Session (Only when idle) */}
-              {focusSessionState === 'idle' && (
+              {/* Reset / Turn Off Timer Button */}
+              {focusSessionState === 'idle' ? (
                 <button
                   type="button"
                   onClick={endFocusSession}
@@ -5905,6 +5917,16 @@ export default function App() {
                   className="p-1.5 rounded-xl bg-white/5 hover:bg-white/15 text-white/70 hover:text-white border border-white/10 transition cursor-pointer"
                 >
                   <RotateCcw className="w-3.5 h-3.5" />
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={endFocusSession}
+                  title="Turn off focus timer and end session"
+                  className="px-2.5 py-1.5 rounded-xl font-bold text-[11px] bg-rose-500/20 hover:bg-rose-500/35 text-rose-300 border border-rose-500/40 transition cursor-pointer flex items-center gap-1"
+                >
+                  <Square className="w-3.5 h-3.5 fill-current text-rose-400" />
+                  <span>Turn Off Timer</span>
                 </button>
               )}
             </div>
