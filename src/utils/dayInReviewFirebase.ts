@@ -39,19 +39,11 @@ import {
 /**
  * Helper function to sanitize objects before sending to Firestore
  * Firestore throws an error if any property value is `undefined`.
+ * JSON roundtrip strips out all `undefined` values cleanly.
  */
 export function cleanFirestorePayload<T extends Record<string, any>>(data: T): T {
   if (data === null || typeof data !== 'object') return data;
-  const cleaned: Record<string, any> = Array.isArray(data) ? [] : {};
-  for (const [key, value] of Object.entries(data)) {
-    if (value === undefined) continue;
-    if (value !== null && typeof value === 'object' && !(value instanceof Date)) {
-      cleaned[key] = cleanFirestorePayload(value);
-    } else {
-      cleaned[key] = value;
-    }
-  }
-  return cleaned as T;
+  return JSON.parse(JSON.stringify(data));
 }
 
 /**
