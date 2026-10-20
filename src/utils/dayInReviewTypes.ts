@@ -120,11 +120,37 @@ export function formatTime24to12(time24: string): string {
 }
 
 export function formatDurationMinutes(mins: number): string {
-  const h = Math.floor(Math.max(0, mins) / 60);
-  const m = Math.max(0, Math.round(mins % 60));
-  if (h === 0) return `${m}m`;
-  if (m === 0) return `${h}h`;
+  if (!mins || mins <= 0) return '0m';
+  if (mins < 1) {
+    const s = Math.round(mins * 60);
+    return `${s}s (${mins.toFixed(1)}m)`;
+  }
+  const totalSecs = Math.round(mins * 60);
+  const h = Math.floor(totalSecs / 3600);
+  const m = Math.floor((totalSecs % 3600) / 60);
+  const s = totalSecs % 60;
+
+  if (h === 0) {
+    if (s > 0) return `${m}m ${s}s (${mins.toFixed(1)}m)`;
+    return `${m}m`;
+  }
+  if (m === 0 && s === 0) return `${h}h`;
+  if (s > 0) return `${h}h ${m}m ${s}s`;
   return `${h}h ${m}m`;
+}
+
+export function formatFullDateAndWeekday(dateStr: string): string {
+  try {
+    const d = new Date(dateStr + 'T12:00:00');
+    if (isNaN(d.getTime())) return dateStr;
+    const weekday = d.toLocaleDateString('en-US', { weekday: 'long' });
+    const day = d.getDate();
+    const month = d.toLocaleDateString('en-US', { month: 'long' });
+    const year = d.getFullYear();
+    return `${weekday}, ${day} ${month} ${year}`;
+  } catch {
+    return dateStr;
+  }
 }
 
 export function formatTimerMs(ms: number): string {

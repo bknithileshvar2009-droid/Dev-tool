@@ -122,6 +122,7 @@ import VisualCustomizationStudio from './components/VisualCustomizationStudio';
 import AnimatedCharacterBackdrop from './components/AnimatedCharacterBackdrop';
 import DailyRegistryHistoryModal from './components/DailyRegistryHistoryModal';
 import DayInReviewHubModal from './components/dayInReview/DayInReviewHubModal';
+import { formatDurationMinutes, formatFullDateAndWeekday } from './utils/dayInReviewTypes';
 import FocusHistoryModal from './components/FocusHistoryModal';
 import FocusSetupModal from './components/FocusSetupModal';
 import FocusStreakBadgeModal from './components/FocusStreakBadgeModal';
@@ -4446,26 +4447,11 @@ export default function App() {
         available: true,
       },
       {
-        id: 'focus-mode',
-        label: isFocusModeActive ? 'Exit Focus Mode' : 'Enter Focus Mode (Distraction-Free)',
-        category: 'Focus',
-        shortcut: 'H',
-        action: () => { handleToggleFocusMode(); setCommandMenuOpen(false); },
-        available: config.optionalFeatures.focusMode,
-      },
-      {
         id: 'day-in-review',
         label: 'MY DAY IN REVIEW (Daily Activity Tracker, Cloud History & PDF Reports)',
         category: 'Activity',
         shortcut: 'R',
         action: () => { setDayInReviewModalOpen(true); setCommandMenuOpen(false); },
-        available: true,
-      },
-      {
-        id: 'focus-history',
-        label: 'Focus Session History & Cloud Records',
-        category: 'Focus',
-        action: () => { setFocusHistoryModalOpen(true); setCommandMenuOpen(false); },
         available: true,
       },
       {
@@ -4799,87 +4785,7 @@ export default function App() {
 
 
 
-      {/* ================= FOCUS MODE OVERLAY BANNER ================= */}
-      {isFocusModeActive && (
-        <div className="absolute top-6 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2.5 px-4 sm:px-6 py-2.5 rounded-full bg-black/85 backdrop-blur-2xl border border-amber-400/50 text-xs shadow-[0_0_35px_rgba(245,158,11,0.3)] flex-wrap justify-center">
-          <div className="flex items-center gap-2">
-            <span
-              className={`w-2.5 h-2.5 rounded-full ${
-                focusSessionState === 'onBreak'
-                  ? 'bg-emerald-400 animate-pulse'
-                  : focusSessionState === 'running'
-                  ? 'bg-amber-400 animate-pulse'
-                  : 'bg-white/50'
-              }`}
-            />
-            <span className="font-bold tracking-widest text-amber-300 uppercase font-['Plus_Jakarta_Sans'] text-[11px]">
-              {focusSessionState === 'onBreak'
-                ? '5m Break (Brevo)'
-                : focusSessionState === 'running'
-                ? 'Deep Focus Active'
-                : focusSessionState === 'paused'
-                ? 'Focus Paused'
-                : 'Focus Mode'}
-            </span>
-          </div>
-
-          <span className="opacity-40">•</span>
-
-          {/* Subject & Task Display */}
-          <div className="flex items-center gap-1.5 max-w-[180px] sm:max-w-[260px] truncate">
-            <span className="font-bold text-cyan-300 truncate text-[11px]">{activeSubject}</span>
-            <span className="opacity-40 text-[10px]">:</span>
-            <span className="text-white/80 font-medium truncate text-[11px]">{activeTask}</span>
-          </div>
-
-          <span className="opacity-40">•</span>
-
-          {/* Countdown Timer */}
-          <span className="font-mono font-black text-white tracking-wider tabular-digits text-sm bg-black/50 px-2.5 py-0.5 rounded-lg border border-white/10 shadow-inner">
-            {formatMinutesSeconds(focusSessionState === 'onBreak' ? breakSecondsLeft : focusSecondsLeft)}
-          </span>
-
-          {/* Start and Planned End Time */}
-          {sessionStartTime && sessionPlannedEndTime && (
-            <span className="hidden md:inline font-mono text-[10px] text-white/50 bg-white/5 px-2 py-0.5 rounded-md border border-white/5">
-              {new Date(sessionStartTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} → {new Date(sessionPlannedEndTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-            </span>
-          )}
-
-          {/* Request 5-Minute Break by Brevo Email */}
-          <button
-            type="button"
-            onClick={handleOpenBreakModal}
-            disabled={focusSessionState === 'onBreak'}
-            className="px-3 py-1.5 rounded-full bg-amber-500/20 hover:bg-amber-500/35 text-amber-200 border border-amber-500/40 text-[11px] font-bold transition cursor-pointer flex items-center gap-1.5 shadow-sm disabled:opacity-50"
-            title="Request a 5-minute break approval code via Brevo transactional email"
-          >
-            <Coffee className="w-3.5 h-3.5 text-amber-400" />
-            <span>Request 5m Break</span>
-          </button>
-
-          {/* Turn Off Focus Timer Button */}
-          <button
-            type="button"
-            onClick={endFocusSession}
-            className="px-3 py-1.5 rounded-full bg-rose-500/20 hover:bg-rose-500/35 text-rose-300 border border-rose-500/40 text-[11px] font-bold transition cursor-pointer flex items-center gap-1.5 shadow-sm"
-            title="Turn off focus timer & end session"
-          >
-            <Square className="w-3.5 h-3.5 fill-current text-rose-400" />
-            <span>Turn Off Timer</span>
-          </button>
-
-          {/* Fullscreen Button */}
-          <button
-            type="button"
-            onClick={requestFullscreenStudy}
-            className="p-1.5 rounded-full bg-white/10 hover:bg-white/20 text-white transition cursor-pointer"
-            title={isFullscreen ? 'Exit Full-screen' : 'Enter Full-screen'}
-          >
-            <Maximize className="w-3.5 h-3.5" />
-          </button>
-        </div>
-      )}
+      {/* Focus Mode overlay removed per user request */}
 
       {/* ================= 1. DAILY MOTIVATION WIDGET (FEATURE 1) ================= */}
       {config.optionalFeatures.dailyMotivation && config.motivation.visible && !isFocusModeActive && (
@@ -6133,20 +6039,28 @@ export default function App() {
                   {/* Controls: Duration & Focus Rating & Save Button */}
                   <div className="flex items-center justify-between gap-2 pt-1 border-t border-white/5">
                     {/* Duration Buttons */}
-                    <div className="flex items-center gap-1 text-[10px]">
+                    <div className="flex items-center gap-1 text-[10px] flex-wrap">
                       <span className="text-white/50 text-[9px]">Time:</span>
-                      {[25, 45, 60, 90].map(mins => (
+                      {[
+                        { label: '30s', mins: 0.5 },
+                        { label: '45s', mins: 0.75 },
+                        { label: '15m', mins: 15 },
+                        { label: '25m', mins: 25 },
+                        { label: '45m', mins: 45 },
+                        { label: '60m', mins: 60 },
+                      ].map(item => (
                         <button
-                          key={mins}
+                          key={item.label}
                           type="button"
-                          onClick={() => setNewRegDuration(mins)}
+                          onClick={() => setNewRegDuration(item.mins)}
+                          title={item.mins < 1 ? `${Math.round(item.mins * 60)} seconds (${item.mins} minutes)` : `${item.mins} minutes`}
                           className={`px-1.5 py-0.5 rounded transition cursor-pointer border ${
-                            newRegDuration === mins
+                            newRegDuration === item.mins
                               ? 'bg-amber-500/25 border-amber-400 text-amber-200 font-bold'
                               : 'bg-white/5 border-white/10 text-white/60 hover:text-white'
                           }`}
                         >
-                          {mins}m
+                          {item.label}
                         </button>
                       ))}
                     </div>
@@ -7479,10 +7393,10 @@ export default function App() {
                             </span>
                             <h4 className="font-bold text-sm text-white">{entry.topic}</h4>
                           </div>
-                          <div className="flex items-center gap-2 text-[10px] text-white/50 font-mono">
-                            <span>📅 {entry.date}</span>
+                          <div className="flex items-center gap-2 text-[10px] text-white/50 font-mono flex-wrap">
+                            <span>📅 {formatFullDateAndWeekday(entry.date)}</span>
                             <span>⏰ {entry.time}</span>
-                            <span>⏱ {entry.durationMinutes} mins</span>
+                            <span>⏱ {formatDurationMinutes(entry.durationMinutes)}</span>
                             <span className="text-amber-400">{'★'.repeat(entry.rating || 5)}</span>
                           </div>
                         </div>
@@ -7682,25 +7596,7 @@ export default function App() {
               </div>
             </button>
 
-            {/* 3. Focus Mode */}
-            <button
-              type="button"
-              onClick={() => handleToggleFocusMode()}
-              className={`flex items-center gap-2 p-2.5 rounded-xl border text-xs font-medium transition cursor-pointer text-left min-h-[48px] ${
-                isFocusModeActive
-                  ? 'bg-amber-500/25 border-amber-400 text-amber-300 shadow-[0_0_12px_rgba(251,191,36,0.25)]'
-                  : 'bg-white/5 hover:bg-white/10 border-white/10 text-white'
-              }`}
-              title="Focus Mode (Distraction-Free)"
-            >
-              <Flame className="w-4 h-4 text-amber-400 shrink-0" />
-              <div className="truncate">
-                <div className="font-semibold text-white text-xs">{isFocusModeActive ? 'Exit Focus' : 'Focus Mode'}</div>
-                <div className="text-[10px] text-white/50">Distraction-free</div>
-              </div>
-            </button>
-
-            {/* 4. Center & Align */}
+            {/* Center & Align */}
             <button
               type="button"
               onClick={() => recenterWidgets()}
@@ -7732,33 +7628,7 @@ export default function App() {
               </div>
             </button>
 
-            {/* 6. Deep Focus Quick Action */}
-            <button
-              type="button"
-              onClick={togglePomodoro}
-              className={`flex items-center gap-2 p-2.5 rounded-xl border text-xs font-medium transition cursor-pointer text-left min-h-[48px] ${
-                focusSessionState === 'running'
-                  ? 'bg-amber-500/25 border-amber-400 text-amber-300 shadow-[0_0_12px_rgba(245,158,11,0.25)]'
-                  : focusSessionState === 'onBreak'
-                  ? 'bg-emerald-500/25 border-emerald-400 text-emerald-300 shadow-[0_0_12px_rgba(16,185,129,0.25)]'
-                  : 'bg-white/5 hover:bg-white/10 border-white/10 text-white'
-              }`}
-              title="Start or pause Deep Focus study session"
-            >
-              <Flame className="w-4 h-4 text-amber-400 shrink-0" />
-              <div className="truncate">
-                <div className="font-semibold text-white text-xs">
-                  {focusSessionState === 'running'
-                    ? 'Pause Focus'
-                    : focusSessionState === 'onBreak'
-                    ? '5m Break'
-                    : 'Start Focus'}
-                </div>
-                <div className="text-[10px] text-white/50">{formatMinutesSeconds(focusSessionState === 'onBreak' ? breakSecondsLeft : focusSecondsLeft)}</div>
-              </div>
-            </button>
-
-            {/* 7. MY DAY IN REVIEW Button in Drawer */}
+            {/* MY DAY IN REVIEW Button in Drawer */}
             <button
               type="button"
               onClick={() => { setDayInReviewModalOpen(true); setDrawerOpen(false); }}
@@ -7773,25 +7643,6 @@ export default function App() {
                 </div>
                 <span className="px-2.5 py-1 rounded-full text-[10px] font-mono font-bold bg-cyan-400 text-black shadow">
                   FEATURE
-                </span>
-              </div>
-            </button>
-
-            {/* 8. Focus Session History Button in Drawer */}
-            <button
-              type="button"
-              onClick={() => { setFocusHistoryModalOpen(true); setDrawerOpen(false); }}
-              className="flex items-center gap-2 p-2.5 rounded-xl bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/30 text-amber-300 text-xs font-medium transition cursor-pointer text-left col-span-2 sm:col-span-3 min-h-[44px]"
-              title="Open Focus Session History & Cloud Records"
-            >
-              <Timer className="w-4 h-4 text-amber-400 shrink-0" />
-              <div className="flex-1 flex items-center justify-between">
-                <div>
-                  <span className="font-semibold text-white text-xs">Focus Mode History & Cloud Records</span>
-                  <span className="text-[10px] text-amber-300/80 block">View completed focus sprints & subject stats</span>
-                </div>
-                <span className="px-2 py-0.5 rounded-full text-[10px] font-mono font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30">
-                  {userFocusSessions.length} Sessions
                 </span>
               </div>
             </button>
@@ -8005,7 +7856,7 @@ export default function App() {
                   </div>
                   <div>
                     <div className="flex items-center gap-2">
-                      <span className="text-xs font-bold text-white">2. Calendar Widget</span>
+                      <span className="text-xs font-bold text-white">1. Calendar Widget</span>
                       <span className={`px-1.5 py-0.2 rounded text-[9px] font-bold ${config.optionalFeatures.calendarWidget ? 'bg-sky-400 text-black' : 'bg-white/10 text-white/40'}`}>
                         {config.optionalFeatures.calendarWidget ? 'ON' : 'OFF'}
                       </span>
@@ -8038,7 +7889,7 @@ export default function App() {
               )}
             </div>
 
-            {/* Feature 3: Wallpaper Customization */}
+            {/* Feature 2: Wallpaper Customization */}
             <div className={`p-4 rounded-2xl border transition ${config.optionalFeatures.wallpaperCustomization ? 'bg-purple-500/10 border-purple-500/30' : 'bg-white/[0.02] border-white/5 opacity-70'}`}>
               <div className="flex items-start justify-between gap-3">
                 <div className="flex gap-3">
@@ -8047,7 +7898,7 @@ export default function App() {
                   </div>
                   <div>
                     <div className="flex items-center gap-2">
-                      <span className="text-xs font-bold text-white">3. Wallpaper Customization</span>
+                      <span className="text-xs font-bold text-white">2. Wallpaper Customization</span>
                       <span className={`px-1.5 py-0.2 rounded text-[9px] font-bold ${config.optionalFeatures.wallpaperCustomization ? 'bg-purple-400 text-black' : 'bg-white/10 text-white/40'}`}>
                         {config.optionalFeatures.wallpaperCustomization ? 'ON' : 'OFF'}
                       </span>
@@ -8080,7 +7931,7 @@ export default function App() {
               )}
             </div>
 
-            {/* Feature 4: Widget Customization */}
+            {/* Feature 3: Widget Customization */}
             <div className={`p-4 rounded-2xl border transition ${config.optionalFeatures.widgetCustomization ? 'bg-emerald-500/10 border-emerald-500/30' : 'bg-white/[0.02] border-white/5 opacity-70'}`}>
               <div className="flex items-start justify-between gap-3">
                 <div className="flex gap-3">
@@ -8089,7 +7940,7 @@ export default function App() {
                   </div>
                   <div>
                     <div className="flex items-center gap-2">
-                      <span className="text-xs font-bold text-white">4. Widget Customization</span>
+                      <span className="text-xs font-bold text-white">3. Widget Customization</span>
                       <span className={`px-1.5 py-0.2 rounded text-[9px] font-bold ${config.optionalFeatures.widgetCustomization ? 'bg-emerald-400 text-black' : 'bg-white/10 text-white/40'}`}>
                         {config.optionalFeatures.widgetCustomization ? 'UNLOCKED' : 'LOCKED'}
                       </span>
@@ -8611,6 +8462,37 @@ export default function App() {
                   <span>Restore Data</span>
                 </button>
               </div>
+
+              <div className="flex items-center gap-2 pt-2 border-t border-white/10">
+                <button
+                  type="button"
+                  onClick={handleGoogleSignIn}
+                  disabled={authLoading}
+                  className="flex-1 py-2.5 px-3 rounded-xl bg-gradient-to-r from-blue-500/20 to-cyan-500/20 hover:from-blue-500/35 hover:to-cyan-500/35 text-cyan-200 font-bold text-xs border border-cyan-500/40 transition cursor-pointer flex items-center justify-center gap-1.5 disabled:opacity-50"
+                >
+                  <Cloud className="w-4 h-4 text-cyan-400" />
+                  <span>{authLoading ? 'Signing In...' : 'Sign In with Google'}</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={handleGuestSignIn}
+                  disabled={authLoading}
+                  className="py-2.5 px-3 rounded-xl bg-white/10 hover:bg-white/20 text-white font-bold text-xs border border-white/10 transition cursor-pointer flex items-center justify-center gap-1.5 disabled:opacity-50"
+                >
+                  <span>Quick Guest Session</span>
+                </button>
+              </div>
+
+              {authSuccessMsg && (
+                <div className="p-2.5 rounded-xl bg-emerald-500/20 border border-emerald-500/30 text-emerald-300 text-[11px] font-semibold">
+                  {authSuccessMsg}
+                </div>
+              )}
+              {authError && (
+                <div className="p-2.5 rounded-xl bg-rose-500/20 border border-rose-500/30 text-rose-300 text-[11px] font-semibold">
+                  {authError}
+                </div>
+              )}
 
               <p className="text-[11px] text-white/50 leading-relaxed pt-1">
                 APESFLOW is running in <strong>Personal Single-User Mode</strong>. Authentication is handled automatically in the background using Firebase secure anonymous identity. No login forms or account creation are required.

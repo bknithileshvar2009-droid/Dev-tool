@@ -35,6 +35,7 @@ import {
   getLocalDateString,
   getDayOfWeekName,
 } from '../utils/firebase';
+import { formatFullDateAndWeekday, formatDurationMinutes } from '../utils/dayInReviewTypes';
 
 interface DailyRegistryHistoryModalProps {
   isOpen: boolean;
@@ -99,6 +100,7 @@ export const DailyRegistryHistoryModal: React.FC<DailyRegistryHistoryModalProps>
   const [showAddEntryForm, setShowAddEntryForm] = useState(false);
   const [entryTopic, setEntryTopic] = useState('');
   const [entryDuration, setEntryDuration] = useState(30);
+  const [entryUnit, setEntryUnit] = useState<'minutes' | 'seconds'>('minutes');
   const [entryNotes, setEntryNotes] = useState('');
   const [entrySubject, setEntrySubject] = useState('Mathematics');
 
@@ -152,16 +154,7 @@ export const DailyRegistryHistoryModal: React.FC<DailyRegistryHistoryModalProps>
 
     const summaries: CombinedDaySummaryItem[] = filteredDates.map(dateKey => {
       const rec = historyMap[dateKey];
-      let fullDateStr = dateKey;
-      try {
-        const dObj = new Date(dateKey + "T12:00:00");
-        fullDateStr = dObj.toLocaleDateString("en-US", {
-          weekday: "long",
-          year: "numeric",
-          month: "long",
-          day: "numeric",
-        });
-      } catch {}
+      const fullDateStr = formatFullDateAndWeekday(dateKey);
 
       return {
         date: dateKey,
@@ -291,6 +284,8 @@ export const DailyRegistryHistoryModal: React.FC<DailyRegistryHistoryModalProps>
     e.preventDefault();
     if (!entryTopic.trim()) return;
 
+    const finalDurationMinutes = entryUnit === 'seconds' ? +(Math.max(1, entryDuration) / 60).toFixed(2) : Math.max(1, entryDuration);
+
     if (onAddManualEntry) {
       await onAddManualEntry(selectedDate, {
         timestamp: new Date().toISOString(),
@@ -298,7 +293,7 @@ export const DailyRegistryHistoryModal: React.FC<DailyRegistryHistoryModalProps>
         eventType: 'manual_log',
         description: `${entrySubject}: ${entryTopic.trim()}`,
         topic: entryTopic.trim(),
-        durationMinutes: entryDuration,
+        durationMinutes: finalDurationMinutes,
         notes: entryNotes.trim() || undefined,
         status: 'completed',
         rating: 5,
@@ -617,11 +612,13 @@ export const DailyRegistryHistoryModal: React.FC<DailyRegistryHistoryModalProps>
             <div className="space-y-6">
               {/* Welcoming Banner & Prompt */}
               <div className="p-5 rounded-2xl bg-gradient-to-r from-cyan-950/40 via-slate-900/60 to-black/60 border border-cyan-500/20 space-y-2">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <span className="text-lg font-bold text-white font-mono">{selectedDate}</span>
-                    <span className="px-2.5 py-0.5 rounded-lg text-xs font-semibold bg-cyan-500/20 text-cyan-300 border border-cyan-500/30">
-                      {getDayOfWeekName(new Date(selectedDate + 'T12:00:00'))}
+                <div className="flex items-center justify-between flex-wrap gap-2">
+                  <div className="flex items-center gap-2.5 flex-wrap">
+                    <span className="text-base sm:text-lg font-bold text-white tracking-wide">
+                      {formatFullDateAndWeekday(selectedDate)}
+                    </span>
+                    <span className="px-2 py-0.5 rounded-lg text-xs font-mono bg-cyan-500/15 text-cyan-300 border border-cyan-500/30">
+                      {selectedDate}
                     </span>
                     {selectedDate === todayStr && (
                       <span className="px-2 py-0.5 rounded-lg text-[10px] font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
@@ -759,15 +756,43 @@ export const DailyRegistryHistoryModal: React.FC<DailyRegistryHistoryModalProps>
                     </div>
 
                     <div>
-                      <label className="text-[10px] text-white/50 block mb-1">Duration (minutes)</label>
+                      <div className="flex items-center justify-between mb-1">
+                        <label className="text-[10px] text-white/50 block">Duration</label>
+                        <div className="flex items-center gap-1 text-[10px]">
+                          <button
+                            type="button"
+                            onClick={() => setEntryUnit('minutes')}
+                            className={`px-1.5 py-0.5 rounded cursor-pointer transition ${
+                              entryUnit === 'minutes' ? 'bg-cyan-500/30 text-cyan-300 font-bold' : 'text-white/40 hover:text-white'
+                            }`}
+                          >
+                            Minutes
+                          </button>
+                          <span className="text-white/20">|</span>
+                          <button
+                            type="button"
+                            onClick={() => setEntryUnit('seconds')}
+                            className={`px-1.5 py-0.5 rounded cursor-pointer transition ${
+                              entryUnit === 'seconds' ? 'bg-cyan-500/30 text-cyan-300 font-bold' : 'text-white/40 hover:text-white'
+                            }`}
+                          >
+                            Seconds
+                          </button>
+                        </div>
+                      </div>
                       <input
                         type="number"
-                        min="5"
-                        max="360"
+                        min="1"
+                        max={entryUnit === 'seconds' ? 86400 : 1440}
                         value={entryDuration}
                         onChange={e => setEntryDuration(Number(e.target.value))}
                         className="w-full bg-black/60 border border-white/10 rounded-xl px-2.5 py-1.5 text-xs text-white"
                       />
+                      {entryUnit === 'seconds' && (
+                        <p className="text-[10px] text-cyan-300 mt-1 font-mono">
+                          Converted: {entryDuration}s = {(entryDuration / 60).toFixed(2)} mins ({Math.floor(entryDuration / 60)}m {entryDuration % 60}s)
+                        </p>
+                      )}
                     </div>
                   </div>
 
@@ -808,7 +833,7 @@ export const DailyRegistryHistoryModal: React.FC<DailyRegistryHistoryModalProps>
                           <div className="flex items-center gap-2">
                             <span className="font-semibold text-cyan-300">{item.description || item.topic}</span>
                             <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-cyan-500/10 text-cyan-400">
-                              {item.durationMinutes}m
+                              {formatDurationMinutes(item.durationMinutes)}
                             </span>
                             {item.time && <span className="text-[10px] text-white/40">{item.time}</span>}
                           </div>
@@ -956,11 +981,13 @@ export const DailyRegistryHistoryModal: React.FC<DailyRegistryHistoryModalProps>
                             : 'bg-white/[0.02] border-white/10 hover:bg-white/[0.05] hover:border-cyan-500/30'
                         }`}
                       >
-                        <div className="flex items-center justify-between">
-                          <div className="flex items-center gap-2">
-                            <span className="font-mono text-xs font-bold text-cyan-300">📅 {dateStr}</span>
-                            <span className="text-[10px] text-white/50 px-2 py-0.5 rounded bg-white/5">
-                              {rec.dayOfWeek || getDayOfWeekName(new Date(dateStr + 'T12:00:00'))}
+                        <div className="flex items-center justify-between flex-wrap gap-2">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="text-xs sm:text-sm font-bold text-cyan-300">
+                              📅 {formatFullDateAndWeekday(dateStr)}
+                            </span>
+                            <span className="text-[10px] text-white/50 px-2 py-0.5 rounded bg-white/5 font-mono">
+                              {dateStr}
                             </span>
                             {entriesCount > 0 && (
                               <span className="text-[10px] text-emerald-300 px-2 py-0.5 rounded-full bg-emerald-500/15 border border-emerald-500/30">

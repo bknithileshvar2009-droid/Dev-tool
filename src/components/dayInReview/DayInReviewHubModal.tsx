@@ -49,6 +49,7 @@ import {
   getTodayDateString,
   formatTime24to12,
   formatDurationMinutes,
+  formatFullDateAndWeekday,
   formatTimerMs,
   calculateUniqueLoggedMinutes,
   detectOverlappingActivities,
@@ -176,16 +177,7 @@ export const DayInReviewHubModal: React.FC<DayInReviewHubModalProps> = ({
       const dayGoals = goals.filter(g => !g.startDate || g.startDate === dateKey);
       const reflection = reflectionsMap[dateKey];
 
-      let fullDateStr = dateKey;
-      try {
-        const dObj = new Date(dateKey + "T12:00:00");
-        fullDateStr = dObj.toLocaleDateString("en-US", {
-          weekday: "long",
-          year: "numeric",
-          month: "long",
-          day: "numeric",
-        });
-      } catch {}
+      const fullDateStr = formatFullDateAndWeekday(dateKey);
 
       return {
         date: dateKey,
