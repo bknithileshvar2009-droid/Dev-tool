@@ -758,6 +758,19 @@ export default function App() {
   const [pomoSecondsLeft, setPomoSecondsLeft] = useState<number>(25 * 60);
   const [pomoTotalSeconds, setPomoTotalSeconds] = useState<number>(25 * 60);
   const [isPomoRunning, setIsPomoRunning] = useState<boolean>(false);
+
+  // Offline detection state
+  const [isOffline, setIsOffline] = useState(!navigator.onLine);
+  useEffect(() => {
+    const handleOnline = () => setIsOffline(false);
+    const handleOffline = () => setIsOffline(true);
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, []);
   const [pomoStreak, setPomoStreak] = useState<number>(() => {
     try {
       const saved = localStorage.getItem('flocus_pomo_streak');
@@ -7932,6 +7945,13 @@ export default function App() {
           onDeleteEntry={handleDeleteEntryModal}
           activeTasks={tasks}
         />
+      )}
+
+      {/* Offline Status Banner */}
+      {isOffline && (
+        <div className="fixed top-0 left-0 right-0 z-[100] bg-amber-500/95 backdrop-blur-md text-black font-bold text-xs px-4 py-2 text-center flex items-center justify-center gap-2 shadow-2xl">
+          <span>⚠️ You are currently offline. Changes are saved locally and will sync when reconnected.</span>
+        </div>
       )}
     </div>
   );
