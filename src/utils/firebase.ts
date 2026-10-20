@@ -42,24 +42,36 @@ import {
 } from 'firebase/database';
 
 // Initialize Firebase App
-export const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
+let app;
+let db: any = null;
+let auth: any = null;
+let rtdb: any = null;
 
-const customDbId = (firebaseConfig.firestoreDatabaseId &&
-  firebaseConfig.firestoreDatabaseId !== '(default)' &&
-  firebaseConfig.firestoreDatabaseId.trim() !== '')
-  ? firebaseConfig.firestoreDatabaseId
-  : undefined;
+try {
+  app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
 
-// Initialize Firestore with experimentalForceLongPolling to avoid WebChannel connection timeouts
-export const db = initializeFirestore(app, {
-  experimentalForceLongPolling: true,
-}, customDbId);
+  const customDbId = (firebaseConfig.firestoreDatabaseId &&
+    firebaseConfig.firestoreDatabaseId !== '(default)' &&
+    firebaseConfig.firestoreDatabaseId.trim() !== '')
+    ? firebaseConfig.firestoreDatabaseId
+    : undefined;
 
-// Initialize Firebase Auth
-export const auth = getAuth(app);
+  // Initialize Firestore
+  db = initializeFirestore(app, {
+    experimentalForceLongPolling: true,
+  }, customDbId);
 
-// Initialize Realtime Database
-export const rtdb = getDatabase(app);
+  // Initialize Firebase Auth
+  auth = getAuth(app);
+
+  // Initialize Realtime Database
+  rtdb = getDatabase(app);
+} catch (error) {
+  console.error("Fatal: Firebase initialization failed. App will run in mock mode.", error);
+  // Optional: Add mock implementation here if necessary
+}
+
+export { app, db, auth, rtdb };
 
 export type SyncStatus = 'idle' | 'saving' | 'saved' | 'error' | 'offline';
 

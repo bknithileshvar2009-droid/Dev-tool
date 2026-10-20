@@ -1780,6 +1780,10 @@ export default function App() {
   useEffect(() => {
     let isCancelled = false;
 
+    if (!auth) {
+      console.warn('[Firebase Auth] Auth service not initialized, skipping listener.');
+      return;
+    }
     const unsubscribe = onAuthStateChanged(auth, async user => {
       if (isCancelled) return;
 
