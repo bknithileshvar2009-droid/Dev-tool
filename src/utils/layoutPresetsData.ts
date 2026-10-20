@@ -12,7 +12,8 @@ export type DashboardWidgetKey =
   | 'calendar'
   | 'motivation'
   | 'pomodoro'
-  | 'scratchpad';
+  | 'scratchpad'
+  | 'breakStats';
 
 export interface GridCellSlot {
   widgetKey: DashboardWidgetKey;
@@ -984,7 +985,7 @@ export function computePresetWidgetCoordinates(
   });
 
   // Guarantee coordinates exist for any unmapped widgets by docking in a safe bottom row
-  const allKeys: DashboardWidgetKey[] = ['clock', 'countdown', 'nameWidget', 'tasks', 'notification', 'calendar', 'motivation', 'pomodoro', 'scratchpad'];
+  const allKeys: DashboardWidgetKey[] = ['clock', 'countdown', 'nameWidget', 'tasks', 'notification', 'calendar', 'motivation', 'pomodoro', 'scratchpad', 'breakStats'];
   let unmappedOffset = 0;
   allKeys.forEach(key => {
     if (!coords[key]) {
@@ -1077,6 +1078,7 @@ export function computeLaptopFitCoordinates(
     motivation: { x: Math.round(motX), y: Math.round(motY), width: Math.round(motW), height: Math.round(motH) },
     notification: { x: Math.round(notifX), y: Math.round(notifY), width: Math.round(notifW), height: Math.round(notifH) },
     calendar: { x: Math.round(calX), y: Math.round(calY), width: Math.round(calW), height: Math.round(calH) },
+    breakStats: { x: Math.round(taskX), y: Math.round(taskY + taskH + 12), width: Math.round(taskW), height: 180 },
   };
 }
 
@@ -1127,6 +1129,10 @@ export function computeMobileFitCoordinates(
 
   const calH = 240;
   const calendar = { x: pad, y: currentY, width: usableW, height: calH };
+  currentY += calH + 12;
+
+  const bsH = 200;
+  const breakStats = { x: pad, y: currentY, width: usableW, height: bsH };
 
   return {
     clock,
@@ -1138,5 +1144,6 @@ export function computeMobileFitCoordinates(
     nameWidget,
     notification,
     calendar,
+    breakStats,
   };
 }

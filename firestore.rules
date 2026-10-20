@@ -75,5 +75,14 @@ service cloud.firestore {
     match /users/{userId}/dailyRegistry/{date}/{subDoc=**} {
       allow read, write: if isValidId(userId) && isOwner(userId);
     }
+
+    // User personal Focus Mode Sessions & History
+    match /users/{userId}/focusSessions {
+      allow list: if isValidId(userId) && isOwner(userId);
+    }
+
+    match /users/{userId}/focusSessions/{sessionId} {
+      allow read, write: if isValidId(userId) && isOwner(userId);
+    }
   }
 }

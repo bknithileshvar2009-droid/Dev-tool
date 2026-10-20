@@ -17,7 +17,35 @@ const ai = new GoogleGenAI({
   },
 });
 
-// API endpoint for Daily Reflection AI Summary
+// ==============================================================================
+// BREVO FOCUS BREAK REQUEST & VERIFICATION (SHARED NETLIFY / SERVER SERVICE)
+// ==============================================================================
+import { handleRequestBreak, handleVerifyBreak } from './netlify/functions/brevoService';
+
+// Support both standard API routes and Netlify function routes
+app.post(['/api/focus-break/request', '/.netlify/functions/request-break'], async (req, res) => {
+  try {
+    const authHeader = req.headers.authorization;
+    const clientIp = (req.headers['x-forwarded-for'] as string) || req.socket.remoteAddress || 'client';
+    const result = await handleRequestBreak(authHeader, req.body, clientIp);
+    return res.status(result.status).json(result.body);
+  } catch (err: any) {
+    return res.status(500).json({ error: 'Server error processing break request' });
+  }
+});
+
+app.post(['/api/focus-break/verify', '/.netlify/functions/verify-break'], async (req, res) => {
+  try {
+    const result = await handleVerifyBreak(req.body);
+    return res.status(result.status).json(result.body);
+  } catch (err: any) {
+    return res.status(500).json({ error: 'Server error verifying break approval code' });
+  }
+});
+
+// ==============================================================================
+// DAILY REGISTRY AI SUMMARY ENDPOINT
+// ==============================================================================
 app.post('/api/summarize-day', async (req, res) => {
   try {
     const { reflectionText } = req.body;

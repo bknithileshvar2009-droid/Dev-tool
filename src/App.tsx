@@ -111,10 +111,20 @@ import {
   verifyWritePermission,
   getLocalDateString,
   getDayOfWeekName,
+  saveFocusSessionRecord,
+  loadUserFocusSessions,
+  subscribeToUserFocusSessions,
+  FocusSessionRecord,
 } from './utils/firebase';
 import VisualCustomizationStudio from './components/VisualCustomizationStudio';
 import AnimatedCharacterBackdrop from './components/AnimatedCharacterBackdrop';
 import DailyRegistryHistoryModal from './components/DailyRegistryHistoryModal';
+import DayInReviewHubModal from './components/dayInReview/DayInReviewHubModal';
+import FocusHistoryModal from './components/FocusHistoryModal';
+import FocusSetupModal from './components/FocusSetupModal';
+import FocusStreakBadgeModal from './components/FocusStreakBadgeModal';
+import SmartBreakSuggestions from './components/SmartBreakSuggestions';
+import BreakStatisticsWidget from './components/BreakStatisticsWidget';
 import {
   STUDIO_LAYOUT_ARRANGEMENTS,
   computePresetWidgetCoordinates,
@@ -498,6 +508,14 @@ interface DashboardConfig {
     width: number;
     height: number;
   };
+  breakStats: {
+    visible: boolean;
+    glassBg: boolean;
+    x: number | null;
+    y: number | null;
+    width: number;
+    height: number;
+  };
   activeThemeId?: string;
   bgSaturation?: number;
   bgBrightness?: number;
@@ -666,7 +684,98 @@ const DEFAULT_CONFIG: DashboardConfig = {
     width: 380,
     height: 300,
   },
+  breakStats: {
+    visible: true,
+    glassBg: true,
+    x: null,
+    y: null,
+    width: 380,
+    height: 240,
+  },
 };
+
+export interface SmartBreakExerciseItem {
+  id: string;
+  title: string;
+  category: string;
+  icon: string;
+  durationSec: number;
+  steps: string[];
+  scientificBenefit: string;
+}
+
+export const SMART_BREAK_EXERCISES: SmartBreakExerciseItem[] = [
+  {
+    id: 'eye_reset',
+    title: '20-20-20 Eye Strain Reset',
+    category: 'Ocular Health',
+    icon: '👁️',
+    durationSec: 40,
+    steps: [
+      'Shift your focus away from the screen to a distant object at least 20 feet (6m) away.',
+      'Maintain continuous soft gaze on that distant target for 20 seconds.',
+      'Blink deliberately 10 times to stimulate the meibomian glands and rehydrate the cornea.',
+      'Gently cup warm palms over closed eyes without touching eyelids for 10 seconds of resting darkness.',
+    ],
+    scientificBenefit: 'Relaxes ciliary muscle spasm, improves tear film stability, and eliminates digital accommodation strain.',
+  },
+  {
+    id: 'cervical_spine',
+    title: 'Cervical Spine & Neck Decompression',
+    category: 'Spine & Posture',
+    icon: '🧘',
+    durationSec: 45,
+    steps: [
+      'Sit tall with ears aligned over shoulders and chest lifted.',
+      'Gently tilt left ear toward left shoulder; hold with soft breath for 15 seconds.',
+      'Repeat on right shoulder smoothly for 15 seconds.',
+      'Tuck chin horizontally backward (chin retraction) 5 times to decompress suboccipital nerves.',
+    ],
+    scientificBenefit: 'Relieves levator scapulae and trapezius hypertonicity triggered by prolonged textbook reading.',
+  },
+  {
+    id: 'thoracic_expansion',
+    title: 'Thoracic Expansion & Shoulder Rolls',
+    category: 'Upper Body',
+    icon: '💆',
+    durationSec: 45,
+    steps: [
+      'Roll shoulders up towards ears, backward, and down in slow circles 10 times.',
+      'Clasp hands behind your back, gently straighten elbows, and expand chest outward.',
+      'Take 3 slow, deep diaphragmatic breaths through the nose, holding each for 4 seconds.',
+      'Exhale completely through mouth, releasing all scapular tension.',
+    ],
+    scientificBenefit: 'Reverses kyphotic study posture, opens anterior chest muscles, and increases arterial blood oxygenation.',
+  },
+  {
+    id: 'carpal_wrist',
+    title: 'Carpal & Wrist Flexor Mobilization',
+    category: 'Hand & Wrist',
+    icon: '🤲',
+    durationSec: 35,
+    steps: [
+      'Extend right arm straight forward with palm up; gently pull fingers backward with left hand for 15s.',
+      'Point fingers downward, gently pressing back of hand towards body for 10s.',
+      'Perform slow, full wrist rotations (5 clockwise, 5 counter-clockwise).',
+      'Repeat the same routine on the left arm.',
+    ],
+    scientificBenefit: 'Maintains median nerve glide, prevents repetitive strain injury (RSI), and relieves handwriting fatigue.',
+  },
+  {
+    id: 'hydration_circulation',
+    title: 'Hydration & Cerebral Flow Activation',
+    category: 'Systemic Wellness',
+    icon: '💧',
+    durationSec: 60,
+    steps: [
+      'Stand up from your chair and step away from your study desk completely.',
+      'Drink 250ml (a full cup) of fresh water to restore cellular hydration.',
+      'Do 12 rhythmic, controlled calf raises to activate the venous muscle pump in the lower limbs.',
+      'Reach hands straight up to the ceiling with a full spinal extension breath.',
+    ],
+    scientificBenefit: 'Accelerates venous return to the heart, oxygenates cerebral cortical pathways, and sharpens cognition.',
+  },
+];
 
 export default function App() {
   // Load configuration with robust fallbacks
@@ -720,6 +829,7 @@ export default function App() {
           notification: { ...DEFAULT_CONFIG.notification, ...(parsed.notification || {}) },
           calendar: { ...DEFAULT_CONFIG.calendar, ...(parsed.calendar || {}) },
           pomodoro: { ...DEFAULT_CONFIG.pomodoro, ...(parsed.pomodoro || {}) },
+          breakStats: { ...DEFAULT_CONFIG.breakStats, ...(parsed.breakStats || {}) },
         };
       }
     } catch {
@@ -753,11 +863,14 @@ export default function App() {
   // Task Completion Animation State
   const [justCompletedTaskId, setJustCompletedTaskId] = useState<string | null>(null);
 
-  // Focus-Enhancing Pomodoro Timer State
-  const [pomoMode, setPomoMode] = useState<'focus' | 'shortBreak' | 'longBreak'>('focus');
-  const [pomoSecondsLeft, setPomoSecondsLeft] = useState<number>(25 * 60);
-  const [pomoTotalSeconds, setPomoTotalSeconds] = useState<number>(25 * 60);
-  const [isPomoRunning, setIsPomoRunning] = useState<boolean>(false);
+  // ================= DEEP FOCUS STUDY TIMER & BREVO BREAK STATE =================
+  const [focusDurationMinutes, setFocusDurationMinutes] = useState<number>(25);
+  const [focusSessionState, setFocusSessionState] = useState<'idle' | 'running' | 'paused' | 'onBreak'>('idle');
+  const [focusSecondsLeft, setFocusSecondsLeft] = useState<number>(25 * 60);
+  const [focusTotalSeconds, setFocusTotalSeconds] = useState<number>(25 * 60);
+  const [focusEndTimestamp, setFocusEndTimestamp] = useState<number | null>(null);
+  const [focusPausedRemainingSec, setFocusPausedRemainingSec] = useState<number | null>(null);
+  const [focusSessionId, setFocusSessionId] = useState<string>(() => `focus_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`);
 
   // Offline detection state
   const [isOffline, setIsOffline] = useState(!navigator.onLine);
@@ -771,16 +884,73 @@ export default function App() {
       window.removeEventListener('offline', handleOffline);
     };
   }, []);
-  const [pomoStreak, setPomoStreak] = useState<number>(() => {
+
+  const [focusStreak, setFocusStreak] = useState<number>(() => {
     try {
-      const saved = localStorage.getItem('flocus_pomo_streak');
+      const saved = localStorage.getItem('apesflow_focus_streak') || localStorage.getItem('flocus_pomo_streak');
       return saved ? parseInt(saved, 10) || 0 : 0;
     } catch {
       return 0;
     }
   });
-  const [pomoAlertActive, setPomoAlertActive] = useState<boolean>(false);
-  const [pomoSoundEnabled, setPomoSoundEnabled] = useState<boolean>(true);
+
+  // 5-minute Brevo Break Approval State
+  const [breakSecondsLeft, setBreakSecondsLeft] = useState<number>(5 * 60);
+  const [breakEndTimestamp, setBreakEndTimestamp] = useState<number | null>(null);
+  const [breakModalOpen, setBreakModalOpen] = useState<boolean>(false);
+  const [breakRequestStatus, setBreakRequestStatus] = useState<'idle' | 'requesting' | 'sent' | 'verifying' | 'approved' | 'failed'>('idle');
+  const [breakVerificationCode, setBreakVerificationCode] = useState<string>('');
+  const [breakRecipientEmail, setBreakRecipientEmail] = useState<string>('');
+  const [breakExpiresAt, setBreakExpiresAt] = useState<number | null>(null);
+  const [breakErrorMessage, setBreakErrorMessage] = useState<string | null>(null);
+  const [breakRemainingAttempts, setBreakRemainingAttempts] = useState<number | null>(null);
+  const [fullscreenExitedWhileFocus, setFullscreenExitedWhileFocus] = useState<boolean>(false);
+  const [focusSoundEnabled, setFocusSoundEnabled] = useState<boolean>(true);
+  const [focusAlertActive, setFocusAlertActive] = useState<boolean>(false);
+  const [focusAlertMessage, setFocusAlertMessage] = useState<{ title: string; body: string; type: 'focus_complete' | 'break_complete' } | null>(null);
+
+  // Focus Mode Phase 2: Goals, Setup, History, Recovery & Analytics State
+  const [focusSetupModalOpen, setFocusSetupModalOpen] = useState<boolean>(false);
+  const [focusHistoryModalOpen, setFocusHistoryModalOpen] = useState<boolean>(false);
+  const [focusStreakBadgeModalOpen, setFocusStreakBadgeModalOpen] = useState<boolean>(false);
+  const [dayInReviewModalOpen, setDayInReviewModalOpen] = useState<boolean>(false);
+  const [emergencyExitModalOpen, setEmergencyExitModalOpen] = useState<boolean>(false);
+  const [sessionRecoveryNotice, setSessionRecoveryNotice] = useState<string | null>(null);
+  const [smartBreakModalOpen, setSmartBreakModalOpen] = useState<boolean>(false);
+  const [smartBreakExerciseIndex, setSmartBreakExerciseIndex] = useState<number>(0);
+
+  const [setupSubject, setSetupSubject] = useState<string>('Chemistry');
+  const [setupTask, setSetupTask] = useState<string>('Deep Focus Study Sprint');
+  const [setupGoal, setSetupGoal] = useState<string>('');
+  const [setupDuration, setSetupDuration] = useState<number>(25);
+  const [setupCustomDuration, setSetupCustomDuration] = useState<string>('');
+  const [setupPlannedBreak, setSetupPlannedBreak] = useState<boolean>(true);
+
+  const [activeSubject, setActiveSubject] = useState<string>('Chemistry');
+  const [activeTask, setActiveTask] = useState<string>('Deep Focus Study Sprint');
+  const [activeGoal, setActiveGoal] = useState<string>('');
+  const [sessionStartTime, setSessionStartTime] = useState<number | null>(null);
+  const [sessionPlannedEndTime, setSessionPlannedEndTime] = useState<number | null>(null);
+
+  const [fullscreenExitTimestamp, setFullscreenExitTimestamp] = useState<number | null>(null);
+  const [fullscreenExitsCount, setFullscreenExitsCount] = useState<number>(0);
+  const [approvedBreaksCount, setApprovedBreaksCount] = useState<number>(0);
+  const [totalBreakMinutes, setTotalBreakMinutes] = useState<number>(0);
+  const [cycleBreakCompleted, setCycleBreakCompleted] = useState<boolean>(false);
+  const [smartBreakCompletedList, setSmartBreakCompletedList] = useState<string[]>([]);
+  const [userFocusSessions, setUserFocusSessions] = useState<FocusSessionRecord[]>([]);
+  const [fullscreenErrorNotice, setFullscreenErrorNotice] = useState<string | null>(null);
+
+  // Backwards-compatible aliases for pomodoro references
+  const isPomoRunning = focusSessionState === 'running';
+  const pomoSecondsLeft = focusSessionState === 'onBreak' ? breakSecondsLeft : focusSecondsLeft;
+  const pomoTotalSeconds = focusTotalSeconds;
+  const pomoStreak = focusStreak;
+  const pomoSoundEnabled = focusSoundEnabled;
+  const pomoMode: 'focus' | 'shortBreak' | 'longBreak' = focusSessionState === 'onBreak' ? 'shortBreak' : 'focus';
+  const pomoAlertActive = focusAlertActive;
+  const setPomoSoundEnabled = setFocusSoundEnabled;
+  const setPomoStreak = setFocusStreak;
 
   // Visual Customization Studio State
   const [studioOpen, setStudioOpen] = useState(false);
@@ -845,6 +1015,7 @@ export default function App() {
   });
   const [historyModalOpen, setHistoryModalOpen] = useState(false);
   const dailyRegistryUnsubRef = useRef<(() => void) | null>(null);
+  const focusSessionsUnsubRef = useRef<(() => void) | null>(null);
 
   // Backup & Restore State
   const [backupPreview, setBackupPreview] = useState<{
@@ -961,6 +1132,7 @@ export default function App() {
   const motivationRef = useRef<HTMLDivElement | null>(null);
   const pomodoroRef = useRef<HTMLDivElement | null>(null);
   const scratchpadRef = useRef<HTMLDivElement | null>(null);
+  const breakStatsRef = useRef<HTMLDivElement | null>(null);
   const dashboardRef = useRef<HTMLDivElement | null>(null);
   const [placementModal, setPlacementModal] = useState<{
     isOpen: boolean;
@@ -1278,6 +1450,7 @@ export default function App() {
       pomodoro: { ...p.pomodoro, glassBg: !transparent },
       nameWidget: { ...p.nameWidget, glassBg: !transparent },
       scratchpad: { ...p.scratchpad, glassBg: !transparent },
+      breakStats: { ...(p.breakStats || DEFAULT_CONFIG.breakStats), glassBg: !transparent },
     }));
   }, [updateConfig]);
 
@@ -1291,7 +1464,8 @@ export default function App() {
       !config.motivation.glassBg &&
       !config.nameWidget.glassBg &&
       !config.pomodoro?.glassBg &&
-      !config.scratchpad?.glassBg
+      !config.scratchpad?.glassBg &&
+      !config.breakStats?.glassBg
     );
   }, [config]);
 
@@ -1311,8 +1485,9 @@ export default function App() {
     { id: 'notification', label: 'Routine Alert & Schedule', defaultW: 460, defaultH: 170, icon: CalendarIcon, category: 'Routine' },
     { id: 'calendar', label: 'Exam Study Calendar', defaultW: 380, defaultH: 340, icon: CalendarIcon, category: 'Calendar' },
     { id: 'motivation', label: 'Daily Intention & Motivation', defaultW: 440, defaultH: 140, icon: Sparkles, category: 'Mindset' },
-    { id: 'pomodoro', label: 'Pomodoro Focus Timer', defaultW: 360, defaultH: 240, icon: Zap, category: 'Focus' },
+    { id: 'pomodoro', label: 'Deep Focus Study Station & Brevo Break', defaultW: 380, defaultH: 260, icon: Flame, category: 'Focus' },
     { id: 'scratchpad', label: 'Daily Register (Study Notes & Summary)', defaultW: 400, defaultH: 340, icon: FileText, category: 'Register' },
+    { id: 'breakStats', label: 'Break Statistics & Wellness', defaultW: 380, defaultH: 240, icon: Coffee, category: 'Wellness' },
   ], []);
 
   const hexToRgba = useCallback((hex: string, alpha: number): string => {
@@ -1435,7 +1610,7 @@ export default function App() {
 
     // Check DOM hierarchy for data-widget-id or specific widget container id
     const widgetDom = target.closest(
-      '#motivation-widget, #name-widget, #clock-widget, #countdown-widget, #notification-widget, #calendar-widget, #tasks-widget, #pomodoro-widget, #scratchpad-widget, [data-widget-id], .dashboard-widget'
+      '#motivation-widget, #name-widget, #clock-widget, #countdown-widget, #notification-widget, #calendar-widget, #tasks-widget, #pomodoro-widget, #scratchpad-widget, #breakstats-widget, [data-widget-id], .dashboard-widget'
     ) as HTMLElement | null;
 
     if (widgetDom) {
@@ -1457,7 +1632,8 @@ export default function App() {
           domId === 'calendar-widget' ? 'calendar' :
           domId === 'motivation-widget' ? 'motivation' :
           domId === 'pomodoro-widget' ? 'pomodoro' :
-          domId === 'scratchpad-widget' ? 'scratchpad' : null;
+          domId === 'scratchpad-widget' ? 'scratchpad' :
+          domId === 'breakstats-widget' ? 'breakStats' : null;
 
         if (mappedId) {
           const found = ALL_WIDGET_REGISTRY.find(w => w.id === mappedId);
@@ -1892,6 +2068,111 @@ export default function App() {
             }
           });
 
+          // Load user's Focus Sessions History from Firebase
+          console.log(`[Firebase Auth] Loading Focus Sessions for UID: ${user.uid}`);
+          const focusRecords = await loadUserFocusSessions(user.uid);
+          if (!isCancelled) {
+            setUserFocusSessions(focusRecords || []);
+          }
+
+          if (focusSessionsUnsubRef.current) {
+            focusSessionsUnsubRef.current();
+          }
+          focusSessionsUnsubRef.current = subscribeToUserFocusSessions(user.uid, records => {
+            if (!isCancelled) {
+              setUserFocusSessions(records || []);
+            }
+          });
+
+          // Session Recovery after login: Safe verification of active focus session
+          try {
+            const savedRaw = localStorage.getItem('apesflow_focus_session');
+            if (savedRaw) {
+              const saved = JSON.parse(savedRaw);
+              // CRITICAL REQUIREMENT: Verify saved session belongs strictly to the signed-in user!
+              if (saved && saved.userId === user.uid && saved.sessionId) {
+                const now = Date.now();
+                setActiveSubject(saved.subject || 'Chemistry');
+                setActiveTask(saved.task || 'Deep Focus Sprint');
+                setActiveGoal(saved.goal || '');
+                setFocusSessionId(saved.sessionId);
+                setFocusDurationMinutes(saved.durationMinutes || 25);
+                setFocusTotalSeconds(saved.totalSeconds || 25 * 60);
+                setSessionStartTime(saved.startTimestamp || (now - 60000));
+                setSessionPlannedEndTime(saved.endTimestamp || (now + 24 * 60 * 1000));
+                setFullscreenExitsCount(saved.fullscreenExitsCount || 0);
+                setApprovedBreaksCount(saved.approvedBreaksCount || 0);
+                setTotalBreakMinutes(saved.totalBreakMinutes || 0);
+                setCycleBreakCompleted(!!saved.cycleBreakCompleted);
+
+                if (saved.status === 'running' && saved.endTimestamp) {
+                  if (now < saved.endTimestamp) {
+                    const remaining = Math.max(0, Math.round((saved.endTimestamp - now) / 1000));
+                    setFocusSecondsLeft(remaining);
+                    setFocusEndTimestamp(saved.endTimestamp);
+                    setFocusSessionState('running');
+                    setIsFocusModeActive(true);
+                    setSessionRecoveryNotice(`Active ${saved.durationMinutes}m focus session restored (${Math.round(remaining / 60)}m remaining).`);
+                  } else {
+                    // Planned end time has passed while browser was closed!
+                    setFocusSecondsLeft(0);
+                    setFocusSessionState('idle');
+                    localStorage.removeItem('apesflow_focus_session');
+
+                    const elapsedMins = saved.durationMinutes || 25;
+                    const expiredRecord: FocusSessionRecord = {
+                      sessionId: saved.sessionId,
+                      userId: user.uid,
+                      subject: saved.subject || 'Chemistry',
+                      task: saved.task || 'Focus Sprint',
+                      goal: saved.goal || undefined,
+                      plannedDurationMinutes: elapsedMins,
+                      actualElapsedMinutes: elapsedMins,
+                      startTimestamp: saved.startTimestamp || (now - elapsedMins * 60 * 1000),
+                      endTimestamp: saved.endTimestamp,
+                      status: 'completed',
+                      fullscreenExitsCount: saved.fullscreenExitsCount || 0,
+                      approvedBreaksCount: saved.approvedBreaksCount || 0,
+                      totalBreakMinutes: saved.totalBreakMinutes || 0,
+                      createdAt: new Date().toISOString(),
+                    };
+                    saveFocusSessionRecord(user.uid, expiredRecord).catch(() => {});
+                    setSessionRecoveryNotice(`Previous ${elapsedMins}m focus sprint completed while you were away. Record saved to your Focus History.`);
+                  }
+                } else if (saved.status === 'paused') {
+                  setFocusSessionState('paused');
+                  const remaining = saved.pausedRemainingSec || saved.secondsLeft || 25 * 60;
+                  setFocusSecondsLeft(remaining);
+                  setFocusPausedRemainingSec(remaining);
+                  setIsFocusModeActive(true);
+                  setSessionRecoveryNotice(`Paused focus session on "${saved.subject}" restored.`);
+                } else if (saved.status === 'onBreak' && saved.breakEndTimestamp) {
+                  if (now < saved.breakEndTimestamp) {
+                    const remaining = Math.max(0, Math.round((saved.breakEndTimestamp - now) / 1000));
+                    setBreakSecondsLeft(remaining);
+                    setBreakEndTimestamp(saved.breakEndTimestamp);
+                    setFocusSessionState('onBreak');
+                    setIsFocusModeActive(true);
+                  } else {
+                    setBreakSecondsLeft(5 * 60);
+                    setFocusSessionState('paused');
+                    const remaining = saved.pausedRemainingSec || saved.secondsLeft || 25 * 60;
+                    setFocusSecondsLeft(remaining);
+                    setFocusPausedRemainingSec(remaining);
+                    setIsFocusModeActive(true);
+                    setSessionRecoveryNotice('5-minute recovery break concluded while away. Ready to resume your focus sprint.');
+                  }
+                }
+              } else if (saved && saved.userId && saved.userId !== user.uid) {
+                // Different user: do not restore on shared device
+                console.log('[SessionRecovery] Saved session belongs to different user; clearing local session cache.');
+                localStorage.removeItem('apesflow_focus_session');
+              }
+            }
+          } catch (e) {
+            console.warn('[SessionRecovery] Error parsing recovery state:', e);
+          }
+
           // Ensure today's registry record exists without overwriting existing entries
           const today = getLocalDateString();
           if (!historyAll || !historyAll[today]) {
@@ -1935,7 +2216,12 @@ export default function App() {
           dailyRegistryUnsubRef.current();
           dailyRegistryUnsubRef.current = null;
         }
+        if (focusSessionsUnsubRef.current) {
+          focusSessionsUnsubRef.current();
+          focusSessionsUnsubRef.current = null;
+        }
         setDailyRegistryHistory({});
+        setUserFocusSessions([]);
       }
     });
 
@@ -1945,6 +2231,10 @@ export default function App() {
       if (dailyRegistryUnsubRef.current) {
         dailyRegistryUnsubRef.current();
         dailyRegistryUnsubRef.current = null;
+      }
+      if (focusSessionsUnsubRef.current) {
+        focusSessionsUnsubRef.current();
+        focusSessionsUnsubRef.current = null;
       }
     };
   }, [restoreDashboardFromCloudData, buildCurrentDashboardPayload]);
@@ -2192,7 +2482,12 @@ export default function App() {
         dailyRegistryUnsubRef.current();
         dailyRegistryUnsubRef.current = null;
       }
+      if (focusSessionsUnsubRef.current) {
+        focusSessionsUnsubRef.current();
+        focusSessionsUnsubRef.current = null;
+      }
       setDailyRegistryHistory({});
+      setUserFocusSessions([]);
       console.log('[Firebase Auth] Logged out successfully. Daily registry state cleared.');
     } catch (err) {
       console.warn('Sign out error:', err);
@@ -2416,7 +2711,15 @@ export default function App() {
   // ================= FOCUS MODE =================
   const handleToggleFocusMode = () => {
     if (!config.optionalFeatures.focusMode) return;
-    setIsFocusModeActive(prev => !prev);
+    if (isFocusModeActive) {
+      setEmergencyExitModalOpen(true);
+    } else {
+      setSetupSubject(activeSubject || 'Chemistry');
+      setSetupTask(activeTask || 'Deep Focus Study Sprint');
+      setSetupGoal(activeGoal || '');
+      setSetupDuration(focusDurationMinutes || 25);
+      setFocusSetupModalOpen(true);
+    }
     setDrawerOpen(false);
   };
 
@@ -2533,133 +2836,710 @@ export default function App() {
     });
   };
 
-  // ================= POMODORO TIMER CONTROLS =================
-  const handleSwitchPomoMode = (mode: 'focus' | 'shortBreak' | 'longBreak') => {
-    setPomoMode(mode);
-    setIsPomoRunning(false);
-    const secs = mode === 'focus' ? 25 * 60 : mode === 'shortBreak' ? 5 * 60 : 15 * 60;
-    setPomoSecondsLeft(secs);
-    setPomoTotalSeconds(secs);
-  };
-
-  const togglePomodoro = () => {
-    if (!isPomoRunning) {
-      if (pomoSecondsLeft === 0) {
-        resetPomodoro(pomoMode);
-      }
-      setIsPomoRunning(true);
-      if (pomoSoundEnabled) {
-        playWebAudioChime('pomoStart');
-      }
-      if (typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'default') {
-        Notification.requestPermission().catch(() => {});
-      }
-    } else {
-      setIsPomoRunning(false);
-    }
-  };
-
-  const resetPomodoro = (mode = pomoMode) => {
-    setIsPomoRunning(false);
-    const secs = mode === 'focus' ? 25 * 60 : mode === 'shortBreak' ? 5 * 60 : 15 * 60;
-    setPomoSecondsLeft(secs);
-    setPomoTotalSeconds(secs);
-  };
-
+  // ================= DEEP FOCUS STUDY TIMER & BREVO BREAK WORKFLOW =================
   const formatMinutesSeconds = (totalSec: number) => {
-    const m = Math.floor(totalSec / 60);
-    const s = totalSec % 60;
+    const m = Math.floor(Math.max(0, totalSec) / 60);
+    const s = Math.max(0, totalSec) % 60;
     return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
   };
 
-  // Pomodoro Countdown Interval Effect
+  // 1. Restore saved active focus session state on mount
   useEffect(() => {
-    if (!isPomoRunning) return;
+    try {
+      const savedRaw = localStorage.getItem('apesflow_focus_session');
+      if (savedRaw) {
+        const saved = JSON.parse(savedRaw);
+        if (saved && saved.sessionId) {
+          setFocusSessionId(saved.sessionId);
+          setFocusDurationMinutes(saved.durationMinutes || 25);
+          setFocusTotalSeconds(saved.totalSeconds || 25 * 60);
+
+          if (saved.status === 'running' && saved.endTimestamp) {
+            const now = Date.now();
+            if (now < saved.endTimestamp) {
+              const remaining = Math.max(0, Math.round((saved.endTimestamp - now) / 1000));
+              setFocusSecondsLeft(remaining);
+              setFocusEndTimestamp(saved.endTimestamp);
+              setFocusSessionState('running');
+              setIsFocusModeActive(true);
+            } else {
+              setFocusSecondsLeft(0);
+              setFocusSessionState('idle');
+              localStorage.removeItem('apesflow_focus_session');
+            }
+          } else if (saved.status === 'paused') {
+            setFocusSessionState('paused');
+            setFocusSecondsLeft(saved.pausedRemainingSec || saved.secondsLeft || 25 * 60);
+            setFocusPausedRemainingSec(saved.pausedRemainingSec || saved.secondsLeft);
+          } else if (saved.status === 'onBreak' && saved.breakEndTimestamp) {
+            const now = Date.now();
+            if (now < saved.breakEndTimestamp) {
+              const remaining = Math.max(0, Math.round((saved.breakEndTimestamp - now) / 1000));
+              setBreakSecondsLeft(remaining);
+              setBreakEndTimestamp(saved.breakEndTimestamp);
+              setFocusSessionState('onBreak');
+            } else {
+              setBreakSecondsLeft(0);
+              setFocusSessionState('idle');
+              localStorage.removeItem('apesflow_focus_session');
+            }
+          }
+        }
+      }
+    } catch (e) {
+      console.warn('Could not restore focus session state:', e);
+    }
+  }, []);
+
+  // 2. Persist active focus session state locally across refreshes
+  useEffect(() => {
+    try {
+      if (focusSessionState === 'idle') {
+        localStorage.removeItem('apesflow_focus_session');
+      } else {
+        const payload = {
+          status: focusSessionState,
+          userId: currentUser?.uid || 'guest',
+          subject: activeSubject,
+          task: activeTask,
+          goal: activeGoal,
+          startTimestamp: sessionStartTime,
+          totalSeconds: focusTotalSeconds,
+          secondsLeft: focusSecondsLeft,
+          endTimestamp: focusEndTimestamp,
+          pausedRemainingSec: focusPausedRemainingSec,
+          sessionId: focusSessionId,
+          durationMinutes: focusDurationMinutes,
+          breakSecondsLeft,
+          breakEndTimestamp,
+          fullscreenExitsCount,
+          approvedBreaksCount,
+          totalBreakMinutes,
+          cycleBreakCompleted,
+          updatedAt: Date.now(),
+        };
+        localStorage.setItem('apesflow_focus_session', JSON.stringify(payload));
+      }
+    } catch {
+      // ignore
+    }
+  }, [
+    focusSessionState,
+    focusTotalSeconds,
+    focusSecondsLeft,
+    focusEndTimestamp,
+    focusPausedRemainingSec,
+    focusSessionId,
+    focusDurationMinutes,
+    breakSecondsLeft,
+    breakEndTimestamp,
+    activeSubject,
+    activeTask,
+    activeGoal,
+    sessionStartTime,
+    fullscreenExitsCount,
+    approvedBreaksCount,
+    totalBreakMinutes,
+    cycleBreakCompleted,
+    currentUser,
+  ]);
+
+  // 3. Recalculate timer immediately on tab visibility and window focus (accurate background timer)
+  useEffect(() => {
+    const handleVisibilityOrFocus = () => {
+      if (document.visibilityState === 'visible') {
+        const now = Date.now();
+        if (focusSessionState === 'running' && focusEndTimestamp) {
+          const remaining = Math.max(0, Math.round((focusEndTimestamp - now) / 1000));
+          setFocusSecondsLeft(remaining);
+          if (remaining <= 0) {
+            handleCompleteFocusSession();
+          }
+        } else if (focusSessionState === 'onBreak' && breakEndTimestamp) {
+          const remaining = Math.max(0, Math.round((breakEndTimestamp - now) / 1000));
+          setBreakSecondsLeft(remaining);
+          if (remaining <= 0) {
+            handleCompleteBreak();
+          }
+        }
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityOrFocus);
+    window.addEventListener('focus', handleVisibilityOrFocus);
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityOrFocus);
+      window.removeEventListener('focus', handleVisibilityOrFocus);
+    };
+  }, [focusSessionState, focusEndTimestamp, breakEndTimestamp]);
+
+  // 4. Accurate 1-second countdown interval effect
+  useEffect(() => {
+    if (focusSessionState !== 'running' && focusSessionState !== 'onBreak') return;
 
     const interval = setInterval(() => {
-      setPomoSecondsLeft(prev => {
-        if (prev <= 1) {
+      const now = Date.now();
+      if (focusSessionState === 'running' && focusEndTimestamp) {
+        const remaining = Math.max(0, Math.round((focusEndTimestamp - now) / 1000));
+        setFocusSecondsLeft(remaining);
+        if (remaining <= 0) {
           clearInterval(interval);
-          setIsPomoRunning(false);
-          setPomoAlertActive(true);
-
-          if (pomoSoundEnabled) {
-            playWebAudioChime('pomoEnd');
-          }
-
-          if (typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'granted') {
-            try {
-              new Notification(
-                pomoMode === 'focus' ? '🍅 Pomodoro Focus Complete!' : '☕ Break Finished!',
-                {
-                  body: pomoMode === 'focus'
-                    ? 'Great work completing 25 minutes of deep focus! Take a 5-minute break.'
-                    : 'Break time is over. Ready for your next study sprint?',
-                }
-              );
-            } catch {
-              // ignore
-            }
-          }
-
-          if (pomoMode === 'focus') {
-            setPomoStreak(s => {
-              const next = s + 1;
-              try {
-                localStorage.setItem('flocus_pomo_streak', String(next));
-              } catch {
-                // ignore
-              }
-              return next;
-            });
-
-            // Automatically record study session into Firebase Daily Registry
-            if (currentUser) {
-              const today = getLocalDateString();
-              const now = new Date();
-              const timeStr = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
-              const sessionMins = Math.round(pomoTotalSeconds / 60) || 25;
-
-              recordDailyRegistryActivity({
-                timestamp: now.toISOString(),
-                time: timeStr,
-                eventType: 'study_session',
-                description: `Completed ${sessionMins}m Pomodoro Focus Sprint`,
-                durationMinutes: sessionMins,
-                status: 'completed',
-                rating: 5,
-              }, today);
-
-              const currentDay = dailyRegistryHistory[today];
-              const existingSessions = currentDay?.studySessions || [];
-              const nextSessions = [
-                ...existingSessions,
-                {
-                  id: `session_${Date.now()}`,
-                  mode: 'focus',
-                  durationMinutes: sessionMins,
-                  completedAt: now.toISOString(),
-                  subject: 'Focus Sprint',
-                },
-              ];
-              const totalMins = (currentDay?.totalStudyMinutes || 0) + sessionMins;
-
-              saveDailyRegistryDay(currentUser.uid, today, {
-                studySessions: nextSessions,
-                totalStudyMinutes: totalMins,
-                updatedAt: now.toISOString(),
-              }).catch(() => {});
-            }
-          }
-
-          return 0;
+          handleCompleteFocusSession();
         }
-        return prev - 1;
-      });
+      } else if (focusSessionState === 'onBreak' && breakEndTimestamp) {
+        const remaining = Math.max(0, Math.round((breakEndTimestamp - now) / 1000));
+        setBreakSecondsLeft(remaining);
+        if (remaining <= 0) {
+          clearInterval(interval);
+          handleCompleteBreak();
+        }
+      }
     }, 1000);
 
     return () => clearInterval(interval);
-  }, [isPomoRunning, pomoMode, pomoSoundEnabled, currentUser, pomoTotalSeconds, recordDailyRegistryActivity, dailyRegistryHistory]);
+  }, [focusSessionState, focusEndTimestamp, breakEndTimestamp]);
+
+  // 5. Detect Fullscreen API changes
+  useEffect(() => {
+    const handleFullscreenChange = () => {
+      const isCurrentlyFullscreen = !!(
+        document.fullscreenElement ||
+        (document as any).webkitFullscreenElement ||
+        (document as any).mozFullScreenElement ||
+        (document as any).msFullscreenElement
+      );
+      setIsFullscreen(isCurrentlyFullscreen);
+      if (!isCurrentlyFullscreen && focusSessionState === 'running') {
+        const exitTime = Date.now();
+        setFullscreenExitTimestamp(exitTime);
+        setFullscreenExitsCount(c => c + 1);
+        setFullscreenExitedWhileFocus(true);
+      } else if (isCurrentlyFullscreen) {
+        setFullscreenExitedWhileFocus(false);
+      }
+    };
+
+    document.addEventListener('fullscreenchange', handleFullscreenChange);
+    document.addEventListener('webkitfullscreenchange', handleFullscreenChange);
+    document.addEventListener('mozfullscreenchange', handleFullscreenChange);
+    return () => {
+      document.removeEventListener('fullscreenchange', handleFullscreenChange);
+      document.removeEventListener('webkitfullscreenchange', handleFullscreenChange);
+      document.removeEventListener('mozfullscreenchange', handleFullscreenChange);
+    };
+  }, [focusSessionState]);
+
+  const requestFullscreenStudy = async () => {
+    try {
+      const isCurrentlyFullscreen = !!(
+        document.fullscreenElement ||
+        (document as any).webkitFullscreenElement ||
+        (document as any).mozFullScreenElement ||
+        (document as any).msFullscreenElement
+      );
+      if (!isCurrentlyFullscreen) {
+        const docEl = document.documentElement as any;
+        if (docEl.requestFullscreen) {
+          await docEl.requestFullscreen();
+        } else if (docEl.webkitRequestFullscreen) {
+          await docEl.webkitRequestFullscreen();
+        } else if (docEl.mozRequestFullScreen) {
+          await docEl.mozRequestFullScreen();
+        } else {
+          setFullscreenErrorNotice('Browser Fullscreen API is not supported on this browser. Continuing in windowed distraction-free mode.');
+        }
+        setFullscreenExitedWhileFocus(false);
+      } else {
+        if (document.exitFullscreen) {
+          await document.exitFullscreen();
+        } else if ((document as any).webkitExitFullscreen) {
+          await (document as any).webkitExitFullscreen();
+        }
+      }
+    } catch (err: any) {
+      console.warn('Fullscreen request not supported or denied:', err);
+      setFullscreenErrorNotice('Fullscreen mode was restricted by browser permissions. Continuing in windowed distraction-free mode.');
+    }
+  };
+
+  // 6. Focus Session Actions: Start from Setup, Pause, Resume, End, Emergency Exit
+  const handleStartFocusFromSetup = async (sessionParams: {
+    subject: string;
+    task: string;
+    goal?: string;
+    durationMinutes: number;
+    plannedBreak: boolean;
+  }) => {
+    setFocusSetupModalOpen(false);
+
+    const mins = sessionParams.durationMinutes;
+    const totalSec = mins * 60;
+    const now = Date.now();
+    const end = now + totalSec * 1000;
+    const newSessionId = `focus_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+
+    setActiveSubject(sessionParams.subject);
+    setActiveTask(sessionParams.task);
+    setActiveGoal(sessionParams.goal || '');
+    setSessionStartTime(now);
+    setSessionPlannedEndTime(end);
+    setFocusSessionId(newSessionId);
+    setFocusDurationMinutes(mins);
+    setFocusTotalSeconds(totalSec);
+    setFocusSecondsLeft(totalSec);
+    setFocusEndTimestamp(end);
+    setFocusPausedRemainingSec(null);
+    setFullscreenExitsCount(0);
+    setApprovedBreaksCount(0);
+    setTotalBreakMinutes(0);
+    setCycleBreakCompleted(false);
+    setFullscreenExitTimestamp(null);
+    setFullscreenExitedWhileFocus(false);
+    setSmartBreakCompletedList([]);
+    setFocusSessionState('running');
+    setIsFocusModeActive(true);
+
+    // Request browser fullscreen following explicit user confirmation click
+    try {
+      await requestFullscreenStudy();
+    } catch {}
+
+    if (focusSoundEnabled) {
+      playWebAudioChime('pomoStart');
+    }
+
+    if (typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'default') {
+      Notification.requestPermission().catch(() => {});
+    }
+  };
+
+  const startFocusSession = (durationMinutes?: number) => {
+    if (durationMinutes) {
+      setSetupDuration(durationMinutes);
+    }
+    setSetupSubject(activeSubject || 'Chemistry');
+    setSetupTask(activeTask || 'Deep Focus Study Sprint');
+    setSetupGoal(activeGoal || '');
+    setFocusSetupModalOpen(true);
+  };
+
+  const pauseFocusSession = () => {
+    if (focusSessionState !== 'running') return;
+    const now = Date.now();
+    const remaining = focusEndTimestamp ? Math.max(0, Math.round((focusEndTimestamp - now) / 1000)) : focusSecondsLeft;
+    setFocusPausedRemainingSec(remaining);
+    setFocusSecondsLeft(remaining);
+    setFocusEndTimestamp(null);
+    setFocusSessionState('paused');
+  };
+
+  const resumeFocusSession = () => {
+    if (focusSessionState !== 'paused' && focusSessionState !== 'onBreak') return;
+    const remaining = focusPausedRemainingSec ?? focusSecondsLeft;
+    const now = Date.now();
+    const end = now + remaining * 1000;
+
+    setFocusEndTimestamp(end);
+    setFocusPausedRemainingSec(null);
+    setFocusSessionState('running');
+  };
+
+  const endFocusSession = () => {
+    setFocusSessionState('idle');
+    setFocusEndTimestamp(null);
+    setFocusPausedRemainingSec(null);
+    setIsFocusModeActive(false);
+    const secs = focusDurationMinutes * 60;
+    setFocusSecondsLeft(secs);
+    setFocusTotalSeconds(secs);
+    setBreakModalOpen(false);
+    setBreakRequestStatus('idle');
+    localStorage.removeItem('apesflow_focus_session');
+  };
+
+  const handleEmergencyExitFocus = async () => {
+    setEmergencyExitModalOpen(false);
+    const now = Date.now();
+    const elapsedMinutes = Math.max(1, Math.round((focusTotalSeconds - focusSecondsLeft) / 60));
+    const sessionId = focusSessionId;
+
+    setFocusSessionState('idle');
+    setFocusEndTimestamp(null);
+    setFocusPausedRemainingSec(null);
+    setIsFocusModeActive(false);
+    localStorage.removeItem('apesflow_focus_session');
+
+    try {
+      if (document.fullscreenElement || (document as any).webkitFullscreenElement) {
+        await document.exitFullscreen();
+      }
+    } catch {}
+
+    if (currentUser) {
+      const interruptedRecord: FocusSessionRecord = {
+        sessionId,
+        userId: currentUser.uid,
+        subject: activeSubject,
+        task: activeTask,
+        goal: activeGoal || undefined,
+        plannedDurationMinutes: focusDurationMinutes,
+        actualElapsedMinutes: elapsedMinutes,
+        startTimestamp: sessionStartTime || (now - elapsedMinutes * 60 * 1000),
+        endTimestamp: now,
+        status: 'interrupted',
+        fullscreenExitsCount,
+        approvedBreaksCount,
+        totalBreakMinutes,
+        userReflection: 'Session concluded early via Emergency Exit',
+        createdAt: new Date(now).toISOString(),
+      };
+
+      try {
+        await saveFocusSessionRecord(currentUser.uid, interruptedRecord);
+        setUserFocusSessions(prev => [interruptedRecord, ...prev.filter(s => s.sessionId !== sessionId)]);
+      } catch (err) {
+        console.warn('Failed to save interrupted session record:', err);
+      }
+
+      const today = getLocalDateString();
+      const nowObj = new Date(now);
+      const timeStr = `${String(nowObj.getHours()).padStart(2, '0')}:${String(nowObj.getMinutes()).padStart(2, '0')}`;
+      recordDailyRegistryActivity({
+        timestamp: nowObj.toISOString(),
+        time: timeStr,
+        eventType: 'study_session',
+        description: `Focus Session Interrupted (${activeSubject}: ${elapsedMinutes}m elapsed of ${focusDurationMinutes}m)`,
+        durationMinutes: elapsedMinutes,
+        status: 'in-progress',
+        rating: 3,
+        topic: activeTask,
+        subject: activeSubject,
+      }, today);
+    }
+  };
+
+  // 7. Complete Focus Session
+  const handleCompleteFocusSession = async () => {
+    const elapsedMinutes = focusDurationMinutes;
+    const now = Date.now();
+    const sessionId = focusSessionId;
+    const isFullCycle = cycleBreakCompleted;
+
+    setFocusSessionState('idle');
+    setFocusEndTimestamp(null);
+    setFocusPausedRemainingSec(null);
+    setIsFocusModeActive(false);
+    localStorage.removeItem('apesflow_focus_session');
+
+    setFocusStreak(s => {
+      const next = s + 1;
+      try {
+        localStorage.setItem('apesflow_focus_streak', String(next));
+      } catch {}
+      return next;
+    });
+
+    if (isFullCycle) {
+      setFocusStreakBadgeModalOpen(true);
+    }
+
+    if (focusSoundEnabled) {
+      playWebAudioChime('pomoEnd');
+    }
+
+    setFocusAlertMessage({
+      title: `${elapsedMinutes}-Minute Focus Complete!`,
+      body: `Splendid discipline! You maintained unwavering concentration on ${activeSubject}: "${activeTask}" for ${elapsedMinutes} minutes. Your record has been saved.`,
+      type: 'focus_complete',
+    });
+    setFocusAlertActive(true);
+
+    if (typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'granted') {
+      try {
+        new Notification('🎯 Focus Session Completed!', {
+          body: `Great job completing ${elapsedMinutes} minutes studying ${activeSubject}!`,
+        });
+      } catch {}
+    }
+
+    // Automatically record into Firebase Focus History and Daily Registry
+    if (currentUser) {
+      const sessionRecord: FocusSessionRecord = {
+        sessionId,
+        userId: currentUser.uid,
+        subject: activeSubject,
+        task: activeTask,
+        goal: activeGoal || undefined,
+        plannedDurationMinutes: focusDurationMinutes,
+        actualElapsedMinutes: elapsedMinutes,
+        startTimestamp: sessionStartTime || (now - elapsedMinutes * 60 * 1000),
+        endTimestamp: now,
+        status: 'completed',
+        fullscreenExitsCount,
+        approvedBreaksCount,
+        totalBreakMinutes,
+        createdAt: new Date(now).toISOString(),
+      };
+
+      try {
+        await saveFocusSessionRecord(currentUser.uid, sessionRecord);
+        setUserFocusSessions(prev => [sessionRecord, ...prev.filter(s => s.sessionId !== sessionId)]);
+      } catch (err) {
+        console.warn('Failed to save focus session record:', err);
+      }
+
+      const today = getLocalDateString();
+      const nowObj = new Date(now);
+      const timeStr = `${String(nowObj.getHours()).padStart(2, '0')}:${String(nowObj.getMinutes()).padStart(2, '0')}`;
+
+      recordDailyRegistryActivity({
+        timestamp: nowObj.toISOString(),
+        time: timeStr,
+        eventType: 'study_session',
+        description: `Completed ${elapsedMinutes}m Deep Focus Session (${activeSubject})`,
+        durationMinutes: elapsedMinutes,
+        status: 'completed',
+        rating: 5,
+        topic: activeTask,
+        subject: activeSubject,
+      }, today);
+    }
+  };
+
+  // 8. Complete 5-minute break
+  const handleCompleteBreak = () => {
+    setFocusSessionState('paused');
+    setBreakEndTimestamp(null);
+    setBreakSecondsLeft(5 * 60);
+
+    if (focusSoundEnabled) {
+      playWebAudioChime('pomoStart');
+    }
+
+    setFocusAlertMessage({
+      title: '5-Minute Break Finished!',
+      body: 'Your 5-minute study pause has concluded. You are refreshed and ready to resume your study focus sprint!',
+      type: 'break_complete',
+    });
+    setFocusAlertActive(true);
+
+    if (typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'granted') {
+      try {
+        new Notification('☕ Break Finished!', {
+          body: 'Ready to resume your deep study session?',
+        });
+      } catch {}
+    }
+  };
+
+  // 9. Brevo Break Approval Workflow
+  const handleOpenBreakModal = () => {
+    if (!currentUser) {
+      setBreakErrorMessage('Please sign in with your account to request a 5-minute break code via Brevo email.');
+    } else {
+      setBreakErrorMessage(null);
+      if (!breakRecipientEmail && currentUser.email) {
+        setBreakRecipientEmail(currentUser.email);
+      }
+    }
+    setBreakModalOpen(true);
+  };
+
+  const handleSendBreakRequest = async () => {
+    if (!currentUser) {
+      setBreakErrorMessage('Please sign in with your account to request a verified break approval code.');
+      return;
+    }
+
+    setBreakRequestStatus('requesting');
+    setBreakErrorMessage(null);
+
+    try {
+      // Authenticate break request using signed-in user's Firebase ID token
+      const idToken = await currentUser.getIdToken();
+      if (!idToken) {
+        throw new Error('Unable to obtain Firebase ID token. Please try signing in again.');
+      }
+
+      const response = await fetch('/api/focus-break/request', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${idToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          sessionId: focusSessionId,
+          recipientEmail: breakRecipientEmail || currentUser.email,
+        }),
+      });
+
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.error || 'Failed to request break approval code.');
+      }
+
+      setBreakRequestStatus('sent');
+      setBreakExpiresAt(data.expiresAt || (Date.now() + 5 * 60 * 1000));
+      setBreakRemainingAttempts(5);
+    } catch (err: any) {
+      setBreakRequestStatus('failed');
+      setBreakErrorMessage(err.message || 'Error communicating with Brevo break approval service.');
+    }
+  };
+
+  const handleVerifyBreakCode = async () => {
+    const code = breakVerificationCode.trim();
+    if (!code || code.length < 6) {
+      setBreakErrorMessage('Please enter the complete 6-digit approval code.');
+      return;
+    }
+
+    setBreakRequestStatus('verifying');
+    setBreakErrorMessage(null);
+
+    try {
+      const response = await fetch('/api/focus-break/verify', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          sessionId: focusSessionId,
+          code,
+        }),
+      });
+
+      const data = await response.json();
+      if (!response.ok || !data.approved) {
+        throw new Error(data.error || 'Verification failed. Incorrect code.');
+      }
+
+      // Success: Break approved!
+      setBreakRequestStatus('approved');
+      setBreakModalOpen(false);
+      setBreakVerificationCode('');
+
+      // Pause current focus session and save remaining seconds
+      const now = Date.now();
+      const currentRemaining = focusEndTimestamp ? Math.max(0, Math.round((focusEndTimestamp - now) / 1000)) : focusSecondsLeft;
+      setFocusPausedRemainingSec(currentRemaining);
+      setFocusSecondsLeft(currentRemaining);
+      setFocusEndTimestamp(null);
+
+      // Start 5-minute break
+      const breakSec = 5 * 60;
+      setBreakSecondsLeft(breakSec);
+      setBreakEndTimestamp(Date.now() + breakSec * 1000);
+      setApprovedBreaksCount(c => c + 1);
+      setTotalBreakMinutes(m => m + 5);
+      setCycleBreakCompleted(true);
+      setFocusSessionState('onBreak');
+      setSmartBreakModalOpen(true);
+
+      if (focusSoundEnabled) {
+        playWebAudioChime('pomoStart');
+      }
+
+      // Record break in Daily Registry
+      if (currentUser) {
+        const today = getLocalDateString();
+        const nowObj = new Date();
+        const timeStr = `${String(nowObj.getHours()).padStart(2, '0')}:${String(nowObj.getMinutes()).padStart(2, '0')}`;
+        recordDailyRegistryActivity({
+          timestamp: nowObj.toISOString(),
+          time: timeStr,
+          eventType: 'study_session',
+          description: '5-minute study break authorized via Brevo email approval code',
+          durationMinutes: 5,
+          status: 'completed',
+        }, today);
+      }
+    } catch (err: any) {
+      setBreakRequestStatus('sent');
+      setBreakErrorMessage(err.message || 'Verification error.');
+    }
+  };
+
+  // Break Analytics & Impact Score Computation
+  const breakAnalytics = useMemo(() => {
+    const now = new Date();
+    const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+    const sevenDaysAgo = startOfToday - 6 * 24 * 60 * 60 * 1000;
+
+    let totalBreaks = 0;
+    let weekBreakMins = 0;
+    let totalFocusMins = 0;
+
+    userFocusSessions.forEach(s => {
+      const sTime = s.startTimestamp || new Date(s.createdAt || 0).getTime();
+      totalBreaks += s.approvedBreaksCount || 0;
+      totalFocusMins += s.actualElapsedMinutes || s.plannedDurationMinutes || 0;
+      if (sTime >= sevenDaysAgo) {
+        weekBreakMins += s.totalBreakMinutes || (s.approvedBreaksCount ? s.approvedBreaksCount * 5 : 0);
+      }
+    });
+
+    dailyRegisterEntries.forEach(entry => {
+      const topic = (entry.topic || '').toLowerCase();
+      const notes = (entry.notes || '').toLowerCase();
+      const subj = (entry.subject || '').toLowerCase();
+      if (topic.includes('break') || notes.includes('break') || subj.includes('break')) {
+        totalBreaks = Math.max(totalBreaks, totalBreaks + 1);
+        const entryTime = entry.createdAt || new Date(entry.date).getTime();
+        if (entryTime >= sevenDaysAgo) {
+          weekBreakMins += entry.durationMinutes || 5;
+        }
+      }
+    });
+
+    if (totalBreaks === 0 && approvedBreaksCount > 0) {
+      totalBreaks = approvedBreaksCount;
+      weekBreakMins = totalBreakMinutes;
+    }
+
+    let impactScore = 95;
+    if (totalFocusMins > 0) {
+      const ratio = weekBreakMins / Math.max(1, totalFocusMins);
+      if (ratio >= 0.08 && ratio <= 0.25) {
+        impactScore = 98;
+      } else if (ratio < 0.08) {
+        impactScore = Math.max(70, Math.round(85 - (0.08 - ratio) * 200));
+      } else {
+        impactScore = Math.max(75, Math.round(92 - (ratio - 0.25) * 50));
+      }
+    }
+
+    return {
+      totalBreaksTaken: totalBreaks,
+      timeSpentOnBreaksThisWeek: weekBreakMins,
+      productivityImpactScore: impactScore,
+    };
+  }, [userFocusSessions, dailyRegisterEntries, approvedBreaksCount, totalBreakMinutes]);
+
+  // Backwards-compatible wrappers
+  const togglePomodoro = () => {
+    if (focusSessionState === 'running') {
+      pauseFocusSession();
+    } else if (focusSessionState === 'paused') {
+      resumeFocusSession();
+    } else {
+      startFocusSession();
+    }
+  };
+
+  const resetPomodoro = () => {
+    endFocusSession();
+  };
+
+  const handleSwitchPomoMode = (mode: 'focus' | 'shortBreak' | 'longBreak') => {
+    if (mode === 'shortBreak') {
+      handleOpenBreakModal();
+    } else {
+      setFocusDurationMinutes(25);
+      setFocusSecondsLeft(25 * 60);
+      setFocusTotalSeconds(25 * 60);
+    }
+  };
 
   const handleDeleteTask = (id: string) => {
     saveTasksList(prev => prev.filter(task => task.id !== id));
@@ -3198,6 +4078,8 @@ export default function App() {
         return pomodoroRef.current;
       case 'scratchpad':
         return scratchpadRef.current;
+      case 'breakStats':
+        return breakStatsRef.current;
     }
   };
 
@@ -3557,6 +4439,21 @@ export default function App() {
         available: config.optionalFeatures.focusMode,
       },
       {
+        id: 'day-in-review',
+        label: 'MY DAY IN REVIEW (Daily Activity Tracker, Cloud History & PDF Reports)',
+        category: 'Activity',
+        shortcut: 'R',
+        action: () => { setDayInReviewModalOpen(true); setCommandMenuOpen(false); },
+        available: true,
+      },
+      {
+        id: 'focus-history',
+        label: 'Focus Session History & Cloud Records',
+        category: 'Focus',
+        action: () => { setFocusHistoryModalOpen(true); setCommandMenuOpen(false); },
+        available: true,
+      },
+      {
         id: 'daily-registry',
         label: 'Open Daily Registry & Personal History',
         category: 'Study',
@@ -3654,25 +4551,37 @@ export default function App() {
         available: true,
       },
       {
-        id: 'pomodoro-toggle',
-        label: isPomoRunning ? 'Pause Pomodoro Timer' : 'Start 25-min Pomodoro Study Session',
-        category: 'Pomodoro',
+        id: 'focus-toggle',
+        label:
+          focusSessionState === 'running'
+            ? 'Pause Deep Focus Session'
+            : focusSessionState === 'paused'
+            ? 'Resume Deep Focus Session'
+            : `Start ${focusDurationMinutes}-min Deep Focus Study Session`,
+        category: 'Focus',
         shortcut: 'P',
         action: () => { togglePomodoro(); setCommandMenuOpen(false); },
         available: true,
       },
       {
-        id: 'pomodoro-break',
-        label: 'Switch Pomodoro to 5-min Short Break',
-        category: 'Pomodoro',
-        action: () => { handleSwitchPomoMode('shortBreak'); setCommandMenuOpen(false); },
+        id: 'focus-break',
+        label: 'Request 5-Minute Break (Brevo Transactional Email Verification)',
+        category: 'Focus',
+        action: () => { handleOpenBreakModal(); setCommandMenuOpen(false); },
         available: true,
       },
       {
-        id: 'pomodoro-reset',
-        label: 'Reset Pomodoro Timer',
-        category: 'Pomodoro',
-        action: () => { resetPomodoro(); setCommandMenuOpen(false); },
+        id: 'focus-fullscreen',
+        label: isFullscreen ? 'Exit Full-screen Study Interface' : 'Enter Full-screen Study Interface',
+        category: 'Focus',
+        action: () => { requestFullscreenStudy(); setCommandMenuOpen(false); },
+        available: true,
+      },
+      {
+        id: 'focus-reset',
+        label: 'End / Reset Focus Session',
+        category: 'Focus',
+        action: () => { endFocusSession(); setCommandMenuOpen(false); },
         available: true,
       },
       {
@@ -3819,6 +4728,17 @@ export default function App() {
           )}
         </button>
 
+        {/* MY DAY IN REVIEW Feature Button */}
+        <button
+          onClick={() => setDayInReviewModalOpen(true)}
+          title="MY DAY IN REVIEW (Daily Activity Tracker, Cloud History & PDF Reports)"
+          aria-label="Open My Day In Review"
+          className="px-3 py-2 sm:px-4 sm:py-3 min-h-[44px] sm:min-h-[48px] rounded-2xl hud-btn cursor-pointer flex items-center justify-center bg-gradient-to-r from-cyan-500/25 via-indigo-500/20 to-purple-500/25 hover:from-cyan-500/40 hover:to-purple-500/40 border border-cyan-400/50 text-cyan-300 transition shadow-[0_0_20px_rgba(6,182,212,0.3)] font-extrabold text-xs gap-2"
+        >
+          <CalendarIcon className="w-4 h-4 sm:w-5 sm:h-5 text-cyan-300" />
+          <span className="hidden xl:inline text-xs font-black font-['Plus_Jakarta_Sans'] tracking-tight">MY DAY IN REVIEW</span>
+        </button>
+
         {/* Fullscreen Mode Icon */}
         <button
           onClick={() => {
@@ -3857,23 +4777,71 @@ export default function App() {
 
       {/* ================= FOCUS MODE OVERLAY BANNER ================= */}
       {isFocusModeActive && (
-        <div className="absolute top-6 left-1/2 -translate-x-1/2 z-50 flex items-center gap-3 px-5 py-2.5 rounded-full bg-black/70 backdrop-blur-xl border border-amber-400/40 text-xs shadow-[0_0_30px_rgba(251,191,36,0.2)] animate-pulse">
+        <div className="absolute top-6 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2.5 px-4 sm:px-6 py-2.5 rounded-full bg-black/85 backdrop-blur-2xl border border-amber-400/50 text-xs shadow-[0_0_35px_rgba(245,158,11,0.3)] flex-wrap justify-center">
           <div className="flex items-center gap-2">
-            <span className="w-2 h-2 rounded-full bg-amber-400" />
-            <span className="font-bold tracking-widest text-amber-300 uppercase font-['Plus_Jakarta_Sans']">
-              FOCUS MODE ACTIVE
+            <span
+              className={`w-2.5 h-2.5 rounded-full ${
+                focusSessionState === 'onBreak'
+                  ? 'bg-emerald-400 animate-pulse'
+                  : focusSessionState === 'running'
+                  ? 'bg-amber-400 animate-pulse'
+                  : 'bg-white/50'
+              }`}
+            />
+            <span className="font-bold tracking-widest text-amber-300 uppercase font-['Plus_Jakarta_Sans'] text-[11px]">
+              {focusSessionState === 'onBreak'
+                ? '5m Break (Brevo)'
+                : focusSessionState === 'running'
+                ? 'Deep Focus Active'
+                : focusSessionState === 'paused'
+                ? 'Focus Paused'
+                : 'Focus Mode'}
             </span>
           </div>
+
           <span className="opacity-40">•</span>
-          <span className="text-white/80 font-medium">
-            {currentSlotInfo.activeSlot?.activity}
+
+          {/* Subject & Task Display */}
+          <div className="flex items-center gap-1.5 max-w-[180px] sm:max-w-[260px] truncate">
+            <span className="font-bold text-cyan-300 truncate text-[11px]">{activeSubject}</span>
+            <span className="opacity-40 text-[10px]">:</span>
+            <span className="text-white/80 font-medium truncate text-[11px]">{activeTask}</span>
+          </div>
+
+          <span className="opacity-40">•</span>
+
+          {/* Countdown Timer */}
+          <span className="font-mono font-black text-white tracking-wider tabular-digits text-sm bg-black/50 px-2.5 py-0.5 rounded-lg border border-white/10 shadow-inner">
+            {formatMinutesSeconds(focusSessionState === 'onBreak' ? breakSecondsLeft : focusSecondsLeft)}
           </span>
+
+          {/* Start and Planned End Time */}
+          {sessionStartTime && sessionPlannedEndTime && (
+            <span className="hidden md:inline font-mono text-[10px] text-white/50 bg-white/5 px-2 py-0.5 rounded-md border border-white/5">
+              {new Date(sessionStartTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} → {new Date(sessionPlannedEndTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+            </span>
+          )}
+
+          {/* Request 5-Minute Break by Brevo Email */}
           <button
-            onClick={handleToggleFocusMode}
-            className="ml-2 px-3 py-1 rounded-full bg-white/15 hover:bg-white/25 text-white text-[11px] font-semibold transition cursor-pointer flex items-center gap-1"
+            type="button"
+            onClick={handleOpenBreakModal}
+            disabled={focusSessionState === 'onBreak'}
+            className="px-3 py-1.5 rounded-full bg-amber-500/20 hover:bg-amber-500/35 text-amber-200 border border-amber-500/40 text-[11px] font-bold transition cursor-pointer flex items-center gap-1.5 shadow-sm disabled:opacity-50"
+            title="Request a 5-minute break approval code via Brevo transactional email"
           >
-            <X className="w-3 h-3" />
-            <span>Exit Focus</span>
+            <Coffee className="w-3.5 h-3.5 text-amber-400" />
+            <span>Request 5m Break</span>
+          </button>
+
+          {/* Fullscreen Button */}
+          <button
+            type="button"
+            onClick={requestFullscreenStudy}
+            className="p-1.5 rounded-full bg-white/10 hover:bg-white/20 text-white transition cursor-pointer"
+            title={isFullscreen ? 'Exit Full-screen' : 'Enter Full-screen'}
+          >
+            <Maximize className="w-3.5 h-3.5" />
           </button>
         </div>
       )}
@@ -4739,7 +5707,7 @@ export default function App() {
         </div>
       )}
 
-      {/* ================= WIDGET 6: POMODORO FOCUS TIMER WIDGET ================= */}
+      {/* ================= WIDGET 6: DEEP FOCUS STUDY STATION & BREVO BREAK APPROVAL ================= */}
       {config.pomodoro?.visible && (
         <div
           ref={pomodoroRef}
@@ -4749,11 +5717,15 @@ export default function App() {
           className={`dashboard-widget z-20 px-5 sm:px-6 py-4 flex flex-col justify-between ${
             config.optionalFeatures.widgetCustomization ? 'cursor-grab active:cursor-grabbing' : 'cursor-default'
           } ${getWidgetMaterialClass(config.pomodoro?.glassBg ?? true)} ${focusedWidget === 'pomodoro' ? 'widget-focused' : ''} ${radiusClass} ${
-            isPomoRunning ? (pomoMode === 'focus' ? 'pomo-glow-active' : 'pomo-break-active') : ''
+            focusSessionState === 'running'
+              ? 'shadow-[0_0_25px_rgba(245,158,11,0.25)] border-amber-500/40'
+              : focusSessionState === 'onBreak'
+              ? 'shadow-[0_0_25px_rgba(16,185,129,0.25)] border-emerald-500/40'
+              : ''
           }`}
           style={{
-            width: config.pomodoro?.width || 360,
-            height: config.pomodoro?.height || 240,
+            width: config.pomodoro?.width || 380,
+            height: config.pomodoro?.height || 260,
             left: config.pomodoro?.x ?? 580,
             top: config.pomodoro?.y ?? 530,
             ...getWidgetComputedStyle('pomodoro'),
@@ -4763,7 +5735,7 @@ export default function App() {
             <>
               <div
                 className={`drag-pill absolute top-2 left-1/2 -translate-x-1/2 w-8 h-1 rounded-full ${
-                  pomoMode === 'focus' ? 'bg-rose-400/40' : 'bg-emerald-400/40'
+                  focusSessionState === 'onBreak' ? 'bg-emerald-400/40' : 'bg-amber-400/40'
                 } pointer-events-none`}
               />
               <button
@@ -4772,7 +5744,7 @@ export default function App() {
                   e.stopPropagation();
                   toggleWidgetTransparency('pomodoro');
                 }}
-                title={config.pomodoro?.glassBg ? 'Switch Pomodoro to Transparent' : 'Switch Pomodoro to Glass Card'}
+                title={config.pomodoro?.glassBg ? 'Switch to Transparent' : 'Switch to Glass Card'}
                 className="no-drag absolute top-2 right-2 px-2 py-0.5 rounded-md bg-black/60 hover:bg-black/90 text-[9px] font-mono text-white/80 hover:text-white border border-white/20 transition cursor-pointer z-30 flex items-center gap-1 shadow-sm"
               >
                 <span className={`w-1.5 h-1.5 rounded-full ${config.pomodoro?.glassBg ? 'bg-cyan-400' : 'bg-amber-400'}`} />
@@ -4786,132 +5758,167 @@ export default function App() {
             <div className="flex items-center gap-2">
               <span
                 className={`w-2 h-2 rounded-full ${
-                  isPomoRunning
-                    ? pomoMode === 'focus'
-                      ? 'bg-rose-500 animate-ping'
-                      : 'bg-emerald-500 animate-ping'
+                  focusSessionState === 'running'
+                    ? 'bg-amber-400 animate-ping'
+                    : focusSessionState === 'onBreak'
+                    ? 'bg-emerald-400 animate-ping'
+                    : focusSessionState === 'paused'
+                    ? 'bg-amber-400/70'
                     : 'bg-white/40'
                 }`}
               />
               <div className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-[0.16em] text-white">
-                <Timer className={`w-3.5 h-3.5 ${pomoMode === 'focus' ? 'text-rose-400' : 'text-emerald-400'}`} />
-                <span>{pomoMode === 'focus' ? 'Pomodoro Focus' : pomoMode === 'shortBreak' ? 'Short Break' : 'Long Break'}</span>
+                <Flame className={`w-3.5 h-3.5 ${focusSessionState === 'onBreak' ? 'text-emerald-400' : 'text-amber-400'}`} />
+                <span>
+                  {focusSessionState === 'onBreak'
+                    ? '5m Break (Brevo)'
+                    : focusSessionState === 'running'
+                    ? 'Deep Focus Active'
+                    : focusSessionState === 'paused'
+                    ? 'Focus Paused'
+                    : 'Deep Focus Session'}
+                </span>
               </div>
             </div>
 
             <div className="flex items-center gap-1.5">
-              <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-white/10 text-rose-300 border border-white/10" title="Completed Focus Sessions">
-                🍅 {pomoStreak}
+              <button
+                type="button"
+                onClick={requestFullscreenStudy}
+                title={isFullscreen ? 'Exit Full-screen' : 'Enter Full-screen Study'}
+                className="p-1 rounded-lg text-white/60 hover:text-white bg-white/5 hover:bg-white/10 transition cursor-pointer"
+              >
+                <Maximize className="w-3 h-3" />
+              </button>
+              <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-white/10 text-amber-300 border border-white/10" title="Completed Focus Sessions">
+                🔥 {focusStreak}
               </span>
               <button
                 type="button"
-                onClick={() => setPomoSoundEnabled(prev => !prev)}
-                className={`p-1 rounded-lg text-white/60 hover:text-white transition cursor-pointer ${pomoSoundEnabled ? 'text-rose-300' : 'opacity-40'}`}
-                title={pomoSoundEnabled ? 'Sound alerts enabled' : 'Sound alerts muted'}
+                onClick={() => setFocusSoundEnabled(prev => !prev)}
+                className={`p-1 rounded-lg text-white/60 hover:text-white transition cursor-pointer ${focusSoundEnabled ? 'text-amber-300' : 'opacity-40'}`}
+                title={focusSoundEnabled ? 'Sound alerts enabled' : 'Sound alerts muted'}
               >
-                {pomoSoundEnabled ? <Volume2 className="w-3.5 h-3.5" /> : <VolumeX className="w-3.5 h-3.5" />}
+                {focusSoundEnabled ? <Volume2 className="w-3.5 h-3.5" /> : <VolumeX className="w-3.5 h-3.5" />}
               </button>
             </div>
           </div>
 
-          {/* Mode Switcher Tabs */}
-          <div className="grid grid-cols-3 gap-1 p-1 rounded-xl bg-black/40 border border-white/5 my-2 no-drag text-[10px] font-medium text-center">
-            <button
-              type="button"
-              onClick={() => handleSwitchPomoMode('focus')}
-              className={`py-1 rounded-lg transition cursor-pointer font-semibold ${
-                pomoMode === 'focus'
-                  ? 'bg-rose-500 text-white shadow-[0_0_12px_rgba(244,63,94,0.4)]'
-                  : 'text-white/60 hover:text-white hover:bg-white/5'
-              }`}
-            >
-              25m Focus
-            </button>
-            <button
-              type="button"
-              onClick={() => handleSwitchPomoMode('shortBreak')}
-              className={`py-1 rounded-lg transition cursor-pointer font-semibold ${
-                pomoMode === 'shortBreak'
-                  ? 'bg-emerald-500 text-black shadow-[0_0_12px_rgba(16,185,129,0.4)]'
-                  : 'text-white/60 hover:text-white hover:bg-white/5'
-              }`}
-            >
-              5m Break
-            </button>
-            <button
-              type="button"
-              onClick={() => handleSwitchPomoMode('longBreak')}
-              className={`py-1 rounded-lg transition cursor-pointer font-semibold ${
-                pomoMode === 'longBreak'
-                  ? 'bg-sky-500 text-black shadow-[0_0_12px_rgba(14,165,233,0.4)]'
-                  : 'text-white/60 hover:text-white hover:bg-white/5'
-              }`}
-            >
-              15m Rest
-            </button>
+          {/* Duration Presets Bar */}
+          <div className="grid grid-cols-4 gap-1 p-1 rounded-xl bg-black/40 border border-white/5 my-1.5 no-drag text-[10px] font-medium text-center">
+            {[25, 45, 60, 90].map(mins => (
+              <button
+                key={mins}
+                type="button"
+                onClick={() => {
+                  if (focusSessionState === 'idle') {
+                    setFocusDurationMinutes(mins);
+                    setFocusTotalSeconds(mins * 60);
+                    setFocusSecondsLeft(mins * 60);
+                  } else {
+                    startFocusSession(mins);
+                  }
+                }}
+                className={`py-1 rounded-lg transition cursor-pointer font-semibold ${
+                  focusDurationMinutes === mins && focusSessionState !== 'onBreak'
+                    ? 'bg-amber-500 text-black shadow-[0_0_12px_rgba(245,158,11,0.4)]'
+                    : 'text-white/60 hover:text-white hover:bg-white/5'
+                }`}
+              >
+                {mins}m
+              </button>
+            ))}
           </div>
 
           {/* Central Countdown Digits & Progress */}
           <div className="flex flex-col items-center justify-center my-1 no-drag">
             <div className="text-3xl sm:text-4xl font-black tracking-tight tabular-digits text-white font-mono drop-shadow-md">
-              {formatMinutesSeconds(pomoSecondsLeft)}
+              {formatMinutesSeconds(focusSessionState === 'onBreak' ? breakSecondsLeft : focusSecondsLeft)}
+            </div>
+
+            <div className="text-[10px] text-white/60 mt-0.5 font-medium">
+              {focusSessionState === 'onBreak'
+                ? '☕ Authorized 5-Minute Study Break'
+                : focusSessionState === 'running'
+                ? `Deep study sprint • ${focusDurationMinutes} minutes goal`
+                : focusSessionState === 'paused'
+                ? 'Sprint paused • Press Resume when ready'
+                : 'Select preset or click Start to begin'}
             </div>
 
             {/* Progress Bar */}
-            <div className="w-full bg-white/10 rounded-full h-1.5 mt-2.5 overflow-hidden">
+            <div className="w-full bg-white/10 rounded-full h-1.5 mt-2 overflow-hidden">
               <div
                 className={`h-full transition-all duration-300 ${
-                  pomoMode === 'focus'
-                    ? 'bg-gradient-to-r from-rose-500 to-amber-400'
-                    : 'bg-gradient-to-r from-emerald-400 to-cyan-400'
+                  focusSessionState === 'onBreak'
+                    ? 'bg-gradient-to-r from-emerald-400 to-cyan-400'
+                    : 'bg-gradient-to-r from-amber-500 via-orange-400 to-rose-400'
                 }`}
-                style={{ width: `${Math.min(100, Math.max(0, ((pomoTotalSeconds - pomoSecondsLeft) / pomoTotalSeconds) * 100))}%` }}
+                style={{
+                  width: `${
+                    focusSessionState === 'onBreak'
+                      ? Math.min(100, Math.max(0, ((300 - breakSecondsLeft) / 300) * 100))
+                      : Math.min(100, Math.max(0, ((focusTotalSeconds - focusSecondsLeft) / focusTotalSeconds) * 100))
+                  }%`,
+                }}
               />
             </div>
           </div>
 
           {/* Controls Bar */}
-          <div className="flex items-center justify-between pt-2 border-t border-white/5 no-drag">
-            <div className="flex items-center gap-1.5">
+          <div className="flex items-center justify-between pt-2 border-t border-white/5 no-drag gap-2">
+            <div className="flex items-center gap-1.5 flex-wrap">
+              {/* Start Button (Only when idle) */}
+              {focusSessionState === 'idle' && (
+                <button
+                  type="button"
+                  onClick={() => startFocusSession()}
+                  className="px-3 py-1.5 rounded-xl font-bold text-xs tracking-wider transition cursor-pointer flex items-center gap-1.5 bg-amber-500 text-black hover:bg-amber-400 shadow-[0_0_15px_rgba(245,158,11,0.35)]"
+                >
+                  <Play className="w-3.5 h-3.5 fill-current" />
+                  <span>START</span>
+                </button>
+              )}
+
+              {/* Request 5-Minute Break by Brevo Email */}
               <button
                 type="button"
-                onClick={togglePomodoro}
-                className={`px-3 py-1.5 rounded-xl font-bold text-xs tracking-wider transition cursor-pointer flex items-center gap-1.5 ${
-                  isPomoRunning
-                    ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40 hover:bg-amber-500/30'
-                    : pomoMode === 'focus'
-                    ? 'bg-rose-500 text-white hover:bg-rose-600 shadow-[0_0_15px_rgba(244,63,94,0.35)]'
-                    : 'bg-emerald-500 text-black hover:bg-emerald-400 shadow-[0_0_15px_rgba(16,185,129,0.35)]'
+                onClick={handleOpenBreakModal}
+                disabled={focusSessionState === 'idle' || focusSessionState === 'onBreak'}
+                title="Request a 5-minute break approval code via Brevo transactional email"
+                className={`px-2.5 py-1.5 rounded-xl font-semibold text-[11px] transition cursor-pointer flex items-center gap-1.5 ${
+                  focusSessionState === 'running' || focusSessionState === 'paused'
+                    ? 'bg-amber-500/15 hover:bg-amber-500/25 text-amber-200 border border-amber-500/30'
+                    : 'bg-white/5 text-white/30 border border-white/5 opacity-50 cursor-not-allowed'
                 }`}
               >
-                {isPomoRunning ? (
-                  <>
-                    <Pause className="w-3.5 h-3.5 fill-current" />
-                    <span>PAUSE</span>
-                  </>
-                ) : (
-                  <>
-                    <Play className="w-3.5 h-3.5 fill-current" />
-                    <span>START</span>
-                  </>
-                )}
+                <Mail className="w-3 h-3 text-amber-400" />
+                <span>Request 5m Break</span>
               </button>
 
-              <button
-                type="button"
-                onClick={() => resetPomodoro(pomoMode)}
-                title="Reset session timer"
-                className="p-1.5 rounded-xl bg-white/5 hover:bg-white/15 text-white/70 hover:text-white border border-white/10 transition cursor-pointer"
-              >
-                <RotateCcw className="w-3.5 h-3.5" />
-              </button>
+              {/* Reset Session (Only when idle) */}
+              {focusSessionState === 'idle' && (
+                <button
+                  type="button"
+                  onClick={endFocusSession}
+                  title="Reset timer to default duration"
+                  className="p-1.5 rounded-xl bg-white/5 hover:bg-white/15 text-white/70 hover:text-white border border-white/10 transition cursor-pointer"
+                >
+                  <RotateCcw className="w-3.5 h-3.5" />
+                </button>
+              )}
             </div>
 
             <div className="flex items-center gap-1 text-[11px] text-white/50">
               <button
                 type="button"
-                onClick={() => setPomoSecondsLeft(prev => Math.max(60, prev - 300))}
-                disabled={pomoSecondsLeft <= 300}
+                onClick={() => {
+                  if (focusSessionState === 'idle') {
+                    setFocusSecondsLeft(prev => Math.max(60, prev - 300));
+                    setFocusTotalSeconds(prev => Math.max(60, prev - 300));
+                  }
+                }}
+                disabled={focusSessionState !== 'idle' || focusSecondsLeft <= 300}
                 className="px-1.5 py-0.5 rounded bg-white/5 hover:bg-white/15 disabled:opacity-30 text-[10px] cursor-pointer"
                 title="Subtract 5 minutes"
               >
@@ -4920,10 +5927,13 @@ export default function App() {
               <button
                 type="button"
                 onClick={() => {
-                  setPomoSecondsLeft(prev => prev + 300);
-                  setPomoTotalSeconds(prev => Math.max(prev, pomoSecondsLeft + 300));
+                  if (focusSessionState === 'idle') {
+                    setFocusSecondsLeft(prev => prev + 300);
+                    setFocusTotalSeconds(prev => prev + 300);
+                  }
                 }}
-                className="px-1.5 py-0.5 rounded bg-white/5 hover:bg-white/15 text-[10px] cursor-pointer"
+                disabled={focusSessionState !== 'idle'}
+                className="px-1.5 py-0.5 rounded bg-white/5 hover:bg-white/15 disabled:opacity-30 text-[10px] cursor-pointer"
                 title="Add 5 minutes"
               >
                 +5m
@@ -4933,10 +5943,10 @@ export default function App() {
 
           {showHandles && (
             <>
-              <div className="resize-handle resize-se text-rose-400" data-handle="se" />
-              <div className="resize-handle resize-sw text-rose-400" data-handle="sw" />
-              <div className="resize-handle resize-ne text-rose-400" data-handle="ne" />
-              <div className="resize-handle resize-nw text-rose-400" data-handle="nw" />
+              <div className="resize-handle resize-se text-amber-400" data-handle="se" />
+              <div className="resize-handle resize-sw text-amber-400" data-handle="sw" />
+              <div className="resize-handle resize-ne text-amber-400" data-handle="ne" />
+              <div className="resize-handle resize-nw text-amber-400" data-handle="nw" />
             </>
           )}
         </div>
@@ -5175,81 +6185,1077 @@ export default function App() {
         </div>
       )}
 
-      {/* ================= POMODORO SESSION COMPLETION ALERT MODAL ================= */}
-      {pomoAlertActive && (
-        <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-md flex items-center justify-center p-4">
-          <div className="w-full max-w-md rounded-3xl bg-[#0d121f] border border-rose-500/40 p-6 shadow-[0_25px_70px_rgba(244,63,94,0.35)] flex flex-col items-center text-center animate-in zoom-in-95 duration-200">
-            <div className="w-16 h-16 rounded-2xl bg-rose-500/20 border border-rose-500/40 flex items-center justify-center mb-4 shadow-[0_0_20px_rgba(244,63,94,0.3)]">
-              <span className="text-3xl animate-bounce">🍅</span>
+      {/* ================= WIDGET 8: BREAK STATISTICS & WELLNESS ================= */}
+      {config.breakStats?.visible && !isFocusModeActive && (
+        <div
+          ref={breakStatsRef}
+          id="breakstats-widget"
+          data-widget-id="breakStats"
+          onPointerDown={e => handlePointerDown(e, 'breakStats')}
+          onWheel={e => handleWheelZoom(e, 'breakStats')}
+          className={`dashboard-widget z-20 px-4 py-3 flex flex-col justify-between ${
+            config.optionalFeatures.widgetCustomization ? 'cursor-grab active:cursor-grabbing' : 'cursor-default'
+          } ${getWidgetMaterialClass(config.breakStats?.glassBg ?? true)} ${focusedWidget === 'breakStats' ? 'widget-focused' : ''} ${radiusClass}`}
+          style={{
+            width: config.breakStats?.width || 380,
+            height: config.breakStats?.height || 240,
+            left: config.breakStats?.x ?? 480,
+            top: config.breakStats?.y ?? 480,
+            ...getWidgetComputedStyle('breakStats'),
+          }}
+        >
+          {/* Header */}
+          <div className="flex items-center justify-between border-b border-white/10 pb-2 mb-2 no-drag">
+            <div className="flex items-center gap-2">
+              <div className="w-7 h-7 rounded-lg bg-amber-500/20 border border-amber-500/30 flex items-center justify-center text-amber-300">
+                <Coffee className="w-4 h-4" />
+              </div>
+              <div>
+                <h3 className="font-bold text-xs text-white flex items-center gap-1.5 font-['Plus_Jakarta_Sans']">
+                  <span>Break Statistics & Wellness</span>
+                </h3>
+                <span className="text-[9px] text-white/50 block">Cognitive rest & physical wellness</span>
+              </div>
             </div>
 
-            <span className="px-3 py-1 rounded-full text-[10px] font-bold tracking-widest uppercase bg-rose-500/20 text-rose-300 border border-rose-500/30 mb-2">
-              SESSION COMPLETED
+            <div className="flex items-center gap-1.5">
+              <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-300 border border-amber-500/30 flex items-center gap-1">
+                <span>🔥</span>
+                <span>Streak: {focusStreak}</span>
+              </span>
+              <button
+                type="button"
+                onClick={() => setSmartBreakModalOpen(true)}
+                title="View Smart Break Physical Exercises"
+                className="p-1 rounded-md bg-white/5 hover:bg-white/15 text-cyan-300 transition cursor-pointer"
+              >
+                <Sparkles className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          </div>
+
+          {/* Metrics Grid */}
+          <div className="grid grid-cols-3 gap-2 my-1 no-drag">
+            {/* Metric 1: Total Breaks */}
+            <div className="p-2 rounded-xl bg-black/40 border border-white/5 flex flex-col justify-between">
+              <span className="text-[9px] text-white/50 uppercase font-semibold tracking-wider">Total Breaks</span>
+              <div className="flex items-baseline gap-1 my-1">
+                <span className="text-xl font-black text-amber-400 font-mono">
+                  {breakAnalytics.totalBreaksTaken}
+                </span>
+                <span className="text-[10px] text-white/40">taken</span>
+              </div>
+              <span className="text-[9px] text-amber-300/80 truncate">
+                ☕ {breakAnalytics.totalBreaksTaken > 0 ? `${breakAnalytics.totalBreaksTaken * 5}m total` : '0m total'}
+              </span>
+            </div>
+
+            {/* Metric 2: This Week */}
+            <div className="p-2 rounded-xl bg-black/40 border border-white/5 flex flex-col justify-between">
+              <span className="text-[9px] text-white/50 uppercase font-semibold tracking-wider">This Week</span>
+              <div className="flex items-baseline gap-1 my-1">
+                <span className="text-xl font-black text-cyan-400 font-mono">
+                  {breakAnalytics.timeSpentOnBreaksThisWeek}
+                </span>
+                <span className="text-[10px] text-white/40">min</span>
+              </div>
+              <span className="text-[9px] text-cyan-300/80 truncate">
+                {breakAnalytics.timeSpentOnBreaksThisWeek > 0 ? `${Math.round(breakAnalytics.timeSpentOnBreaksThisWeek / 5)} pauses` : '0 pauses'}
+              </span>
+            </div>
+
+            {/* Metric 3: Productivity Impact Score */}
+            <div className="p-2 rounded-xl bg-black/40 border border-white/5 flex flex-col justify-between">
+              <span className="text-[9px] text-white/50 uppercase font-semibold tracking-wider">Impact Score</span>
+              <div className="flex items-baseline gap-1 my-1">
+                <span className="text-xl font-black text-emerald-400 font-mono">
+                  {breakAnalytics.productivityImpactScore}%
+                </span>
+              </div>
+              <span className="text-[9px] text-emerald-300/80 truncate">
+                {breakAnalytics.productivityImpactScore >= 95 ? '✨ Peak Balance' : '🎯 Steady Focus'}
+              </span>
+            </div>
+          </div>
+
+          {/* Productivity Impact Explanation */}
+          <div className="px-2.5 py-1.5 rounded-xl bg-white/[0.03] border border-white/5 text-[10px] text-white/70 flex items-center justify-between no-drag">
+            <span className="text-white/50">Optimal 5:1 ratio:</span>
+            <span className="text-emerald-300 font-medium">5m rest per 25-50m study</span>
+            <button
+              type="button"
+              onClick={() => setFocusHistoryModalOpen(true)}
+              className="text-cyan-400 hover:text-cyan-300 underline font-semibold text-[10px] cursor-pointer"
+            >
+              History →
+            </button>
+          </div>
+
+          {/* Quick Action Footer */}
+          <div className="flex items-center gap-1.5 pt-2 border-t border-white/5 mt-1 no-drag">
+            <button
+              type="button"
+              onClick={() => setSmartBreakModalOpen(true)}
+              className="flex-1 py-1.5 px-2 rounded-xl bg-white/5 hover:bg-white/10 text-white text-[10px] font-semibold border border-white/10 transition cursor-pointer flex items-center justify-center gap-1"
+            >
+              <span>🧘 Smart Exercises</span>
+            </button>
+            <button
+              type="button"
+              onClick={handleOpenBreakModal}
+              disabled={focusSessionState === 'onBreak'}
+              className="flex-1 py-1.5 px-2 rounded-xl bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 text-[10px] font-bold border border-amber-500/30 transition cursor-pointer flex items-center justify-center gap-1 disabled:opacity-40"
+            >
+              <Mail className="w-3 h-3 text-amber-400" />
+              <span>Request Break</span>
+            </button>
+          </div>
+
+          {showHandles && (
+            <>
+              <div className="resize-handle resize-se text-amber-400" data-handle="se" />
+              <div className="resize-handle resize-sw text-amber-400" data-handle="sw" />
+              <div className="resize-handle resize-ne text-amber-400" data-handle="ne" />
+              <div className="resize-handle resize-nw text-amber-400" data-handle="nw" />
+            </>
+          )}
+        </div>
+      )}
+
+      {/* ================= 1. DEEP FOCUS SESSION COMPLETION ALERT MODAL ================= */}
+      {focusAlertActive && focusAlertMessage && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-center justify-center p-4 animate-in fade-in duration-200">
+          <div className="w-full max-w-md rounded-3xl bg-[#0d121f] border border-amber-500/40 p-6 shadow-[0_25px_70px_rgba(245,158,11,0.35)] flex flex-col items-center text-center animate-in zoom-in-95 duration-200">
+            <div className="w-16 h-16 rounded-2xl bg-amber-500/20 border border-amber-500/40 flex items-center justify-center mb-4 shadow-[0_0_20px_rgba(245,158,11,0.3)]">
+              <span className="text-3xl animate-bounce">
+                {focusAlertMessage.type === 'focus_complete' ? '🎯' : '☕'}
+              </span>
+            </div>
+
+            <span className="px-3 py-1 rounded-full text-[10px] font-bold tracking-widest uppercase bg-amber-500/20 text-amber-300 border border-amber-500/30 mb-2">
+              {focusAlertMessage.type === 'focus_complete' ? 'STUDY SESSION COMPLETED' : '5-MINUTE BREAK FINISHED'}
             </span>
 
             <h3 className="text-xl font-bold text-white mb-2">
-              {pomoMode === 'focus' ? '25-Minute Focus Sprint Finished!' : 'Break Completed!'}
+              {focusAlertMessage.title}
             </h3>
 
             <p className="text-xs text-white/70 leading-relaxed mb-6 max-w-sm">
-              {pomoMode === 'focus'
-                ? 'Outstanding work! You maintained deep focus for 25 minutes. Take a 5-minute break to rest your mind, hydrate, and stretch.'
-                : 'Break time is over. You are refreshed and ready for your next study sprint!'}
+              {focusAlertMessage.body}
             </p>
 
             <div className="flex flex-col sm:flex-row gap-2.5 w-full">
-              {pomoMode === 'focus' ? (
+              {focusAlertMessage.type === 'focus_complete' ? (
                 <>
                   <button
                     type="button"
                     onClick={() => {
-                      setPomoAlertActive(false);
-                      handleSwitchPomoMode('shortBreak');
-                      setIsPomoRunning(true);
-                      if (pomoSoundEnabled) playWebAudioChime('pomoStart');
+                      setFocusAlertActive(false);
+                      handleOpenBreakModal();
                     }}
-                    className="flex-1 py-3 px-4 rounded-xl font-bold text-xs bg-emerald-500 hover:bg-emerald-400 text-black shadow-[0_0_20px_rgba(16,185,129,0.3)] transition cursor-pointer flex items-center justify-center gap-2"
+                    className="flex-1 py-3 px-4 rounded-xl font-bold text-xs bg-amber-500 hover:bg-amber-400 text-black shadow-[0_0_20px_rgba(245,158,11,0.3)] transition cursor-pointer flex items-center justify-center gap-2"
                   >
-                    <Coffee className="w-4 h-4" />
-                    <span>Start 5m Break</span>
+                    <Mail className="w-4 h-4" />
+                    <span>Request 5m Break</span>
                   </button>
                   <button
                     type="button"
                     onClick={() => {
-                      setPomoAlertActive(false);
-                      handleSwitchPomoMode('focus');
-                      setIsPomoRunning(true);
-                      if (pomoSoundEnabled) playWebAudioChime('pomoStart');
+                      setFocusAlertActive(false);
+                      startFocusSession(focusDurationMinutes);
                     }}
                     className="flex-1 py-3 px-4 rounded-xl font-semibold text-xs bg-white/10 hover:bg-white/15 text-white border border-white/15 transition cursor-pointer"
                   >
-                    Another 25m Focus
+                    Start Next {focusDurationMinutes}m Sprint
                   </button>
                 </>
               ) : (
                 <button
                   type="button"
                   onClick={() => {
-                    setPomoAlertActive(false);
-                    handleSwitchPomoMode('focus');
-                    setIsPomoRunning(true);
-                    if (pomoSoundEnabled) playWebAudioChime('pomoStart');
+                    setFocusAlertActive(false);
+                    resumeFocusSession();
                   }}
-                  className="w-full py-3 px-4 rounded-xl font-bold text-xs bg-rose-500 hover:bg-rose-400 text-white shadow-[0_0_20px_rgba(244,63,94,0.3)] transition cursor-pointer flex items-center justify-center gap-2"
+                  className="w-full py-3 px-4 rounded-xl font-bold text-xs bg-amber-500 hover:bg-amber-400 text-black shadow-[0_0_20px_rgba(245,158,11,0.3)] transition cursor-pointer flex items-center justify-center gap-2"
                 >
-                  <Timer className="w-4 h-4" />
-                  <span>Start 25m Focus Sprint</span>
+                  <Flame className="w-4 h-4" />
+                  <span>Resume Deep Focus</span>
                 </button>
               )}
             </div>
 
             <button
               type="button"
-              onClick={() => setPomoAlertActive(false)}
+              onClick={() => setFocusAlertActive(false)}
               className="mt-3 text-xs text-white/50 hover:text-white transition cursor-pointer"
             >
               Dismiss
             </button>
+          </div>
+        </div>
+      )}
+
+      {/* ================= 2. BREVO TRANSACTIONAL EMAIL BREAK APPROVAL MODAL ================= */}
+      {breakModalOpen && (
+        <div
+          className="fixed inset-0 z-50 bg-black/85 backdrop-blur-xl flex items-center justify-center p-4 animate-in fade-in duration-200"
+          onClick={() => setBreakModalOpen(false)}
+        >
+          <div
+            className="w-full max-w-md rounded-3xl bg-[#090e18] border border-amber-500/40 p-6 shadow-[0_30px_90px_rgba(245,158,11,0.25)] flex flex-col text-white animate-in zoom-in-95 duration-200 relative overflow-hidden"
+            onClick={e => e.stopPropagation()}
+          >
+            {/* Top decorative badge */}
+            <div className="flex items-center justify-between pb-4 border-b border-white/10 mb-4">
+              <div className="flex items-center gap-2.5">
+                <div className="w-10 h-10 rounded-2xl bg-amber-500/20 border border-amber-500/40 flex items-center justify-center text-amber-300 shadow-[0_0_15px_rgba(245,158,11,0.25)]">
+                  <Shield className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-white flex items-center gap-2">
+                    <span>5-Minute Break Request</span>
+                    <span className="px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/30 text-[9px] font-mono">
+                      BREVO VERIFIED
+                    </span>
+                  </h3>
+                  <p className="text-[11px] text-white/60">
+                    Secure transactional email approval
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setBreakModalOpen(false)}
+                className="p-1 rounded-xl bg-white/5 hover:bg-white/15 text-white/60 hover:text-white transition cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Error Message Box */}
+            {breakErrorMessage && (
+              <div className="mb-4 p-3 rounded-2xl bg-rose-500/15 border border-rose-500/30 text-rose-300 text-xs flex items-start gap-2.5 leading-relaxed">
+                <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5 text-rose-400" />
+                <div className="flex-1">
+                  <span className="font-semibold block mb-0.5">Notice</span>
+                  <span>{breakErrorMessage}</span>
+                </div>
+              </div>
+            )}
+
+            {/* STEP 1: Request Code Screen */}
+            {(breakRequestStatus === 'idle' || breakRequestStatus === 'requesting' || breakRequestStatus === 'failed') && (
+              <div className="space-y-4">
+                <p className="text-xs text-white/80 leading-relaxed">
+                  To pause your deep focus session, request a single-use 6-digit approval code. A verified transactional email will be dispatched via Brevo to authorize your 5-minute break.
+                </p>
+
+                <div className="p-3.5 rounded-2xl bg-white/[0.03] border border-white/10 space-y-2">
+                  <label className="text-[11px] font-semibold uppercase tracking-wider text-white/70 block">
+                    Supervisor / Registered Recipient Email
+                  </label>
+                  <div className="flex items-center gap-2 px-3 py-2 rounded-xl bg-black/50 border border-white/10 focus-within:border-amber-400 transition">
+                    <Mail className="w-4 h-4 text-amber-400 shrink-0" />
+                    <input
+                      type="email"
+                      value={breakRecipientEmail}
+                      onChange={e => setBreakRecipientEmail(e.target.value)}
+                      placeholder={currentUser?.email || "supervisor@example.com"}
+                      className="bg-transparent text-xs text-white w-full outline-none placeholder:text-white/30"
+                    />
+                  </div>
+                  <p className="text-[10px] text-white/50">
+                    Verified server-side: code expires automatically in 5 minutes.
+                  </p>
+                </div>
+
+                <div className="flex items-center gap-2 pt-2">
+                  <button
+                    type="button"
+                    onClick={handleSendBreakRequest}
+                    disabled={breakRequestStatus === 'requesting' || !currentUser}
+                    className="flex-1 py-3 px-4 rounded-xl font-bold text-xs bg-amber-500 hover:bg-amber-400 disabled:opacity-50 text-black shadow-[0_0_20px_rgba(245,158,11,0.3)] transition cursor-pointer flex items-center justify-center gap-2"
+                  >
+                    {breakRequestStatus === 'requesting' ? (
+                      <>
+                        <RefreshCw className="w-4 h-4 animate-spin" />
+                        <span>Sending via Brevo...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Mail className="w-4 h-4" />
+                        <span>Send 5m Break Approval Code</span>
+                      </>
+                    )}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setBreakModalOpen(false)}
+                    className="py-3 px-4 rounded-xl font-semibold text-xs bg-white/10 hover:bg-white/15 text-white border border-white/15 transition cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+                </div>
+
+                {!currentUser && (
+                  <p className="text-center text-[11px] text-amber-300/90 pt-1">
+                    ⚠️ Please sign in with your account to authorize break requests with your Firebase identity token.
+                  </p>
+                )}
+              </div>
+            )}
+
+            {/* STEP 2: Verify Code Screen */}
+            {(breakRequestStatus === 'sent' || breakRequestStatus === 'verifying') && (
+              <div className="space-y-4">
+                <div className="p-3.5 rounded-2xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 text-xs flex items-center gap-2">
+                  <CheckCheck className="w-4 h-4 shrink-0 text-emerald-400" />
+                  <div className="truncate">
+                    <span>Approval code delivered via Brevo to </span>
+                    <strong className="text-white underline">{breakRecipientEmail || currentUser?.email}</strong>
+                  </div>
+                </div>
+
+                <div className="text-center py-2">
+                  <label className="text-xs font-bold text-white uppercase tracking-wider block mb-2">
+                    Enter 6-Digit Single-Use Code
+                  </label>
+                  <input
+                    type="text"
+                    maxLength={6}
+                    value={breakVerificationCode}
+                    onChange={e => setBreakVerificationCode(e.target.value.replace(/[^0-9]/g, ''))}
+                    placeholder="••••••"
+                    autoFocus
+                    className="w-full text-center py-3 px-4 rounded-2xl bg-black/60 border-2 border-amber-400/60 focus:border-amber-400 text-2xl font-mono font-bold tracking-[0.4em] text-white outline-none shadow-[0_0_25px_rgba(245,158,11,0.2)]"
+                  />
+                  <div className="flex items-center justify-between text-[11px] text-white/50 mt-2 px-1">
+                    <span>⏱️ Valid for 5 minutes</span>
+                    <span>Max 5 attempts</span>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2 pt-2">
+                  <button
+                    type="button"
+                    onClick={() => handleVerifyBreakCode()}
+                    disabled={breakRequestStatus === 'verifying' || breakVerificationCode.length < 6}
+                    className="flex-1 py-3 px-4 rounded-xl font-bold text-xs bg-emerald-500 hover:bg-emerald-400 disabled:opacity-50 text-black shadow-[0_0_20px_rgba(16,185,129,0.3)] transition cursor-pointer flex items-center justify-center gap-2"
+                  >
+                    {breakRequestStatus === 'verifying' ? (
+                      <>
+                        <RefreshCw className="w-4 h-4 animate-spin" />
+                        <span>Verifying...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Key className="w-4 h-4" />
+                        <span>Authorize 5-Minute Break</span>
+                      </>
+                    )}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleSendBreakRequest}
+                    disabled={breakRequestStatus === 'verifying'}
+                    title="Resend code via Brevo"
+                    className="py-3 px-3 rounded-xl font-semibold text-xs bg-white/10 hover:bg-white/15 text-white border border-white/15 transition cursor-pointer"
+                  >
+                    <RotateCcw className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* ================= 3. FULL-SCREEN EXITED NOTIFICATION BANNER ================= */}
+      {fullscreenExitedWhileFocus && focusSessionState === 'running' && (
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 flex items-center gap-3 px-4 py-2.5 rounded-2xl bg-[#0b1120]/90 backdrop-blur-xl border border-amber-500/40 text-xs text-white shadow-[0_15px_40px_rgba(0,0,0,0.8)] animate-in slide-in-from-bottom duration-200">
+          <div className="flex items-center gap-2">
+            <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
+            <span className="font-semibold text-amber-300">Full-screen study mode was exited</span>
+          </div>
+          <button
+            type="button"
+            onClick={requestFullscreenStudy}
+            className="px-3 py-1 rounded-xl bg-amber-500 hover:bg-amber-400 text-black font-bold text-[11px] transition cursor-pointer flex items-center gap-1 shadow-sm"
+          >
+            <Maximize className="w-3 h-3" />
+            <span>Resume Full-screen</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setFullscreenExitedWhileFocus(false)}
+            className="p-1 rounded-lg text-white/50 hover:text-white transition cursor-pointer"
+            title="Dismiss notice"
+          >
+            <X className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      )}
+
+      {/* ================= 4. FULLSCREEN RESTRICTION NOTICE TOAST ================= */}
+      {fullscreenErrorNotice && (
+        <div className="fixed top-6 left-1/2 -translate-x-1/2 z-50 flex items-center gap-3 px-4 py-2.5 rounded-2xl bg-black/90 backdrop-blur-xl border border-amber-500/50 text-xs text-white shadow-[0_15px_40px_rgba(0,0,0,0.8)] animate-in slide-in-from-top duration-200">
+          <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0" />
+          <span className="text-white/90">{fullscreenErrorNotice}</span>
+          <button
+            type="button"
+            onClick={() => setFullscreenErrorNotice(null)}
+            className="p-1 rounded-lg text-white/50 hover:text-white transition cursor-pointer"
+          >
+            <X className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      )}
+
+      {/* ================= 5. SESSION RECOVERY NOTICE TOAST ================= */}
+      {sessionRecoveryNotice && (
+        <div className="fixed top-6 left-1/2 -translate-x-1/2 z-50 flex items-center gap-3 px-4 py-2.5 rounded-2xl bg-cyan-950/90 backdrop-blur-xl border border-cyan-400/50 text-xs text-white shadow-[0_15px_40px_rgba(0,0,0,0.8)] animate-in slide-in-from-top duration-200">
+          <Zap className="w-4 h-4 text-cyan-400 shrink-0" />
+          <span className="text-white/90">{sessionRecoveryNotice}</span>
+          <button
+            type="button"
+            onClick={() => setSessionRecoveryNotice(null)}
+            className="p-1 rounded-lg text-white/50 hover:text-white transition cursor-pointer"
+          >
+            <X className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      )}
+
+      {/* ================= 6. FOCUS SESSION SETUP & CONFIRMATION MODAL ================= */}
+      {focusSetupModalOpen && (
+        <div
+          className="fixed inset-0 z-50 bg-black/85 backdrop-blur-xl flex items-center justify-center p-3 sm:p-4 animate-in fade-in duration-200"
+          onClick={() => setFocusSetupModalOpen(false)}
+        >
+          <div
+            className="w-full max-w-lg rounded-3xl bg-[#090e18] border border-amber-500/40 p-6 shadow-[0_30px_90px_rgba(245,158,11,0.25)] flex flex-col text-white animate-in zoom-in-95 duration-200 max-h-[92vh] overflow-y-auto"
+            onClick={e => e.stopPropagation()}
+          >
+            {/* Header */}
+            <div className="flex items-center justify-between pb-4 border-b border-white/10 mb-4">
+              <div className="flex items-center gap-2.5">
+                <div className="w-10 h-10 rounded-2xl bg-amber-500/20 border border-amber-500/40 flex items-center justify-center text-amber-300 shadow-[0_0_15px_rgba(245,158,11,0.25)]">
+                  <Flame className="w-5 h-5 fill-current" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-white flex items-center gap-2">
+                    <span>Deep Focus Session Setup</span>
+                    <span className="px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/30 text-[9px] font-mono uppercase">
+                      Distraction-Free
+                    </span>
+                  </h3>
+                  <p className="text-[11px] text-white/60">
+                    Browser Fullscreen • Brevo Break Approval • Persistent History
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setFocusSetupModalOpen(false)}
+                className="p-1 rounded-xl bg-white/5 hover:bg-white/15 text-white/60 hover:text-white transition cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Subject Selection */}
+            <div className="space-y-3 mb-4">
+              <label className="text-[11px] font-bold uppercase tracking-wider text-white/70 block">
+                1. Subject
+              </label>
+              <div className="flex flex-wrap gap-1.5 text-xs">
+                {['Mathematics', 'Physics', 'Chemistry', 'Biology', 'Computer Science', 'Literature', 'General'].map(sub => (
+                  <button
+                    key={sub}
+                    type="button"
+                    onClick={() => setSetupSubject(sub)}
+                    className={`px-3 py-1.5 rounded-xl font-semibold transition cursor-pointer border ${
+                      setupSubject === sub
+                        ? 'bg-amber-500 text-black border-amber-400 shadow-[0_0_12px_rgba(245,158,11,0.35)]'
+                        : 'bg-white/5 border-white/10 text-white/70 hover:text-white hover:bg-white/10'
+                    }`}
+                  >
+                    {sub}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Specific Task Input */}
+            <div className="space-y-1.5 mb-4">
+              <label className="text-[11px] font-bold uppercase tracking-wider text-white/70 block">
+                2. Specific Study Task
+              </label>
+              <input
+                type="text"
+                value={setupTask}
+                onChange={e => setSetupTask(e.target.value)}
+                placeholder="e.g. Organic Chemistry Reaction Mechanisms & Problem Set 1-20"
+                className="w-full bg-black/50 border border-white/10 focus:border-amber-400 rounded-xl px-3.5 py-2.5 text-xs text-white outline-none transition placeholder:text-white/30"
+              />
+            </div>
+
+            {/* Session Duration Selection */}
+            <div className="space-y-2 mb-4">
+              <div className="flex items-center justify-between">
+                <label className="text-[11px] font-bold uppercase tracking-wider text-white/70">
+                  3. Duration (Minutes)
+                </label>
+                <span className="text-[11px] font-mono text-amber-300 font-bold">
+                  {setupCustomDuration ? `${setupCustomDuration} mins (custom)` : `${setupDuration} mins`}
+                </span>
+              </div>
+
+              <div className="grid grid-cols-4 gap-2 text-center text-xs font-bold">
+                {[25, 45, 60, 90].map(mins => (
+                  <button
+                    key={mins}
+                    type="button"
+                    onClick={() => {
+                      setSetupDuration(mins);
+                      setSetupCustomDuration('');
+                    }}
+                    className={`py-2 rounded-xl transition cursor-pointer border ${
+                      setupDuration === mins && !setupCustomDuration
+                        ? 'bg-amber-500 text-black border-amber-400 shadow-[0_0_12px_rgba(245,158,11,0.35)]'
+                        : 'bg-white/5 border-white/10 text-white/70 hover:text-white hover:bg-white/10'
+                    }`}
+                  >
+                    {mins}m
+                  </button>
+                ))}
+              </div>
+
+              {/* Custom Duration Input */}
+              <div className="flex items-center gap-2 pt-1">
+                <span className="text-[11px] text-white/50">Or Custom:</span>
+                <input
+                  type="number"
+                  min="5"
+                  max="240"
+                  value={setupCustomDuration}
+                  onChange={e => setSetupCustomDuration(e.target.value)}
+                  placeholder="e.g. 50"
+                  className="w-24 bg-black/50 border border-white/10 focus:border-amber-400 rounded-lg px-2.5 py-1 text-xs text-white outline-none font-mono"
+                />
+                <span className="text-[11px] text-white/40">minutes (5-240)</span>
+              </div>
+            </div>
+
+            {/* Optional Goal */}
+            <div className="space-y-1.5 mb-4">
+              <label className="text-[11px] font-bold uppercase tracking-wider text-white/70 block">
+                4. Session Goal (Optional)
+              </label>
+              <input
+                type="text"
+                value={setupGoal}
+                onChange={e => setSetupGoal(e.target.value)}
+                placeholder="e.g. Solve all 15 questions with >90% accuracy"
+                className="w-full bg-black/50 border border-white/10 focus:border-amber-400 rounded-xl px-3.5 py-2.5 text-xs text-white outline-none transition placeholder:text-white/30"
+              />
+            </div>
+
+            {/* Planned Break Setting */}
+            <div className="p-3.5 rounded-2xl bg-white/[0.03] border border-white/10 mb-4 flex items-center justify-between">
+              <div className="space-y-0.5">
+                <span className="text-xs font-semibold text-white flex items-center gap-1.5">
+                  <Coffee className="w-3.5 h-3.5 text-amber-400" />
+                  <span>5-Minute Brevo Verified Break</span>
+                </span>
+                <p className="text-[10px] text-white/50">
+                  Enables requesting a 5-minute study pause authorized via transactional email code
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setSetupPlannedBreak(prev => !prev)}
+                className={`w-10 h-6 rounded-full transition-colors relative cursor-pointer ${
+                  setupPlannedBreak ? 'bg-amber-500' : 'bg-white/20'
+                }`}
+              >
+                <span
+                  className={`inline-block w-4 h-4 transform bg-white rounded-full transition mt-1 ml-1 ${
+                    setupPlannedBreak ? 'translate-x-4' : 'translate-x-0'
+                  }`}
+                />
+              </button>
+            </div>
+
+            {/* Distraction-Free Fullscreen Explanation */}
+            <div className="p-3.5 rounded-2xl bg-amber-500/10 border border-amber-500/30 text-amber-300 text-xs flex items-start gap-2.5 mb-5 leading-relaxed">
+              <Maximize className="w-4 h-4 shrink-0 mt-0.5 text-amber-400" />
+              <div>
+                <span className="font-bold block mb-0.5">Fullscreen Focus Experience</span>
+                <span className="text-[11px] text-amber-200/90">
+                  Clicking Start requests browser fullscreen using the standard Fullscreen API. Ordinary exit buttons will be hidden to maintain strict concentration. You can pause, request a 5m break, or use the emergency exit at any point.
+                </span>
+              </div>
+            </div>
+
+            {/* Actions */}
+            <div className="flex items-center gap-2 pt-2 border-t border-white/10">
+              <button
+                type="button"
+                onClick={() => {
+                  const finalMins = setupCustomDuration ? Math.max(5, Math.min(240, parseInt(setupCustomDuration, 10) || 25)) : setupDuration;
+                  handleStartFocusFromSetup({
+                    subject: setupSubject || 'Chemistry',
+                    task: setupTask || 'Deep Focus Sprint',
+                    goal: setupGoal || undefined,
+                    durationMinutes: finalMins,
+                    plannedBreak: setupPlannedBreak,
+                  });
+                }}
+                className="flex-1 py-3 px-4 rounded-xl font-bold text-xs bg-amber-500 hover:bg-amber-400 text-black shadow-[0_0_20px_rgba(245,158,11,0.35)] transition cursor-pointer flex items-center justify-center gap-2"
+              >
+                <Play className="w-4 h-4 fill-current" />
+                <span>Confirm & Enter Fullscreen Focus</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setFocusSetupModalOpen(false)}
+                className="py-3 px-4 rounded-xl font-semibold text-xs bg-white/10 hover:bg-white/15 text-white border border-white/15 transition cursor-pointer"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ================= 7. EMERGENCY SESSION EXIT CONFIRMATION MODAL ================= */}
+      {emergencyExitModalOpen && (
+        <div
+          className="fixed inset-0 z-50 bg-black/85 backdrop-blur-xl flex items-center justify-center p-4 animate-in fade-in duration-200"
+          onClick={() => setEmergencyExitModalOpen(false)}
+        >
+          <div
+            className="w-full max-w-md rounded-3xl bg-[#0d121f] border border-rose-500/40 p-6 shadow-[0_30px_90px_rgba(244,63,94,0.3)] flex flex-col items-center text-center text-white animate-in zoom-in-95 duration-200"
+            onClick={e => e.stopPropagation()}
+          >
+            <div className="w-14 h-14 rounded-2xl bg-rose-500/20 border border-rose-500/40 flex items-center justify-center text-rose-400 mb-4 shadow-[0_0_20px_rgba(244,63,94,0.3)]">
+              <AlertTriangle className="w-7 h-7" />
+            </div>
+
+            <span className="px-3 py-1 rounded-full text-[10px] font-bold tracking-widest uppercase bg-rose-500/20 text-rose-300 border border-rose-500/30 mb-2">
+              DISCIPLINE SAFEGUARD
+            </span>
+
+            <h3 className="text-lg font-bold text-white mb-2">
+              Conclude Session Early?
+            </h3>
+
+            <p className="text-xs text-white/70 leading-relaxed mb-4 max-w-sm">
+              You are in an active deep study sprint for <strong className="text-white">{activeSubject}</strong>. Standard exit controls are disabled to protect study momentum.
+            </p>
+
+            <div className="w-full p-3 rounded-2xl bg-black/40 border border-white/10 mb-5 text-left text-xs space-y-1 font-mono">
+              <div className="flex justify-between text-white/60">
+                <span>Task:</span>
+                <span className="text-white truncate max-w-[200px]">{activeTask}</span>
+              </div>
+              <div className="flex justify-between text-white/60">
+                <span>Time Elapsed:</span>
+                <span className="text-amber-300">{Math.max(1, Math.round((focusTotalSeconds - focusSecondsLeft) / 60))}m of {focusDurationMinutes}m</span>
+              </div>
+              <div className="flex justify-between text-white/60">
+                <span>Record Status:</span>
+                <span className="text-rose-400">Interrupted (Saved to Firebase & Registry)</span>
+              </div>
+            </div>
+
+            <div className="flex flex-col sm:flex-row gap-2.5 w-full">
+              <button
+                type="button"
+                onClick={() => setEmergencyExitModalOpen(false)}
+                className="flex-1 py-3 px-4 rounded-xl font-bold text-xs bg-amber-500 hover:bg-amber-400 text-black shadow-[0_0_20px_rgba(245,158,11,0.3)] transition cursor-pointer"
+              >
+                Keep Studying
+              </button>
+              <button
+                type="button"
+                onClick={handleEmergencyExitFocus}
+                className="flex-1 py-3 px-4 rounded-xl font-bold text-xs bg-rose-600/30 hover:bg-rose-600/50 text-rose-200 border border-rose-500/50 transition cursor-pointer"
+              >
+                Confirm Early Exit
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ================= 8. FOCUS STREAK REWARD BADGE ANIMATION MODAL ================= */}
+      {focusStreakBadgeModalOpen && (
+        <div
+          className="fixed inset-0 z-50 bg-black/90 backdrop-blur-2xl flex items-center justify-center p-4 animate-in fade-in duration-300"
+          onClick={() => setFocusStreakBadgeModalOpen(false)}
+        >
+          <div
+            className="w-full max-w-md rounded-3xl bg-gradient-to-b from-[#131d2e] to-[#080d17] border-2 border-amber-400 p-8 shadow-[0_0_100px_rgba(245,158,11,0.4)] flex flex-col items-center text-center text-white animate-in zoom-in-90 duration-300 relative overflow-hidden"
+            onClick={e => e.stopPropagation()}
+          >
+            {/* Glowing background halo */}
+            <div className="absolute -top-24 left-1/2 -translate-x-1/2 w-72 h-72 bg-amber-500/20 rounded-full blur-3xl pointer-events-none" />
+
+            {/* Radiant Trophy / Flame Badge */}
+            <div className="relative mb-5">
+              <div className="w-24 h-24 rounded-3xl bg-gradient-to-tr from-amber-600 via-yellow-400 to-amber-200 p-0.5 shadow-[0_0_40px_rgba(245,158,11,0.6)] animate-pulse">
+                <div className="w-full h-full rounded-[22px] bg-[#090d18] flex items-center justify-center text-5xl">
+                  🔥
+                </div>
+              </div>
+              <div className="absolute -bottom-2 -right-2 px-2.5 py-0.5 rounded-full bg-amber-400 text-black font-black text-xs font-mono shadow-lg border border-white">
+                +{focusStreak}
+              </div>
+            </div>
+
+            <span className="px-3.5 py-1 rounded-full text-[10px] font-black tracking-widest uppercase bg-amber-400/20 text-amber-300 border border-amber-400/40 mb-3">
+              DISCIPLINE MILESTONE UNLOCKED
+            </span>
+
+            <h3 className="text-2xl font-black text-white mb-2 font-['Plus_Jakarta_Sans']">
+              Focus Streak Master!
+            </h3>
+
+            <p className="text-xs text-white/80 leading-relaxed mb-6 max-w-sm">
+              You completed a full study sprint on <strong className="text-amber-300">{activeSubject}</strong> and took your verified 5-minute break without skipping!
+            </p>
+
+            <div className="w-full grid grid-cols-2 gap-2 mb-6 text-xs">
+              <div className="p-3 rounded-2xl bg-white/[0.04] border border-white/10 text-center">
+                <span className="text-[10px] text-white/50 block mb-0.5 uppercase tracking-wider font-semibold">Streak Count</span>
+                <span className="text-lg font-black text-amber-400 font-mono">🔥 {focusStreak} Cycles</span>
+              </div>
+              <div className="p-3 rounded-2xl bg-white/[0.04] border border-white/10 text-center">
+                <span className="text-[10px] text-white/50 block mb-0.5 uppercase tracking-wider font-semibold">Cognitive Gain</span>
+                <span className="text-lg font-black text-emerald-400 font-mono">+15% Recall</span>
+              </div>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => setFocusStreakBadgeModalOpen(false)}
+              className="w-full py-3.5 px-6 rounded-2xl font-bold text-sm bg-gradient-to-r from-amber-400 via-amber-300 to-yellow-400 text-black shadow-[0_0_30px_rgba(245,158,11,0.5)] transition hover:scale-[1.02] cursor-pointer"
+            >
+              Claim & Keep Momentum 🚀
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* ================= 9. SMART BREAK PHYSICAL EXERCISES MODAL ================= */}
+      {smartBreakModalOpen && (
+        <div
+          className="fixed inset-0 z-50 bg-black/85 backdrop-blur-xl flex items-center justify-center p-3 sm:p-4 animate-in fade-in duration-200"
+          onClick={() => setSmartBreakModalOpen(false)}
+        >
+          <div
+            className="w-full max-w-xl rounded-3xl bg-[#090f1d] border border-cyan-500/40 p-6 shadow-[0_30px_90px_rgba(6,182,212,0.25)] flex flex-col text-white animate-in zoom-in-95 duration-200 max-h-[92vh] overflow-y-auto"
+            onClick={e => e.stopPropagation()}
+          >
+            {/* Header */}
+            <div className="flex items-center justify-between pb-4 border-b border-white/10 mb-4">
+              <div className="flex items-center gap-2.5">
+                <div className="w-10 h-10 rounded-2xl bg-cyan-500/20 border border-cyan-500/40 flex items-center justify-center text-cyan-300 text-xl shadow-[0_0_15px_rgba(6,182,212,0.25)]">
+                  🧘
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-white flex items-center gap-2">
+                    <span>Smart Break Physical Wellness</span>
+                    <span className="px-2 py-0.5 rounded-full bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 text-[9px] font-mono">
+                      5-MIN RECOVERY
+                    </span>
+                  </h3>
+                  <p className="text-[11px] text-white/60">
+                    Science-backed stretches & ocular exercises during authorized breaks
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setSmartBreakModalOpen(false)}
+                className="p-1 rounded-xl bg-white/5 hover:bg-white/15 text-white/60 hover:text-white transition cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Wellness Progress Score */}
+            <div className="p-3 rounded-2xl bg-white/[0.03] border border-white/10 mb-4 flex items-center justify-between">
+              <div>
+                <span className="text-[11px] text-white/60 font-medium">Break Exercises Completed:</span>
+                <span className="text-xs font-bold text-cyan-300 ml-1.5 font-mono">
+                  {smartBreakCompletedList.length} of {SMART_BREAK_EXERCISES.length}
+                </span>
+              </div>
+              <div className="flex items-center gap-2">
+                <div className="w-24 bg-white/10 rounded-full h-2 overflow-hidden">
+                  <div
+                    className="bg-gradient-to-r from-cyan-400 to-emerald-400 h-full transition-all duration-300"
+                    style={{ width: `${Math.round((smartBreakCompletedList.length / SMART_BREAK_EXERCISES.length) * 100)}%` }}
+                  />
+                </div>
+                <span className="text-[10px] font-bold text-emerald-400 font-mono">
+                  {Math.round((smartBreakCompletedList.length / SMART_BREAK_EXERCISES.length) * 100)}%
+                </span>
+              </div>
+            </div>
+
+            {/* Exercise Tabs */}
+            <div className="flex gap-1.5 overflow-x-auto pb-2 mb-4 scrollbar-none text-[11px]">
+              {SMART_BREAK_EXERCISES.map((ex, idx) => {
+                const isCompleted = smartBreakCompletedList.includes(ex.id);
+                const isActive = smartBreakExerciseIndex === idx;
+                return (
+                  <button
+                    key={ex.id}
+                    type="button"
+                    onClick={() => setSmartBreakExerciseIndex(idx)}
+                    className={`px-3 py-2 rounded-xl whitespace-nowrap transition cursor-pointer border flex items-center gap-1.5 ${
+                      isActive
+                        ? 'bg-cyan-500/25 border-cyan-400 text-cyan-200 font-bold shadow-[0_0_12px_rgba(6,182,212,0.25)]'
+                        : isCompleted
+                        ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300'
+                        : 'bg-white/5 border-white/10 text-white/60 hover:text-white'
+                    }`}
+                  >
+                    <span>{ex.icon}</span>
+                    <span>{ex.title.split(' ')[0]}</span>
+                    {isCompleted && <Check className="w-3 h-3 text-emerald-400 ml-0.5" />}
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* Active Exercise Detail Card */}
+            {(() => {
+              const currentEx = SMART_BREAK_EXERCISES[smartBreakExerciseIndex] || SMART_BREAK_EXERCISES[0];
+              const isCompleted = smartBreakCompletedList.includes(currentEx.id);
+              return (
+                <div className="p-4 rounded-2xl bg-white/[0.02] border border-white/10 mb-4 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <span className="text-2xl">{currentEx.icon}</span>
+                      <div>
+                        <h4 className="text-sm font-bold text-white">{currentEx.title}</h4>
+                        <span className="text-[10px] text-cyan-300/80 font-medium">{currentEx.category}</span>
+                      </div>
+                    </div>
+                    <span className="text-xs font-mono px-2 py-0.5 rounded-full bg-white/10 text-white/80 border border-white/10">
+                      ⏱️ {currentEx.durationSec}s
+                    </span>
+                  </div>
+
+                  <div className="space-y-1.5 pt-1">
+                    <span className="text-[11px] font-bold uppercase tracking-wider text-white/70 block">
+                      Instructions:
+                    </span>
+                    <ol className="space-y-1.5 text-xs text-white/80 leading-relaxed pl-4 list-decimal">
+                      {currentEx.steps.map((st, i) => (
+                        <li key={i}>{st}</li>
+                      ))}
+                    </ol>
+                  </div>
+
+                  <div className="p-2.5 rounded-xl bg-cyan-950/40 border border-cyan-500/20 text-[11px] text-cyan-200 leading-relaxed">
+                    <strong className="text-cyan-300">Physiological Impact: </strong>
+                    {currentEx.scientificBenefit}
+                  </div>
+
+                  <div className="pt-2 flex items-center justify-between">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSmartBreakCompletedList(prev =>
+                          prev.includes(currentEx.id)
+                            ? prev.filter(id => id !== currentEx.id)
+                            : [...prev, currentEx.id]
+                        );
+                      }}
+                      className={`px-4 py-2 rounded-xl text-xs font-bold transition cursor-pointer flex items-center gap-1.5 ${
+                        isCompleted
+                          ? 'bg-emerald-500 text-black shadow-[0_0_15px_rgba(16,185,129,0.4)]'
+                          : 'bg-white/10 hover:bg-white/20 text-white border border-white/15'
+                      }`}
+                    >
+                      <Check className="w-4 h-4" />
+                      <span>{isCompleted ? 'Completed ✓' : 'Mark Exercise Completed'}</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setSmartBreakExerciseIndex(prev => (prev + 1) % SMART_BREAK_EXERCISES.length)}
+                      className="px-3 py-2 rounded-xl bg-white/5 hover:bg-white/15 text-white/70 hover:text-white text-xs font-medium transition cursor-pointer flex items-center gap-1"
+                    >
+                      <span>Next Exercise</span>
+                      <ChevronRight className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                </div>
+              );
+            })()}
+
+            {/* Footer */}
+            <div className="flex items-center justify-between pt-2 border-t border-white/10 text-xs">
+              <span className="text-white/50 text-[11px]">
+                {focusSessionState === 'onBreak' ? `Break timer active: ${formatMinutesSeconds(breakSecondsLeft)} remaining` : 'Keep body & mind energized'}
+              </span>
+              <button
+                type="button"
+                onClick={() => setSmartBreakModalOpen(false)}
+                className="px-4 py-2 rounded-xl font-bold bg-cyan-500 hover:bg-cyan-400 text-black shadow-[0_0_15px_rgba(6,182,212,0.3)] transition cursor-pointer"
+              >
+                Done with Exercises
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ================= 10. FIREBASE FOCUS SESSION HISTORY MODAL ================= */}
+      {focusHistoryModalOpen && (
+        <div
+          className="fixed inset-0 z-50 bg-black/85 backdrop-blur-xl flex items-center justify-center p-3 sm:p-6 animate-in fade-in duration-200"
+          onClick={() => setFocusHistoryModalOpen(false)}
+        >
+          <div
+            className="w-full max-w-3xl max-h-[90vh] rounded-3xl bg-[#090e18] border border-amber-500/30 shadow-[0_30px_90px_rgba(0,0,0,0.9)] flex flex-col overflow-hidden text-white animate-in zoom-in-95 duration-200"
+            onClick={e => e.stopPropagation()}
+          >
+            {/* Modal Header */}
+            <div className="px-6 py-4 border-b border-white/10 flex items-center justify-between bg-white/[0.02]">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-2xl bg-amber-500/20 border border-amber-500/40 flex items-center justify-center text-xl shadow-[0_0_15px_rgba(245,158,11,0.3)]">
+                  🎯
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <h3 className="text-base sm:text-lg font-bold text-white tracking-wide">
+                      Firebase Focus Session History
+                    </h3>
+                    <span className="px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/30 text-[10px] font-bold">
+                      {userFocusSessions.length} Total Sessions
+                    </span>
+                  </div>
+                  <p className="text-xs text-white/50">
+                    Synchronized across devices with Firebase Realtime Database & Firestore
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setFocusHistoryModalOpen(false)}
+                className="p-1 rounded-xl bg-white/5 hover:bg-white/15 text-white/60 hover:text-white transition cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Statistics Banner */}
+            <div className="p-4 grid grid-cols-2 sm:grid-cols-4 gap-2.5 bg-black/40 border-b border-white/10 text-xs">
+              <div className="p-2.5 rounded-xl bg-white/[0.02] border border-white/5 text-center">
+                <span className="text-[10px] text-white/50 block uppercase tracking-wider font-semibold">Total Focus Time</span>
+                <span className="text-base font-black text-amber-400 font-mono">
+                  {userFocusSessions.reduce((acc, s) => acc + (s.actualElapsedMinutes || s.plannedDurationMinutes || 0), 0)}m
+                </span>
+              </div>
+              <div className="p-2.5 rounded-xl bg-white/[0.02] border border-white/5 text-center">
+                <span className="text-[10px] text-white/50 block uppercase tracking-wider font-semibold">Completed Sprints</span>
+                <span className="text-base font-black text-emerald-400 font-mono">
+                  {userFocusSessions.filter(s => s.status === 'completed').length}
+                </span>
+              </div>
+              <div className="p-2.5 rounded-xl bg-white/[0.02] border border-white/5 text-center">
+                <span className="text-[10px] text-white/50 block uppercase tracking-wider font-semibold">Completion Rate</span>
+                <span className="text-base font-black text-cyan-400 font-mono">
+                  {Math.round((userFocusSessions.filter(s => s.status === 'completed').length / Math.max(1, userFocusSessions.length)) * 100)}%
+                </span>
+              </div>
+              <div className="p-2.5 rounded-xl bg-white/[0.02] border border-white/5 text-center">
+                <span className="text-[10px] text-white/50 block uppercase tracking-wider font-semibold">Breaks Verified</span>
+                <span className="text-base font-black text-amber-300 font-mono">
+                  {userFocusSessions.reduce((acc, s) => acc + (s.approvedBreaksCount || 0), 0)}
+                </span>
+              </div>
+            </div>
+
+            {/* Session Records List */}
+            <div className="flex-1 overflow-y-auto p-4 space-y-2.5">
+              {userFocusSessions.length === 0 ? (
+                <div className="py-16 text-center text-white/40 text-xs space-y-2">
+                  <div className="text-3xl">🎯</div>
+                  <p className="font-semibold text-white/60">No focus sessions recorded yet</p>
+                  <p className="text-[11px] text-white/40 max-w-sm mx-auto">
+                    Start a Deep Focus sprint in fullscreen mode. Your progress, breaks, and study goals will automatically record here.
+                  </p>
+                </div>
+              ) : (
+                userFocusSessions.map(session => (
+                  <div
+                    key={session.sessionId}
+                    className="p-3.5 rounded-2xl bg-white/[0.02] hover:bg-white/[0.04] border border-white/10 transition flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-xs"
+                  >
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-2">
+                        <span className="font-bold text-white text-sm">{session.subject}</span>
+                        <span
+                          className={`px-2 py-0.5 rounded-full text-[9px] font-bold uppercase tracking-wider border ${
+                            session.status === 'completed'
+                              ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30'
+                              : 'bg-amber-500/20 text-amber-300 border-amber-500/30'
+                          }`}
+                        >
+                          {session.status}
+                        </span>
+                        {session.approvedBreaksCount > 0 && (
+                          <span className="px-2 py-0.5 rounded-full bg-cyan-500/15 text-cyan-300 border border-cyan-500/25 text-[9px] font-mono">
+                            ☕ {session.approvedBreaksCount} Break{session.approvedBreaksCount > 1 ? 's' : ''}
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-white/80 font-medium">{session.task}</p>
+                      {session.goal && (
+                        <p className="text-[11px] text-amber-300/80">Goal: {session.goal}</p>
+                      )}
+                      <p className="text-[10px] text-white/40">
+                        {new Date(session.startTimestamp).toLocaleString()}
+                      </p>
+                    </div>
+
+                    <div className="flex items-center gap-3 sm:text-right shrink-0">
+                      <div>
+                        <span className="text-base font-black text-amber-400 font-mono">
+                          {session.actualElapsedMinutes}m
+                        </span>
+                        <span className="text-[10px] text-white/40 block">
+                          of {session.plannedDurationMinutes}m planned
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+
+            {/* Modal Footer */}
+            <div className="px-6 py-3 border-t border-white/10 flex items-center justify-between bg-white/[0.02] text-xs">
+              <span className="text-white/50 text-[11px]">
+                Records secured under your private Firebase UID
+              </span>
+              <button
+                type="button"
+                onClick={() => setFocusHistoryModalOpen(false)}
+                className="px-4 py-1.5 rounded-xl bg-white/10 hover:bg-white/20 text-white font-semibold transition cursor-pointer"
+              >
+                Close History
+              </button>
+            </div>
           </div>
         </div>
       )}
@@ -5681,25 +7687,71 @@ export default function App() {
               </div>
             </button>
 
-            {/* 6. Pomodoro Quick Action */}
+            {/* 6. Deep Focus Quick Action */}
             <button
               type="button"
               onClick={togglePomodoro}
               className={`flex items-center gap-2 p-2.5 rounded-xl border text-xs font-medium transition cursor-pointer text-left min-h-[48px] ${
-                isPomoRunning
-                  ? 'bg-rose-500/25 border-rose-400 text-rose-300 shadow-[0_0_12px_rgba(244,63,94,0.25)]'
+                focusSessionState === 'running'
+                  ? 'bg-amber-500/25 border-amber-400 text-amber-300 shadow-[0_0_12px_rgba(245,158,11,0.25)]'
+                  : focusSessionState === 'onBreak'
+                  ? 'bg-emerald-500/25 border-emerald-400 text-emerald-300 shadow-[0_0_12px_rgba(16,185,129,0.25)]'
                   : 'bg-white/5 hover:bg-white/10 border-white/10 text-white'
               }`}
-              title="Start or pause 25-minute Pomodoro focus session"
+              title="Start or pause Deep Focus study session"
             >
-              <Timer className="w-4 h-4 text-rose-400 shrink-0" />
+              <Flame className="w-4 h-4 text-amber-400 shrink-0" />
               <div className="truncate">
-                <div className="font-semibold text-white text-xs">{isPomoRunning ? 'Pause Pomo' : 'Start Pomo'}</div>
-                <div className="text-[10px] text-white/50">{formatMinutesSeconds(pomoSecondsLeft)}</div>
+                <div className="font-semibold text-white text-xs">
+                  {focusSessionState === 'running'
+                    ? 'Pause Focus'
+                    : focusSessionState === 'onBreak'
+                    ? '5m Break'
+                    : 'Start Focus'}
+                </div>
+                <div className="text-[10px] text-white/50">{formatMinutesSeconds(focusSessionState === 'onBreak' ? breakSecondsLeft : focusSecondsLeft)}</div>
               </div>
             </button>
 
-            {/* 7. Daily Registry & History Quick Button */}
+            {/* 7. MY DAY IN REVIEW Button in Drawer */}
+            <button
+              type="button"
+              onClick={() => { setDayInReviewModalOpen(true); setDrawerOpen(false); }}
+              className="flex items-center gap-2 p-3 rounded-2xl bg-gradient-to-r from-cyan-500/20 via-indigo-500/20 to-purple-500/20 hover:from-cyan-500/35 hover:to-purple-500/35 border border-cyan-400/50 text-cyan-300 text-xs font-medium transition cursor-pointer text-left col-span-2 sm:col-span-3 min-h-[50px] shadow-[0_0_15px_rgba(6,182,212,0.2)]"
+              title="Open MY DAY IN REVIEW (Daily Activity Tracker & PDF Reports)"
+            >
+              <CalendarIcon className="w-5 h-5 text-cyan-400 shrink-0" />
+              <div className="flex-1 flex items-center justify-between">
+                <div>
+                  <span className="font-extrabold text-white text-xs tracking-tight">MY DAY IN REVIEW</span>
+                  <span className="text-[10px] text-cyan-300/80 block">Activity Tracker, 24h Timeline & PDF Reports</span>
+                </div>
+                <span className="px-2.5 py-1 rounded-full text-[10px] font-mono font-bold bg-cyan-400 text-black shadow">
+                  FEATURE
+                </span>
+              </div>
+            </button>
+
+            {/* 8. Focus Session History Button in Drawer */}
+            <button
+              type="button"
+              onClick={() => { setFocusHistoryModalOpen(true); setDrawerOpen(false); }}
+              className="flex items-center gap-2 p-2.5 rounded-xl bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/30 text-amber-300 text-xs font-medium transition cursor-pointer text-left col-span-2 sm:col-span-3 min-h-[44px]"
+              title="Open Focus Session History & Cloud Records"
+            >
+              <Timer className="w-4 h-4 text-amber-400 shrink-0" />
+              <div className="flex-1 flex items-center justify-between">
+                <div>
+                  <span className="font-semibold text-white text-xs">Focus Mode History & Cloud Records</span>
+                  <span className="text-[10px] text-amber-300/80 block">View completed focus sprints & subject stats</span>
+                </div>
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-mono font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                  {userFocusSessions.length} Sessions
+                </span>
+              </div>
+            </button>
+
+            {/* 9. Daily Registry & History Quick Button */}
             <button
               type="button"
               onClick={() => { setHistoryModalOpen(true); setDrawerOpen(false); }}
@@ -7526,9 +9578,9 @@ export default function App() {
                 </div>
               </div>
 
-              {/* Pomodoro Focus Timer */}
+              {/* Deep Focus Study Station */}
               <div className="flex items-center justify-between text-xs text-white/80 py-1">
-                <span>Pomodoro Focus Timer (25m)</span>
+                <span>Deep Focus Station & Brevo Break Timer</span>
                 <div className="flex items-center gap-2">
                   <button
                     onClick={() => updateConfig(p => ({ ...p, pomodoro: { ...p.pomodoro, glassBg: !p.pomodoro.glassBg } }))}
@@ -7898,7 +9950,7 @@ export default function App() {
               { id: 'calendar', label: 'Exam Calendar', visible: config.calendar.visible, glass: config.calendar.glassBg },
               { id: 'motivation', label: 'Daily Motivation', visible: config.motivation.visible, glass: config.motivation.glassBg },
               { id: 'nameWidget', label: 'Centum Badge', visible: config.nameWidget.visible, glass: config.nameWidget.glassBg },
-              { id: 'pomodoro', label: 'Pomodoro Timer', visible: config.pomodoro?.visible ?? true, glass: config.pomodoro?.glassBg ?? true },
+              { id: 'pomodoro', label: 'Deep Focus Timer', visible: config.pomodoro?.visible ?? true, glass: config.pomodoro?.glassBg ?? true },
             ].map(item => (
               <div key={item.id} className="flex items-center justify-between p-1.5 rounded-lg bg-white/[0.02] hover:bg-white/[0.05] text-[11px]">
                 <label className="flex items-center gap-2 cursor-pointer flex-1">
@@ -7992,6 +10044,16 @@ export default function App() {
           onAddManualEntry={handleAddManualEntryModal}
           onDeleteEntry={handleDeleteEntryModal}
           activeTasks={tasks}
+        />
+      )}
+
+      {/* ================= MY DAY IN REVIEW HUB MODAL ================= */}
+      {dayInReviewModalOpen && (
+        <DayInReviewHubModal
+          isOpen={dayInReviewModalOpen}
+          onClose={() => setDayInReviewModalOpen(false)}
+          uid={currentUser?.uid || null}
+          userEmail={currentUser?.email || (currentUser?.isAnonymous ? 'Guest Student' : null)}
         />
       )}
 

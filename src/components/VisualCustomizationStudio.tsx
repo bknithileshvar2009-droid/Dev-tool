@@ -33,6 +33,7 @@ import {
   Shield,
   Star,
   Activity,
+  Coffee,
   Flame,
   Layers,
   StickyNote,
@@ -138,6 +139,7 @@ const ALL_WIDGET_KEYS: { id: DashboardWidgetKey; label: string; icon: any }[] = 
   { id: 'motivation', label: 'Daily Motivation', icon: Sparkles },
   { id: 'pomodoro', label: 'Pomodoro Focus Timer', icon: Zap },
   { id: 'scratchpad', label: 'Daily Register & Notes', icon: StickyNote },
+  { id: 'breakStats', label: 'Break Statistics & Wellness', icon: Coffee },
 ];
 
 export default function VisualCustomizationStudio({
