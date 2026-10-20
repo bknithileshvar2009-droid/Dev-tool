@@ -108,6 +108,7 @@ import {
   subscribeToUserDailyRegistry,
   updateDailySummaryNotes,
   deleteDailyRegistryEntry,
+  verifyWritePermission,
   getLocalDateString,
   getDayOfWeekName,
 } from './utils/firebase';
@@ -812,6 +813,7 @@ export default function App() {
   });
   const [lastSyncedTime, setLastSyncedTime] = useState<string | null>(null);
   const isRemoteUpdateRef = useRef<boolean>(false);
+  const isSavingRef = useRef<boolean>(false);
   const isRestoringRef = useRef<boolean>(false);
   const restoredUserUidRef = useRef<string | null>(null);
   const lastSyncedPayloadRef = useRef<string | null>(null);
@@ -1040,23 +1042,28 @@ export default function App() {
     };
 
     try {
+      // Common registry: ignore subject-wise logic, update day-level totals only
       const currentDay = dailyRegistryHistory[targetDate];
       const prevEntries = currentDay?.entries ? Object.values(currentDay.entries) : [];
       const updatedEntriesList = [...prevEntries, fullEntry];
       const totalMinutes = updatedEntriesList.reduce((acc, e) => acc + (e.durationMinutes || 0), 0);
-      const subjectsSet = new Set<string>(currentDay?.subjectsStudied || []);
-      if (entryData.subject && entryData.subject !== 'General') {
-        subjectsSet.add(entryData.subject);
-      }
+
+      const fullPath = `users/${currentUser.uid}/dailyRegistry/${targetDate}/entries/${entryId}`;
+      console.debug(`[DailyRegistry] Writing activity to path: ${fullPath}`);
 
       await saveDailyRegistryEntryItem(currentUser.uid, targetDate, fullEntry, {
         totalStudyMinutes: totalMinutes,
-        subjectsStudied: Array.from(subjectsSet),
       });
 
-      console.log(`[DailyRegistry] Recorded activity for ${targetDate}:`, entryData.description);
-    } catch (err) {
-      console.warn(`[DailyRegistry Notice] Failed to save entry:`, err);
+      console.log(`[DailyRegistry] Successfully recorded activity for ${targetDate}: ${entryData.description}`);
+      
+      // Force-sync state from database
+      const updatedHistory = await loadUserDailyRegistryAll(currentUser.uid);
+      setDailyRegistryHistory(updatedHistory || {});
+    } catch (err: any) {
+      console.error(`[DailyRegistry Critical Error] Failed to save entry for UID ${currentUser.uid} at ${targetDate}:`, err);
+      console.error(`Error Code: ${err.code || 'N/A'}, Message: ${err.message || 'No message provided'}`);
+      setSyncStatus('error');
     }
   }, [currentUser, dailyRegistryHistory]);
 
@@ -1082,18 +1089,17 @@ export default function App() {
 
     // Automatically record to persistent Firebase Daily Registry under users/{uid}/dailyRegistry/{date}/entries
     if (currentUser) {
-      recordDailyRegistryActivity({
-        timestamp: new Date().toISOString(),
-        time: localTime,
-        eventType: 'manual_log',
-        description: `${newRegSubject} — ${newRegTopic.trim() || 'Study Session'}`,
-        subject: newRegSubject,
-        topic: newRegTopic.trim() || undefined,
-        durationMinutes: newRegDuration,
-        notes: newRegNotes.trim() || undefined,
-        status: 'completed',
-        rating: newRegRating,
-      }, localDate);
+        recordDailyRegistryActivity({
+          timestamp: new Date().toISOString(),
+          time: localTime,
+          eventType: 'manual_log',
+          description: `${newRegTopic.trim() || 'Study Session'}`,
+          topic: newRegTopic.trim() || undefined,
+          durationMinutes: newRegDuration,
+          notes: newRegNotes.trim() || undefined,
+          status: 'completed',
+          rating: newRegRating,
+        }, localDate);
     }
 
     setNewRegTopic('');
@@ -1795,6 +1801,7 @@ export default function App() {
             restoreDashboardFromCloudData(cloudData);
             setSyncStatus('saved');
             console.log(`[Firebase Auth] User dashboard restored completely for UID: ${user.uid}`);
+            verifyWritePermission(user.uid).catch(() => {});
           } else {
             console.log(`[Firebase Auth] No previous cloud record found for UID: ${user.uid}. Initializing new account template...`);
             const initialPayload = buildCurrentDashboardPayload(user.uid);
@@ -1816,7 +1823,7 @@ export default function App() {
           }
           dailyRegistryUnsubRef.current = subscribeToUserDailyRegistry(user.uid, data => {
             if (!isCancelled) {
-              setDailyRegistryHistory(data || {});
+              setDailyRegistryHistory(data && typeof data === 'object' ? data : {});
             }
           });
 
@@ -1886,7 +1893,7 @@ export default function App() {
     const unsubscribe = subscribeToUserDashboard(
       currentUser.uid,
       cloudData => {
-        if (!cloudData || !cloudData.config) return;
+        if (!cloudData || !cloudData.config || isSavingRef.current) return;
         // Ignore echo of our own last saved payload
         if (cloudData.updatedAt && lastSyncedPayloadRef.current === cloudData.updatedAt) {
           return;
@@ -1932,6 +1939,7 @@ export default function App() {
       lastSyncedPayloadRef.current = payload.updatedAt;
 
       try {
+        isSavingRef.current = true;
         const savePromise = saveUserDashboard(currentUser.uid, payload);
         pendingSavePromiseRef.current = savePromise;
         await savePromise;
@@ -1942,9 +1950,10 @@ export default function App() {
         console.error(`[Firebase Auto-Sync Error] Failed saving changes for UID: ${currentUser.uid}:`, err);
         setSyncStatus('error');
       } finally {
+        isSavingRef.current = false;
         pendingSavePromiseRef.current = null;
       }
-    }, 1200);
+    }, 2000);
 
     return () => {
       if (syncTimeoutRef.current) window.clearTimeout(syncTimeoutRef.current);
@@ -2408,7 +2417,6 @@ export default function App() {
           time: timeStr,
           eventType: 'task_completed',
           description: `Completed task: ${target.text}`,
-          subject: (target as any).subject || 'General',
           durationMinutes: 15,
           status: 'completed',
         }, today);
@@ -2544,7 +2552,6 @@ export default function App() {
                 time: timeStr,
                 eventType: 'study_session',
                 description: `Completed ${sessionMins}m Pomodoro Focus Sprint`,
-                subject: 'Study Session',
                 durationMinutes: sessionMins,
                 status: 'completed',
                 rating: 5,

@@ -57,6 +57,14 @@ service cloud.firestore {
     }
 
     // User personal Daily Registry & History documents
+    match /users/{userId}/dailyRegistry {
+      allow list: if isValidId(userId) && isOwner(userId);
+    }
+
+    match /users/{userId}/daily_registers/{date} {
+      allow read, write: if isValidId(userId) && isOwner(userId);
+    }
+    
     match /users/{userId}/dailyRegistry/{date} {
       allow get, list: if isValidId(userId) && isOwner(userId);
       allow create: if isValidId(userId) && isOwner(userId) && isValidDailyRegistry(incoming());
