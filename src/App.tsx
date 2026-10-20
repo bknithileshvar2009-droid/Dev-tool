@@ -28,6 +28,7 @@ import {
   Target,
   Award,
   Zap,
+  UserCheck,
   Lock,
   Unlock,
   Settings2,
@@ -117,6 +118,7 @@ import {
   subscribeToUserFocusSessions,
   FocusSessionRecord,
 } from './utils/firebase';
+import AuthModal from './components/AuthModal';
 import VisualCustomizationStudio from './components/VisualCustomizationStudio';
 import AnimatedCharacterBackdrop from './components/AnimatedCharacterBackdrop';
 import DailyRegistryHistoryModal from './components/DailyRegistryHistoryModal';
@@ -915,6 +917,7 @@ export default function App() {
   const [focusHistoryModalOpen, setFocusHistoryModalOpen] = useState<boolean>(false);
   const [focusStreakBadgeModalOpen, setFocusStreakBadgeModalOpen] = useState<boolean>(false);
   const [dayInReviewModalOpen, setDayInReviewModalOpen] = useState<boolean>(false);
+  const [authModalOpen, setAuthModalOpen] = useState<boolean>(false);
   const [emergencyExitModalOpen, setEmergencyExitModalOpen] = useState<boolean>(false);
   const [sessionRecoveryNotice, setSessionRecoveryNotice] = useState<string | null>(null);
   const [smartBreakModalOpen, setSmartBreakModalOpen] = useState<boolean>(false);
@@ -2208,11 +2211,11 @@ export default function App() {
           }, 350);
         }
       } else {
-        console.log('[Firebase Auth] User signed out or unauthenticated.');
+        console.log('[Firebase Auth] No active identity. Automatically connecting single-user background identity...');
         restoredUserUidRef.current = null;
         isRestoringRef.current = false;
         setCurrentUser(null);
-        setSyncStatus('offline');
+        setSyncStatus('saving');
         if (dailyRegistryUnsubRef.current) {
           dailyRegistryUnsubRef.current();
           dailyRegistryUnsubRef.current = null;
@@ -2221,8 +2224,18 @@ export default function App() {
           focusSessionsUnsubRef.current();
           focusSessionsUnsubRef.current = null;
         }
-        setDailyRegistryHistory({});
-        setUserFocusSessions([]);
+
+        try {
+          const autoUser = await signInAsGuest();
+          console.log(`[Firebase Auth] Guest identity active: UID ${autoUser.uid}`);
+          if (autoUser && !auth.currentUser) {
+            setCurrentUser(autoUser);
+            setSyncStatus('saved');
+          }
+        } catch (autoAuthErr) {
+          console.warn('[Firebase Auth] Auto-background auth notice:', autoAuthErr);
+          setSyncStatus('offline');
+        }
       }
     });
 
@@ -2397,11 +2410,14 @@ export default function App() {
     setAuthSuccessMsg(null);
     setUnauthorizedDomain(null);
     try {
-      await signInAsGuest();
-      setAuthSuccessMsg('Signed in as Guest! Full Firebase cloud sync is active.');
+      const gUser = await signInAsGuest();
+      if (gUser && !auth.currentUser) {
+        setCurrentUser(gUser);
+      }
+      setAuthSuccessMsg('Signed in as Guest Student! Local & Cloud persistence active.');
     } catch (err: any) {
       console.warn('Guest sign-in error:', err);
-      setAuthError(err.message || 'Guest sign-in failed. Please check Firebase settings.');
+      setAuthError(err.message || 'Guest sign-in failed. Please try again.');
     } finally {
       setAuthLoading(false);
     }
@@ -4455,6 +4471,14 @@ export default function App() {
         available: true,
       },
       {
+        id: "daily-summary-history",
+        label: "Daily Summary History & Combined PDF Reports",
+        category: "Study",
+        shortcut: "R",
+        action: () => { setDayInReviewModalOpen(true); setCommandMenuOpen(false); },
+        available: true,
+      },
+      {
         id: 'daily-registry',
         label: 'Open Daily Registry & Personal History',
         category: 'Study',
@@ -4727,6 +4751,18 @@ export default function App() {
           {Object.keys(dailyRegistryHistory).length > 0 && (
             <span className="absolute -top-1 -right-1 w-2 h-2 rounded-full bg-cyan-400" />
           )}
+        </button>
+
+
+        {/* User Account & Firebase Sign In Button */}
+        <button
+          onClick={() => setAuthModalOpen(true)}
+          title={currentUser ? `Account: ${currentUser.email || (currentUser.isAnonymous ? "Guest Student" : "User")}` : "Sign In & Cloud Account"}
+          aria-label="Open Account Sign In Modal"
+          className="p-2.5 sm:p-3 min-w-[44px] min-h-[44px] sm:min-w-[48px] sm:min-h-[48px] rounded-2xl hud-btn cursor-pointer flex items-center justify-center bg-cyan-500/20 hover:bg-cyan-500/35 border border-cyan-400/50 text-cyan-300 transition shadow-[0_0_15px_rgba(6,182,212,0.25)] relative"
+        >
+          <UserCheck className="w-4 h-4 sm:w-5 sm:h-5 text-cyan-300" />
+          <span className="absolute -top-1 -right-1 w-2.5 h-2.5 rounded-full bg-emerald-400 border border-black shadow-[0_0_8px_rgba(16,185,129,0.8)]" />
         </button>
 
         {/* MY DAY IN REVIEW Feature Button */}
@@ -7773,6 +7809,26 @@ export default function App() {
               </div>
             </button>
 
+
+            {/* Daily Summary History & Combined Report Button */}
+            <button
+              type="button"
+              onClick={() => { setDayInReviewModalOpen(true); setDrawerOpen(false); }}
+              className="flex items-center gap-2 p-2.5 rounded-xl bg-gradient-to-r from-cyan-500/15 to-emerald-500/15 hover:from-cyan-500/30 hover:to-emerald-500/30 border border-cyan-400/40 text-cyan-200 text-xs font-medium transition cursor-pointer text-left col-span-2 sm:col-span-3 min-h-[44px] shadow-sm"
+              title="Daily Summary History & Combined PDF Reports"
+            >
+              <CalendarIcon className="w-4 h-4 text-cyan-400 shrink-0" />
+              <div className="flex-1 flex items-center justify-between">
+                <div>
+                  <span className="font-bold text-white text-xs">Daily Summary History & Reports</span>
+                  <span className="text-[10px] text-cyan-300/80 block">My Day in Review, Timeline & Multi-Day PDF Export</span>
+                </div>
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-mono font-bold bg-cyan-500/20 text-cyan-300 border border-cyan-500/30">
+                  EXPORT PDF
+                </span>
+              </div>
+            </button>
+
             {/* 9. Daily Registry & History Quick Button */}
             <button
               type="button"
@@ -8449,7 +8505,7 @@ export default function App() {
           <div className="space-y-6">
             <div className="pb-1">
               <h3 className="text-xs font-bold uppercase tracking-wider text-white">Firebase Realtime & Cloud Storage</h3>
-              <p className="text-[11px] text-white/50">Primary: users/{'{uid}'}/dashboard • Redundancy: users/{'{uid}'}/dashboard/data</p>
+              <p className="text-[11px] text-white/50">Primary: users/&#123;uid&#125;/dashboard • Redundancy: users/&#123;uid&#125;/dashboard/data</p>
             </div>
 
             {authError && (
@@ -8512,7 +8568,7 @@ export default function App() {
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
                   <Cloud className="w-4 h-4 text-cyan-400" />
-                  <span className="text-xs font-semibold text-white">Authentication & Sync Status</span>
+                  <span className="text-xs font-semibold text-white">Personal Cloud Auto-Sync</span>
                 </div>
                 <span
                   className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
@@ -8523,203 +8579,55 @@ export default function App() {
                       : 'bg-white/10 text-white/50'
                   }`}
                 >
-                  {syncStatus === 'saved' ? '● Synced to Firebase' : syncStatus === 'saving' ? '⟳ Syncing...' : 'Local Storage Only'}
+                  {syncStatus === 'saved' ? '● Synced to Firebase' : syncStatus === 'saving' ? '⟳ Syncing...' : 'Offline Mode'}
                 </span>
               </div>
 
-              {authSuccessMsg && (
-                <div className="p-3 rounded-xl text-xs bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 flex items-center gap-2">
-                  <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-400" />
-                  <span>{authSuccessMsg}</span>
-                </div>
-              )}
-
-              {unauthorizedDomain && (
-                <div className="p-3.5 rounded-2xl bg-amber-500/10 border border-amber-500/30 text-xs space-y-2.5">
-                  <div className="flex items-start gap-2">
-                    <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
-                    <div>
-                      <div className="font-semibold text-amber-200">Firebase OAuth Domain Setup Needed</div>
-                      <div className="text-[11px] text-amber-300/70 mt-0.5">
-                        Google Sign-In requires your preview domain to be authorized in Firebase Console.
-                      </div>
+              <div className="p-3.5 rounded-xl bg-black/40 border border-white/10 text-xs space-y-2">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-8 h-8 rounded-full bg-cyan-500/20 border border-cyan-400/30 flex items-center justify-center text-cyan-300 font-bold">
+                    ⚡
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <div className="font-semibold text-white truncate flex items-center gap-1.5">
+                      <span>Personal Application Identity</span>
+                      <span className="px-1.5 py-0.5 rounded text-[9px] bg-cyan-500/20 text-cyan-300 font-mono">Single-User</span>
+                    </div>
+                    <div className="text-[10px] text-white/40 truncate">
+                      Cloud UID: {currentUser?.uid || 'Initializing...'}
                     </div>
                   </div>
-
-                  <div className="flex items-center gap-2 bg-black/40 p-2 rounded-xl border border-white/10 font-mono text-[11px] text-white/90">
-                    <span className="truncate flex-1 select-all">{unauthorizedDomain}</span>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        navigator.clipboard.writeText(unauthorizedDomain);
-                        setCopiedDomain(true);
-                        setTimeout(() => setCopiedDomain(false), 2000);
-                      }}
-                      className="px-2 py-1 bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 rounded-lg font-sans text-[10px] font-semibold flex items-center gap-1 shrink-0 transition cursor-pointer"
-                    >
-                      {copiedDomain ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
-                      <span>{copiedDomain ? 'Copied!' : 'Copy Domain'}</span>
-                    </button>
-                  </div>
-
-                  <div className="text-[11px] text-white/60 space-y-1">
-                    <p><strong>To enable Google Sign-In:</strong> Go to <em>Firebase Console &gt; Authentication &gt; Settings &gt; Authorized domains &gt; Add domain</em> and paste the preview hostname above.</p>
-                    <p className="text-emerald-300"><strong>Or test immediately:</strong> Use the <em>Guest Sign-In</em> below to test full Realtime Database saves, restores, and refreshes right now with no domain setup required!</p>
-                  </div>
                 </div>
-              )}
-
-              {currentUser ? (
-                <div className="space-y-3">
-                  <div className="p-3.5 rounded-xl bg-black/40 border border-white/10 text-xs space-y-1.5">
-                    <div className="flex items-center gap-2.5">
-                      {currentUser.photoURL ? (
-                        <img src={currentUser.photoURL} alt="User" className="w-8 h-8 rounded-full border border-white/20" />
-                      ) : (
-                        <div className="w-8 h-8 rounded-full bg-cyan-500/20 border border-cyan-400/30 flex items-center justify-center text-cyan-300 font-bold">
-                          {currentUser.isAnonymous ? 'G' : currentUser.email ? currentUser.email[0].toUpperCase() : 'U'}
-                        </div>
-                      )}
-                      <div className="min-w-0 flex-1">
-                        <div className="font-semibold text-white truncate flex items-center gap-1.5">
-                          <span>{currentUser.isAnonymous ? 'Guest Account (Authenticated)' : (currentUser.displayName || currentUser.email || 'Authenticated User')}</span>
-                          {currentUser.isAnonymous && (
-                            <span className="px-1.5 py-0.5 rounded text-[9px] bg-amber-500/20 text-amber-300 font-normal">Guest</span>
-                          )}
-                        </div>
-                        <div className="text-[10px] text-white/40 truncate">
-                          {currentUser.isAnonymous ? `Cloud UID: ${currentUser.uid}` : currentUser.email}
-                        </div>
-                      </div>
-                    </div>
-                    <div className="pt-1 text-[10px] text-cyan-300/90 font-mono truncate">
-                      RTDB: users/{currentUser.uid}/dashboard
-                    </div>
-                    <div className="text-[10px] text-white/40 font-mono truncate">
-                      Firestore: users/{currentUser.uid}/dashboard/data
-                    </div>
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-2">
-                    <button
-                      onClick={handleManualSyncNow}
-                      className="py-2 px-3 rounded-xl bg-cyan-500/20 hover:bg-cyan-500/30 text-cyan-300 font-semibold text-xs border border-cyan-500/40 transition cursor-pointer flex items-center justify-center gap-1.5"
-                    >
-                      <RotateCcw className="w-3.5 h-3.5" />
-                      <span>Save to Cloud</span>
-                    </button>
-                    <button
-                      onClick={handleLoadFromCloud}
-                      className="py-2 px-3 rounded-xl bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 font-semibold text-xs border border-emerald-500/40 transition cursor-pointer flex items-center justify-center gap-1.5"
-                    >
-                      <Download className="w-3.5 h-3.5" />
-                      <span>Restore from Cloud</span>
-                    </button>
-                  </div>
-
-                  <button
-                    onClick={handleSignOut}
-                    className="w-full py-2 rounded-xl bg-rose-500/15 hover:bg-rose-500/25 text-rose-300 font-semibold text-xs border border-rose-500/30 transition cursor-pointer flex items-center justify-center gap-1.5"
-                  >
-                    <LogOut className="w-3.5 h-3.5" />
-                    <span>Sign Out</span>
-                  </button>
+                <div className="pt-1 text-[10px] text-cyan-300/90 font-mono truncate">
+                  RTDB: users/{currentUser?.uid || 'uid'}/dashboard
                 </div>
-              ) : (
-                <div className="space-y-3 pt-1">
-                  <p className="text-xs text-white/60 leading-relaxed">
-                    Sign in to your Firebase account to automatically save and restore widget layouts, wallpapers, custom studio themes, study timetables, tasks, and notes across sessions.
-                  </p>
-
-                  {/* 1. Google Sign-In */}
-                  <button
-                    disabled={authLoading}
-                    onClick={handleGoogleSignIn}
-                    className="w-full py-2.5 px-4 rounded-xl bg-white hover:bg-slate-100 text-slate-900 font-semibold text-xs transition cursor-pointer flex items-center justify-center gap-2 shadow-lg disabled:opacity-50"
-                  >
-                    <svg className="w-4 h-4" viewBox="0 0 24 24">
-                      <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" />
-                      <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" />
-                      <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z" />
-                      <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z" />
-                    </svg>
-                    <span>{authLoading ? 'Connecting...' : 'Sign In with Google'}</span>
-                  </button>
-
-                  {/* 2. Instant Guest Sign-In */}
-                  <button
-                    disabled={authLoading}
-                    onClick={handleGuestSignIn}
-                    className="w-full py-2.5 px-4 rounded-xl bg-cyan-500/20 hover:bg-cyan-500/30 text-cyan-300 border border-cyan-500/40 font-semibold text-xs transition cursor-pointer flex items-center justify-center gap-2 shadow-sm disabled:opacity-50"
-                  >
-                    <Zap className="w-4 h-4 text-cyan-400" />
-                    <span>{authLoading ? 'Connecting...' : '⚡ Quick Guest Sign-In (Instant Cloud Persistence)'}</span>
-                  </button>
-
-                  {/* 3. Email & Password Toggle Form */}
-                  <div className="pt-2">
-                    <button
-                      type="button"
-                      onClick={() => setShowEmailAuth(!showEmailAuth)}
-                      className="text-[11px] text-white/50 hover:text-white/80 transition flex items-center gap-1 mx-auto"
-                    >
-                      <Mail className="w-3.5 h-3.5" />
-                      <span>{showEmailAuth ? 'Hide Email / Password Options' : 'Or Sign In with Email / Password'}</span>
-                      {showEmailAuth ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
-                    </button>
-
-                    {showEmailAuth && (
-                      <form onSubmit={handleEmailAuth} className="mt-3 p-3.5 rounded-xl bg-black/40 border border-white/10 space-y-3">
-                        <div className="text-[11px] font-semibold text-white/80">
-                          {isAuthSignUp ? 'Create New Firebase Account' : 'Sign In with Existing Account'}
-                        </div>
-
-                        <div className="space-y-2">
-                          <div className="relative">
-                            <Mail className="w-3.5 h-3.5 text-white/40 absolute left-3 top-2.5" />
-                            <input
-                              type="email"
-                              value={authEmail}
-                              onChange={e => setAuthEmail(e.target.value)}
-                              placeholder="student@example.com"
-                              required
-                              className="w-full pl-9 pr-3 py-2 rounded-lg bg-white/5 border border-white/15 text-xs text-white placeholder-white/30 focus:outline-none focus:border-cyan-400"
-                            />
-                          </div>
-                          <div className="relative">
-                            <Key className="w-3.5 h-3.5 text-white/40 absolute left-3 top-2.5" />
-                            <input
-                              type="password"
-                              value={authPassword}
-                              onChange={e => setAuthPassword(e.target.value)}
-                              placeholder="Password (min 6 chars)"
-                              required
-                              className="w-full pl-9 pr-3 py-2 rounded-lg bg-white/5 border border-white/15 text-xs text-white placeholder-white/30 focus:outline-none focus:border-cyan-400"
-                            />
-                          </div>
-                        </div>
-
-                        <div className="flex items-center justify-between gap-2 pt-1">
-                          <button
-                            type="button"
-                            onClick={() => setIsAuthSignUp(!isAuthSignUp)}
-                            className="text-[10px] text-cyan-300 hover:underline"
-                          >
-                            {isAuthSignUp ? 'Already have account? Sign in' : 'Need account? Create new'}
-                          </button>
-                          <button
-                            type="submit"
-                            disabled={authLoading}
-                            className="px-4 py-1.5 rounded-lg bg-cyan-500 hover:bg-cyan-600 text-white font-semibold text-xs transition disabled:opacity-50"
-                          >
-                            {authLoading ? 'Working...' : isAuthSignUp ? 'Create Account' : 'Sign In'}
-                          </button>
-                        </div>
-                      </form>
-                    )}
-                  </div>
+                <div className="text-[10px] text-white/40 font-mono truncate">
+                  Firestore: users/{currentUser?.uid || 'uid'}/dailyActivity
                 </div>
-              )}
+              </div>
+
+              <div className="grid grid-cols-2 gap-2 pt-1">
+                <button
+                  type="button"
+                  onClick={handleManualSyncNow}
+                  className="py-2.5 px-3 rounded-xl bg-cyan-500/20 hover:bg-cyan-500/30 text-cyan-300 font-semibold text-xs border border-cyan-500/40 transition cursor-pointer flex items-center justify-center gap-1.5"
+                >
+                  <RotateCcw className="w-3.5 h-3.5" />
+                  <span>Sync Now</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={handleLoadFromCloud}
+                  className="py-2.5 px-3 rounded-xl bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 font-semibold text-xs border border-emerald-500/40 transition cursor-pointer flex items-center justify-center gap-1.5"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  <span>Restore Data</span>
+                </button>
+              </div>
+
+              <p className="text-[11px] text-white/50 leading-relaxed pt-1">
+                APESFLOW is running in <strong>Personal Single-User Mode</strong>. Authentication is handled automatically in the background using Firebase secure anonymous identity. No login forms or account creation are required.
+              </p>
             </div>
 
             <div className="p-4 rounded-2xl bg-white/[0.03] border border-white/10 space-y-2 text-xs">
@@ -8728,7 +8636,7 @@ export default function App() {
                 <span>Zero-Trust Firebase Security</span>
               </div>
               <p className="text-[11px] text-white/50 leading-relaxed">
-                Your study data is encrypted and isolated under path <code>users/{'{uid}'}/dashboard</code>. Hardened ABAC security rules verify that only your authenticated account can read or write your personal dashboard state.
+                Your study data is encrypted and isolated under path <code>users/&#123;uid&#125;/dashboard</code>. Hardened ABAC security rules verify that only your authenticated account can read or write your personal dashboard state.
               </p>
             </div>
           </div>
@@ -8743,7 +8651,7 @@ export default function App() {
                 <span>Daily Registry & Personal History</span>
               </h3>
               <p className="text-[11px] text-white/50">
-                Primary: users/{'{uid}'}/dailyRegistry/{'{YYYY-MM-DD}'}
+                Primary: users/&#123;uid&#125;/dailyRegistry/&#123;YYYY-MM-DD&#125;
               </p>
             </div>
 
@@ -10066,6 +9974,30 @@ export default function App() {
           onAddManualEntry={handleAddManualEntryModal}
           onDeleteEntry={handleDeleteEntryModal}
           activeTasks={tasks}
+        />
+      )}
+
+
+      {/* ================= FIREBASE AUTHENTICATION & ACCOUNT MODAL ================= */}
+      {authModalOpen && (
+        <AuthModal
+          isOpen={authModalOpen}
+          onClose={() => setAuthModalOpen(false)}
+          currentUser={currentUser}
+          onGoogleSignIn={handleGoogleSignIn}
+          onGuestSignIn={handleGuestSignIn}
+          onEmailAuth={handleEmailAuth}
+          onSignOut={logOutUser}
+          authEmail={authEmail}
+          setAuthEmail={setAuthEmail}
+          authPassword={authPassword}
+          setAuthPassword={setAuthPassword}
+          isAuthSignUp={isAuthSignUp}
+          setIsAuthSignUp={setIsAuthSignUp}
+          authLoading={authLoading}
+          authError={authError}
+          authSuccessMsg={authSuccessMsg}
+          unauthorizedDomain={unauthorizedDomain}
         />
       )}
 

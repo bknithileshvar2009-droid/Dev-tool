@@ -24,7 +24,11 @@ import {
   Trash2,
   Clock,
   BookOpen,
+  Download,
+  Printer,
+  FileText,
 } from 'lucide-react';
+import { generateCombinedMultiDayReportPDF, CombinedDaySummaryItem } from "../utils/pdfGenerator";
 import {
   DailyRegistryDayRecord,
   DailyRegistryEntryItem,
@@ -97,6 +101,88 @@ export const DailyRegistryHistoryModal: React.FC<DailyRegistryHistoryModalProps>
   const [entryDuration, setEntryDuration] = useState(30);
   const [entryNotes, setEntryNotes] = useState('');
   const [entrySubject, setEntrySubject] = useState('Mathematics');
+
+
+  // Combined PDF Export State
+  const [isExportModalOpen, setIsExportModalOpen] = useState(false);
+  const [exportRangeType, setExportRangeType] = useState<
+    "today" | "last7" | "last14" | "last30" | "thisMonth" | "all" | "custom"
+  >("last14");
+  const [customExportStart, setCustomExportStart] = useState("");
+  const [customExportEnd, setCustomExportEnd] = useState("");
+
+  const handleExportCombinedPDF = (autoPrint = false) => {
+    const allDates = Object.keys(historyMap).sort();
+    if (allDates.length === 0) return;
+
+    const todayStr = getLocalDateString();
+    let filteredDates = [...allDates];
+    let rangeLabel = "All Available History";
+
+    if (exportRangeType === "today") {
+      filteredDates = allDates.filter(d => d === todayStr);
+      rangeLabel = `Today (${todayStr})`;
+    } else if (exportRangeType === "last7") {
+      const cutoff = new Date();
+      cutoff.setDate(cutoff.getDate() - 7);
+      const cutoffStr = getLocalDateString(cutoff);
+      filteredDates = allDates.filter(d => d >= cutoffStr);
+      rangeLabel = `Last 7 Days (${cutoffStr} to ${todayStr})`;
+    } else if (exportRangeType === "last14") {
+      const cutoff = new Date();
+      cutoff.setDate(cutoff.getDate() - 14);
+      const cutoffStr = getLocalDateString(cutoff);
+      filteredDates = allDates.filter(d => d >= cutoffStr);
+      rangeLabel = `Last 14 Days (${cutoffStr} to ${todayStr})`;
+    } else if (exportRangeType === "last30") {
+      const cutoff = new Date();
+      cutoff.setDate(cutoff.getDate() - 30);
+      const cutoffStr = getLocalDateString(cutoff);
+      filteredDates = allDates.filter(d => d >= cutoffStr);
+      rangeLabel = `Last 30 Days (${cutoffStr} to ${todayStr})`;
+    } else if (exportRangeType === "thisMonth") {
+      const now = new Date();
+      const monthStart = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-01`;
+      filteredDates = allDates.filter(d => d >= monthStart);
+      rangeLabel = `This Month (${monthStart} to ${todayStr})`;
+    } else if (exportRangeType === "custom" && customExportStart && customExportEnd) {
+      filteredDates = allDates.filter(d => d >= customExportStart && d <= customExportEnd);
+      rangeLabel = `Custom Range (${customExportStart} to ${customExportEnd})`;
+    }
+
+    const summaries: CombinedDaySummaryItem[] = filteredDates.map(dateKey => {
+      const rec = historyMap[dateKey];
+      let fullDateStr = dateKey;
+      try {
+        const dObj = new Date(dateKey + "T12:00:00");
+        fullDateStr = dObj.toLocaleDateString("en-US", {
+          weekday: "long",
+          year: "numeric",
+          month: "long",
+          day: "numeric",
+        });
+      } catch {}
+
+      return {
+        date: dateKey,
+        weekday: rec.dayOfWeek || getDayOfWeekName(new Date(dateKey + "T12:00:00")),
+        fullDateStr,
+        dailySummaryNotes: rec.dailySummaryNotes,
+        aiSummary: rec.aiSummary,
+        entries: rec.entries || [],
+        totalStudyMins: rec.totalStudyMinutes,
+      };
+    });
+
+    generateCombinedMultiDayReportPDF({
+      dateRangeLabel: rangeLabel,
+      summaries,
+      userName: userEmail || (uid ? `User ${uid.slice(0, 8)}` : "APESFLOW Student"),
+      autoPrint,
+    });
+
+    setIsExportModalOpen(false);
+  };
 
   // Advanced Search & Filters
   const [searchQuery, setSearchQuery] = useState('');
@@ -326,7 +412,28 @@ export const DailyRegistryHistoryModal: React.FC<DailyRegistryHistoryModalProps>
             </div>
           </div>
 
+          
           <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setIsExportModalOpen(true)}
+              className="px-3 py-1.5 rounded-xl bg-cyan-500/20 hover:bg-cyan-500/35 text-cyan-300 hover:text-white font-bold text-xs border border-cyan-500/40 transition cursor-pointer flex items-center gap-1.5 shadow-sm"
+              title="Export All Daily Summaries to Combined PDF Report"
+            >
+              <Download className="w-3.5 h-3.5 text-cyan-400" />
+              <span>EXPORT ALL DAILY SUMMARIES</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => handleExportCombinedPDF(true)}
+              className="p-2 rounded-xl bg-white/5 hover:bg-white/15 text-white/80 hover:text-white border border-white/10 transition cursor-pointer flex items-center gap-1 text-xs font-semibold"
+              title="Print Daily Summary Report"
+            >
+              <Printer className="w-3.5 h-3.5 text-emerald-400" />
+              <span className="hidden sm:inline">Print</span>
+            </button>
+
             <button
               type="button"
               onClick={onClose}
@@ -406,6 +513,103 @@ export const DailyRegistryHistoryModal: React.FC<DailyRegistryHistoryModalProps>
             )}
           </div>
         </div>
+
+
+        {/* ================= EXPORT COMBINED PDF RANGE MODAL ================= */}
+        {isExportModalOpen && (
+          <div className="fixed inset-0 z-[80] flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-in fade-in">
+            <div className="w-full max-w-lg p-6 rounded-3xl bg-[#0b1120] border border-cyan-500/40 space-y-5 shadow-2xl text-white">
+              <div className="flex items-center justify-between pb-3 border-b border-white/10">
+                <div className="flex items-center gap-2">
+                  <FileText className="w-5 h-5 text-cyan-400" />
+                  <h3 className="text-base font-bold text-white">Combined Daily Summary Export</h3>
+                </div>
+                <button
+                  onClick={() => setIsExportModalOpen(false)}
+                  className="p-1.5 rounded-xl bg-white/5 hover:bg-white/15 text-white/70"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              <p className="text-xs text-white/60 leading-relaxed">
+                Select a date range to generate ONE combined downloadable PDF containing every selected daily summary in chronological order, formatted with full date and weekday headings.
+              </p>
+
+              <div className="space-y-2">
+                <label className="text-xs font-semibold text-cyan-300 block">Select Date Range Preset:</label>
+                <div className="grid grid-cols-2 gap-2 text-xs">
+                  {[
+                    { id: "today", label: "Today Only" },
+                    { id: "last7", label: "Last 7 Days" },
+                    { id: "last14", label: "Last 14 Days" },
+                    { id: "last30", label: "Last 30 Days" },
+                    { id: "thisMonth", label: "This Month" },
+                    { id: "all", label: `All History (${Object.keys(historyMap).length} Days)` },
+                    { id: "custom", label: "Custom Date Range" },
+                  ].map(opt => (
+                    <button
+                      key={opt.id}
+                      type="button"
+                      onClick={() => setExportRangeType(opt.id as any)}
+                      className={`p-3 rounded-xl border text-left font-semibold transition cursor-pointer ${
+                        exportRangeType === opt.id
+                          ? "bg-cyan-500/25 border-cyan-400 text-cyan-200 shadow-[0_0_15px_rgba(6,182,212,0.2)]"
+                          : "bg-white/5 border-white/10 hover:bg-white/10 text-white/70"
+                      }`}
+                    >
+                      {opt.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {exportRangeType === "custom" && (
+                <div className="grid grid-cols-2 gap-3 pt-1">
+                  <div>
+                    <label className="text-[10px] text-white/50 block mb-1">Start Date</label>
+                    <input
+                      type="date"
+                      value={customExportStart}
+                      onChange={e => setCustomExportStart(e.target.value)}
+                      className="w-full bg-black/60 border border-white/10 rounded-xl p-2.5 text-xs text-cyan-300"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[10px] text-white/50 block mb-1">End Date</label>
+                    <input
+                      type="date"
+                      value={customExportEnd}
+                      onChange={e => setCustomExportEnd(e.target.value)}
+                      className="w-full bg-black/60 border border-white/10 rounded-xl p-2.5 text-xs text-cyan-300"
+                    />
+                  </div>
+                </div>
+              )}
+
+              <div className="flex items-center gap-3 pt-3 border-t border-white/10">
+                <button
+                  type="button"
+                  onClick={() => handleExportCombinedPDF(false)}
+                  className="flex-1 py-3 rounded-2xl bg-cyan-500 hover:bg-cyan-400 text-black font-extrabold text-xs transition cursor-pointer flex items-center justify-center gap-2 shadow-[0_0_20px_rgba(6,182,212,0.4)]"
+                >
+                  <Download className="w-4 h-4" />
+                  <span>Download Combined PDF</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => handleExportCombinedPDF(true)}
+                  className="py-3 px-4 rounded-2xl bg-white/10 hover:bg-white/20 text-white font-bold text-xs border border-white/10 transition cursor-pointer flex items-center justify-center gap-1.5"
+                  title="Print Report"
+                >
+                  <Printer className="w-4 h-4 text-emerald-400" />
+                  <span>Print</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Content Area */}
         <div className="flex-1 overflow-y-auto p-6 space-y-6">

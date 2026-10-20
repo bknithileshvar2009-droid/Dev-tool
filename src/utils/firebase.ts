@@ -170,8 +170,34 @@ export async function signInAsGuest(): Promise<User> {
     const result = await signInAnonymously(auth);
     return result.user;
   } catch (err: any) {
-    console.error('Guest Sign In failed:', err);
-    throw err;
+    console.warn('[Firebase Auth] Anonymous sign-in disabled in console or restricted. Using local device guest identity:', err?.message || err);
+
+    let localUid = localStorage.getItem('flocus_local_guest_uid');
+    if (!localUid) {
+      localUid = `guest_user_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+      localStorage.setItem('flocus_local_guest_uid', localUid);
+    }
+
+    const fallbackUser: User = {
+      uid: localUid,
+      isAnonymous: true,
+      email: null,
+      displayName: 'Guest Student',
+      emailVerified: false,
+      phoneNumber: null,
+      photoURL: null,
+      providerData: [],
+      providerId: 'anonymous',
+      refreshToken: '',
+      tenantId: null,
+      delete: async () => {},
+      getIdToken: async () => '',
+      getIdTokenResult: async () => ({} as any),
+      reload: async () => {},
+      toJSON: () => ({}),
+    } as unknown as User;
+
+    return fallbackUser;
   }
 }
 

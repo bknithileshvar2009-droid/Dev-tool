@@ -36,6 +36,7 @@ import {
   ChevronRight,
   Info,
   Check,
+  Printer,
 } from 'lucide-react';
 import {
   ActivityRecord,
@@ -66,7 +67,7 @@ import {
   saveActiveTimerStateToFirebase,
   loadActiveTimerStateFromFirebase,
 } from '../../utils/dayInReviewFirebase';
-import { generateDailyReportPDF } from '../../utils/pdfGenerator';
+import { generateDailyReportPDF, generateCombinedMultiDayReportPDF, CombinedDaySummaryItem } from '../../utils/pdfGenerator';
 import { DayDashboardView } from './DayDashboardView';
 
 export interface DayInReviewHubModalProps {
@@ -114,6 +115,98 @@ export const DayInReviewHubModal: React.FC<DayInReviewHubModalProps> = ({
   const [activeTimer, setActiveTimer] = useState<ActiveTimerState | null>(null);
   const [liveTimerMs, setLiveTimerMs] = useState<number>(0);
   const timerIntervalRef = useRef<any>(null);
+
+
+  // Multi-day combined export state
+  const [isExportModalOpen, setIsExportModalOpen] = useState(false);
+  const [exportRangeType, setExportRangeType] = useState<
+    "today" | "last7" | "last14" | "last30" | "thisMonth" | "all" | "custom"
+  >("last14");
+  const [customExportStart, setCustomExportStart] = useState("");
+  const [customExportEnd, setCustomExportEnd] = useState("");
+
+  const handleExportCombinedMultiDayPDF = (autoPrint = false) => {
+    // Unique list of dates from activities & reflections
+    const activityDates = activities.map(a => a.date);
+    const reflectionDates = Object.keys(reflectionsMap);
+    const allDatesSet = new Set<string>([...activityDates, ...reflectionDates]);
+    const allDates = Array.from(allDatesSet).sort();
+
+    if (allDates.length === 0) {
+      allDates.push(getTodayDateString());
+    }
+
+    const todayStr = getTodayDateString();
+    let filteredDates = [...allDates];
+    let rangeLabel = "All Available History";
+
+    if (exportRangeType === "today") {
+      filteredDates = allDates.filter(d => d === todayStr);
+      rangeLabel = `Today (${todayStr})`;
+    } else if (exportRangeType === "last7") {
+      const cutoff = new Date();
+      cutoff.setDate(cutoff.getDate() - 7);
+      const cutoffStr = cutoff.toISOString().slice(0, 10);
+      filteredDates = allDates.filter(d => d >= cutoffStr);
+      rangeLabel = `Last 7 Days (${cutoffStr} to ${todayStr})`;
+    } else if (exportRangeType === "last14") {
+      const cutoff = new Date();
+      cutoff.setDate(cutoff.getDate() - 14);
+      const cutoffStr = cutoff.toISOString().slice(0, 10);
+      filteredDates = allDates.filter(d => d >= cutoffStr);
+      rangeLabel = `Last 14 Days (${cutoffStr} to ${todayStr})`;
+    } else if (exportRangeType === "last30") {
+      const cutoff = new Date();
+      cutoff.setDate(cutoff.getDate() - 30);
+      const cutoffStr = cutoff.toISOString().slice(0, 10);
+      filteredDates = allDates.filter(d => d >= cutoffStr);
+      rangeLabel = `Last 30 Days (${cutoffStr} to ${todayStr})`;
+    } else if (exportRangeType === "thisMonth") {
+      const now = new Date();
+      const monthStart = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-01`;
+      filteredDates = allDates.filter(d => d >= monthStart);
+      rangeLabel = `This Month (${monthStart} to ${todayStr})`;
+    } else if (exportRangeType === "custom" && customExportStart && customExportEnd) {
+      filteredDates = allDates.filter(d => d >= customExportStart && d <= customExportEnd);
+      rangeLabel = `Custom Range (${customExportStart} to ${customExportEnd})`;
+    }
+
+    const summaries: CombinedDaySummaryItem[] = filteredDates.map(dateKey => {
+      const dayActivities = activities.filter(a => a.date === dateKey);
+      const dayGoals = goals.filter(g => !g.startDate || g.startDate === dateKey);
+      const reflection = reflectionsMap[dateKey];
+
+      let fullDateStr = dateKey;
+      try {
+        const dObj = new Date(dateKey + "T12:00:00");
+        fullDateStr = dObj.toLocaleDateString("en-US", {
+          weekday: "long",
+          year: "numeric",
+          month: "long",
+          day: "numeric",
+        });
+      } catch {}
+
+      return {
+        date: dateKey,
+        fullDateStr,
+        activities: dayActivities,
+        goals: dayGoals,
+        reflection,
+        dailySummaryNotes: reflection?.whatWentWell ? `Went Well: ${reflection.whatWentWell} | Priority: ${reflection.topPriorityTomorrow || "None"}` : undefined,
+      };
+    });
+
+    generateCombinedMultiDayReportPDF({
+      dateRangeLabel: rangeLabel,
+      summaries,
+      categories,
+      userName: userEmail || (uid ? `User ${uid.slice(0, 8)}` : "APESFLOW Student"),
+      autoPrint,
+    });
+
+    setIsExportModalOpen(false);
+  };
 
   // UI Modals & Form States
   const [isManualModalOpen, setIsManualModalOpen] = useState(false);
@@ -1197,21 +1290,43 @@ export const DayInReviewHubModal: React.FC<DayInReviewHubModalProps> = ({
 
           {/* 8. PDF REPORTS VIEW */}
           {activeTab === 'reports' && (
-            <div className="p-8 rounded-3xl bg-gradient-to-br from-cyan-500/10 via-purple-500/10 to-transparent border border-cyan-500/30 text-center space-y-4">
+            <div className="p-8 rounded-3xl bg-gradient-to-br from-cyan-500/10 via-purple-500/10 to-transparent border border-cyan-500/30 text-center space-y-6">
               <Download className="w-12 h-12 text-cyan-400 mx-auto" />
-              <h3 className="text-xl font-bold text-white">Download Daily PDF Performance Report</h3>
-              <p className="text-xs text-white/60 max-w-md mx-auto leading-relaxed">
-                Generate a clean, printable PDF report containing activity breakdown, category stats, and daily reflections for {selectedDate}.
-              </p>
-              <button
-                onClick={handleExportPDF}
-                className="py-3 px-6 rounded-2xl bg-cyan-500 hover:bg-cyan-400 text-black font-extrabold text-sm transition cursor-pointer inline-flex items-center gap-2 shadow-[0_0_25px_rgba(6,182,212,0.4)]"
-              >
-                <Download className="w-4 h-4" />
-                <span>Export Daily PDF Report</span>
-              </button>
+              <div>
+                <h3 className="text-xl font-bold text-white">Daily PDF Performance Reports</h3>
+                <p className="text-xs text-white/60 max-w-md mx-auto leading-relaxed mt-1">
+                  Export single-day reports or generate ONE combined multi-day PDF report for all daily summaries in chronological order.
+                </p>
+              </div>
+
+              <div className="flex flex-wrap items-center justify-center gap-3 pt-2">
+                <button
+                  onClick={handleExportPDF}
+                  className="py-3.5 px-6 rounded-2xl bg-cyan-500 hover:bg-cyan-400 text-black font-extrabold text-xs transition cursor-pointer inline-flex items-center gap-2 shadow-[0_0_20px_rgba(6,182,212,0.4)]"
+                >
+                  <Download className="w-4 h-4" />
+                  <span>Export Selected Day ({selectedDate})</span>
+                </button>
+
+                <button
+                  onClick={() => setIsExportModalOpen(true)}
+                  className="py-3.5 px-6 rounded-2xl bg-emerald-500 hover:bg-emerald-400 text-black font-extrabold text-xs transition cursor-pointer inline-flex items-center gap-2 shadow-[0_0_20px_rgba(16,185,129,0.4)]"
+                >
+                  <FileText className="w-4 h-4" />
+                  <span>EXPORT ALL DAILY SUMMARIES (MULTI-DAY)</span>
+                </button>
+
+                <button
+                  onClick={() => handleExportCombinedMultiDayPDF(true)}
+                  className="py-3.5 px-5 rounded-2xl bg-white/10 hover:bg-white/20 text-white font-bold text-xs border border-white/10 transition cursor-pointer inline-flex items-center gap-2"
+                >
+                  <Printer className="w-4 h-4 text-emerald-400" />
+                  <span>Print Report</span>
+                </button>
+              </div>
             </div>
           )}
+
 
           {/* 9. CATEGORIES VIEW */}
           {activeTab === 'categories' && (
@@ -1611,6 +1726,103 @@ export const DayInReviewHubModal: React.FC<DayInReviewHubModalProps> = ({
           </div>
         </div>
       )}
+
+      {/* ================= MULTI-DAY COMBINED PDF EXPORT MODAL ================= */}
+      {isExportModalOpen && (
+        <div className="fixed inset-0 z-[80] flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-in fade-in">
+          <div className="w-full max-w-lg p-6 rounded-3xl bg-[#0b1120] border border-cyan-500/40 space-y-5 shadow-2xl text-white">
+            <div className="flex items-center justify-between pb-3 border-b border-white/10">
+              <div className="flex items-center gap-2">
+                <FileText className="w-5 h-5 text-cyan-400" />
+                <h3 className="text-base font-bold text-white">EXPORT ALL DAILY SUMMARIES</h3>
+              </div>
+              <button
+                onClick={() => setIsExportModalOpen(false)}
+                className="p-1.5 rounded-xl bg-white/5 hover:bg-white/15 text-white/70"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <p className="text-xs text-white/60 leading-relaxed">
+              Select a date range to generate ONE combined downloadable PDF containing every selected daily summary in chronological order.
+            </p>
+
+            <div className="space-y-2">
+              <label className="text-xs font-semibold text-cyan-300 block">Select Date Range Preset:</label>
+              <div className="grid grid-cols-2 gap-2 text-xs">
+                {[
+                  { id: "today", label: "Today Only" },
+                  { id: "last7", label: "Last 7 Days" },
+                  { id: "last14", label: "Last 14 Days" },
+                  { id: "last30", label: "Last 30 Days" },
+                  { id: "thisMonth", label: "This Month" },
+                  { id: "all", label: "All Available History" },
+                  { id: "custom", label: "Custom Date Range" },
+                ].map(opt => (
+                  <button
+                    key={opt.id}
+                    type="button"
+                    onClick={() => setExportRangeType(opt.id as any)}
+                    className={`p-3 rounded-xl border text-left font-semibold transition cursor-pointer ${
+                      exportRangeType === opt.id
+                        ? "bg-cyan-500/25 border-cyan-400 text-cyan-200 shadow-[0_0_15px_rgba(6,182,212,0.2)]"
+                        : "bg-white/5 border-white/10 hover:bg-white/10 text-white/70"
+                    }`}
+                  >
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {exportRangeType === "custom" && (
+              <div className="grid grid-cols-2 gap-3 pt-1">
+                <div>
+                  <label className="text-[10px] text-white/50 block mb-1">Start Date</label>
+                  <input
+                    type="date"
+                    value={customExportStart}
+                    onChange={e => setCustomExportStart(e.target.value)}
+                    className="w-full bg-black/60 border border-white/10 rounded-xl p-2.5 text-xs text-cyan-300"
+                  />
+                </div>
+                <div>
+                  <label className="text-[10px] text-white/50 block mb-1">End Date</label>
+                  <input
+                    type="date"
+                    value={customExportEnd}
+                    onChange={e => setCustomExportEnd(e.target.value)}
+                    className="w-full bg-black/60 border border-white/10 rounded-xl p-2.5 text-xs text-cyan-300"
+                  />
+                </div>
+              </div>
+            )}
+
+            <div className="flex items-center gap-3 pt-3 border-t border-white/10">
+              <button
+                type="button"
+                onClick={() => handleExportCombinedMultiDayPDF(false)}
+                className="flex-1 py-3 rounded-2xl bg-cyan-500 hover:bg-cyan-400 text-black font-extrabold text-xs transition cursor-pointer flex items-center justify-center gap-2 shadow-[0_0_20px_rgba(6,182,212,0.4)]"
+              >
+                <Download className="w-4 h-4" />
+                <span>Download Combined PDF</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => handleExportCombinedMultiDayPDF(true)}
+                className="py-3 px-4 rounded-2xl bg-white/10 hover:bg-white/20 text-white font-bold text-xs border border-white/10 transition cursor-pointer flex items-center justify-center gap-1.5"
+                title="Print Report"
+              >
+                <Printer className="w-4 h-4 text-emerald-400" />
+                <span>Print</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
     </div>
   );
 };

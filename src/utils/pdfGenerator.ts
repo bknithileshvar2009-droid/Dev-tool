@@ -331,3 +331,258 @@ export function generateDailyReportPDF({
   const fileName = `APESFLOW_Daily_Report_${date}.pdf`;
   doc.save(fileName);
 }
+
+
+export interface CombinedDaySummaryItem {
+  date: string; // YYYY-MM-DD
+  weekday?: string;
+  fullDateStr?: string;
+  activities?: ActivityRecord[];
+  goals?: DailyGoal[];
+  reflection?: DailyReflection | string;
+  dailySummaryNotes?: string;
+  aiSummary?: string;
+  entries?: Record<string, any> | any[];
+  completedTasks?: string[];
+  totalStudyMins?: number;
+}
+
+export interface GenerateCombinedPDFOptions {
+  dateRangeLabel: string;
+  summaries: CombinedDaySummaryItem[];
+  categories?: ActivityCategory[];
+  userName?: string;
+  autoPrint?: boolean;
+}
+
+export function generateCombinedMultiDayReportPDF({
+  dateRangeLabel,
+  summaries,
+  categories = [],
+  userName = "APESFLOW Student",
+  autoPrint = false,
+}: GenerateCombinedPDFOptions): void {
+  const doc = new jsPDF({
+    orientation: "p",
+    unit: "mm",
+    format: "a4",
+  });
+
+  const pageWidth = doc.internal.pageSize.getWidth();
+  const pageHeight = doc.internal.pageSize.getHeight();
+  const categoryMap = new Map(categories.map(c => [c.id, c]));
+
+  // Document Header
+  doc.setFillColor(11, 17, 32);
+  doc.rect(0, 0, pageWidth, 32, "F");
+
+  doc.setTextColor(255, 255, 255);
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(15);
+  doc.text("APESFLOW — COMBINED DAILY SUMMARY REPORT", 14, 15);
+
+  doc.setFontSize(9);
+  doc.setFont("helvetica", "normal");
+  doc.setTextColor(6, 182, 212);
+  doc.text(`Range: ${dateRangeLabel} • ${summaries.length} ${summaries.length === 1 ? "Day" : "Days"} Included`, 14, 23);
+
+  doc.setFontSize(8);
+  doc.setTextColor(148, 163, 184);
+  const genTimeStr = new Date().toLocaleString();
+  doc.text(`Generated: ${genTimeStr} | User: ${userName}`, pageWidth - 14, 23, { align: "right" });
+
+  let currentY = 38;
+
+  if (!summaries || summaries.length === 0) {
+    doc.setFont("helvetica", "italic");
+    doc.setFontSize(10);
+    doc.setTextColor(100, 116, 139);
+    doc.text("No daily summary records found for the selected date range.", 14, currentY);
+  } else {
+    // Sort summaries chronologically
+    const sortedSummaries = [...summaries].sort((a, b) => a.date.localeCompare(b.date));
+
+    sortedSummaries.forEach((summary, index) => {
+      let fullDateStr = summary.fullDateStr;
+      if (!fullDateStr) {
+        try {
+          const dObj = new Date(summary.date + "T12:00:00");
+          fullDateStr = dObj.toLocaleDateString("en-US", {
+            weekday: "long",
+            year: "numeric",
+            month: "long",
+            day: "numeric",
+          });
+        } catch {
+          fullDateStr = summary.date;
+        }
+      }
+
+      if (currentY > pageHeight - 50) {
+        doc.addPage();
+        currentY = 20;
+      }
+
+      // Date Header Banner Box
+      doc.setFillColor(241, 245, 249);
+      doc.setDrawColor(203, 213, 225);
+      doc.roundedRect(14, currentY, pageWidth - 28, 11, 2, 2, "FD");
+
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(9.5);
+      doc.setTextColor(11, 17, 32);
+      doc.text(`${fullDateStr}`, 18, currentY + 7.5);
+
+      const rawActivities = summary.activities || [];
+      const rawEntries = summary.entries
+        ? Array.isArray(summary.entries)
+          ? summary.entries
+          : Object.values(summary.entries)
+        : [];
+      const activityCount = rawActivities.length + rawEntries.length;
+
+      let totalMins = summary.totalStudyMins || 0;
+      if (totalMins === 0) {
+        rawActivities.forEach(a => { totalMins += a.durationMinutes || 0; });
+        rawEntries.forEach((e: any) => { totalMins += e.durationMinutes || 0; });
+      }
+
+      const durStr = totalMins > 0 ? formatDurationMinutes(totalMins) : "0m";
+      doc.setFontSize(8);
+      doc.setTextColor(2, 132, 199);
+      doc.text(`Total Time: ${durStr} | ${activityCount} Records`, pageWidth - 18, currentY + 7.5, { align: "right" });
+
+      currentY += 15;
+
+      const tableRows: Array<[string, string, string, string]> = [];
+
+      rawActivities.forEach(a => {
+        const cat = categoryMap.get(a.categoryId);
+        const catName = cat ? `${cat.icon} ${cat.name}` : a.categoryId;
+        const timing = a.startTime && a.endTime ? `${formatTime24to12(a.startTime)} - ${formatTime24to12(a.endTime)}` : "Logged";
+        tableRows.push([
+          timing,
+          a.title,
+          catName,
+          formatDurationMinutes(a.durationMinutes || 0),
+        ]);
+      });
+
+      rawEntries.forEach((e: any) => {
+        const timeStr = e.time || (e.timestamp ? new Date(e.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "Logged");
+        const title = e.topic || e.description || e.subject || "Activity Entry";
+        const subj = e.subject || e.eventType || "Study";
+        const dur = e.durationMinutes ? formatDurationMinutes(e.durationMinutes) : (e.durationSeconds ? `${Math.round(e.durationSeconds / 60)}m` : "—");
+        tableRows.push([timeStr, title, subj, dur]);
+      });
+
+      if (tableRows.length === 0) {
+        tableRows.push(["—", "No recorded activities for this date.", "—", "0m"]);
+      }
+
+      autoTable(doc, {
+        startY: currentY,
+        head: [["Time / Type", "Activity / Topic", "Category / Subject", "Duration"]],
+        body: tableRows,
+        theme: "striped",
+        headStyles: {
+          fillColor: [6, 182, 212],
+          textColor: [255, 255, 255],
+          fontSize: 8,
+          fontStyle: "bold",
+        },
+        bodyStyles: {
+          fontSize: 7.5,
+          textColor: [30, 41, 59],
+        },
+        margin: { left: 14, right: 14 },
+      });
+
+      // @ts-ignore
+      currentY = doc.lastAutoTable.finalY + 5;
+
+      const reflectionText =
+        summary.dailySummaryNotes ||
+        (typeof summary.reflection === "string"
+          ? summary.reflection
+          : summary.reflection?.whatWentWell || summary.reflection?.topPriorityTomorrow || "");
+      const aiSummaryText = summary.aiSummary;
+
+      if (reflectionText || aiSummaryText || (summary.goals && summary.goals.length > 0)) {
+        if (currentY > pageHeight - 35) {
+          doc.addPage();
+          currentY = 20;
+        }
+
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(8);
+        doc.setTextColor(30, 41, 59);
+        doc.text("Daily Reflections & Goals:", 14, currentY);
+        currentY += 4;
+
+        if (summary.goals && summary.goals.length > 0) {
+          summary.goals.forEach(g => {
+            doc.setFont("helvetica", "normal");
+            doc.setFontSize(7.5);
+            doc.setTextColor(2, 132, 199);
+            doc.text(`• Target: ${g.title} (${(g as any).completed ? "Completed ✓" : "In Progress"})`, 18, currentY);
+            currentY += 4;
+          });
+        }
+
+        if (reflectionText) {
+          doc.setFont("helvetica", "italic");
+          doc.setFontSize(7.5);
+          doc.setTextColor(71, 85, 105);
+          doc.text(`Notes: ${reflectionText}`, 18, currentY, { maxWidth: pageWidth - 36 });
+          currentY += 5;
+        }
+
+        if (aiSummaryText) {
+          doc.setFont("helvetica", "normal");
+          doc.setFontSize(7.5);
+          doc.setTextColor(13, 148, 136);
+          doc.text(`AI Summary: ${aiSummaryText}`, 18, currentY, { maxWidth: pageWidth - 36 });
+          currentY += 5;
+        }
+      }
+
+      currentY += 3;
+
+      if (index < sortedSummaries.length - 1) {
+        doc.setDrawColor(226, 232, 240);
+        doc.line(14, currentY, pageWidth - 14, currentY);
+        currentY += 6;
+      }
+    });
+  }
+
+  const totalPages = doc.getNumberOfPages();
+  for (let p = 1; p <= totalPages; p++) {
+    doc.setPage(p);
+    doc.setDrawColor(226, 232, 240);
+    doc.line(14, pageHeight - 14, pageWidth - 14, pageHeight - 14);
+
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(7);
+    doc.setTextColor(148, 163, 184);
+    doc.text(
+      "APESFLOW Daily Summary History Report • Confidential Personal Record",
+      14,
+      pageHeight - 8
+    );
+    doc.text(`Page ${p} of ${totalPages}`, pageWidth - 14, pageHeight - 8, { align: "right" });
+  }
+
+  if (autoPrint) {
+    try {
+      doc.autoPrint();
+      const blobUrl = doc.output("bloburl");
+      window.open(blobUrl, "_blank");
+    } catch {
+      doc.save(`APESFLOW_Combined_Daily_Summaries_${dateRangeLabel.replace(/[^a-zA-Z0-9]/g, "_")}.pdf`);
+    }
+  } else {
+    doc.save(`APESFLOW_Combined_Daily_Summaries_${dateRangeLabel.replace(/[^a-zA-Z0-9]/g, "_")}.pdf`);
+  }
+}
