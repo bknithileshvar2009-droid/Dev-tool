@@ -1004,6 +1004,7 @@ export default function App() {
   const restoredUserUidRef = useRef<string | null>(null);
   const lastSyncedPayloadRef = useRef<string | null>(null);
   const pendingSavePromiseRef = useRef<Promise<any> | null>(null);
+  const userEditedAtRef = useRef<number>(0);
 
   // Firebase Daily Registry + Personal History State
   const [dailyRegistryHistory, setDailyRegistryHistory] = useState<Record<string, DailyRegistryDayRecord>>(() => {
@@ -2250,6 +2251,10 @@ export default function App() {
       currentUser.uid,
       cloudData => {
         if (!cloudData || !cloudData.config || isSavingRef.current) return;
+        // Ignore incoming updates if user edited settings/tasks within last 4 seconds
+        if (Date.now() - userEditedAtRef.current < 4000) {
+          return;
+        }
         // Ignore echo of our own last saved payload
         if (cloudData.updatedAt && lastSyncedPayloadRef.current === cloudData.updatedAt) {
           return;
@@ -2284,6 +2289,8 @@ export default function App() {
       isRemoteUpdateRef.current = false;
       return;
     }
+
+    userEditedAtRef.current = Date.now();
 
     if (syncTimeoutRef.current) {
       window.clearTimeout(syncTimeoutRef.current);
