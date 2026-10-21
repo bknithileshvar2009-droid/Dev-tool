@@ -4442,22 +4442,6 @@ export default function App() {
         available: true,
       },
       {
-        id: 'day-in-review',
-        label: 'MY DAY IN REVIEW (Daily Activity Tracker, Cloud History & PDF Reports)',
-        category: 'Activity',
-        shortcut: 'R',
-        action: () => { setDayInReviewModalOpen(true); setCommandMenuOpen(false); },
-        available: true,
-      },
-      {
-        id: "daily-summary-history",
-        label: "Daily Summary History & Combined PDF Reports",
-        category: "Study",
-        shortcut: "R",
-        action: () => { setDayInReviewModalOpen(true); setCommandMenuOpen(false); },
-        available: true,
-      },
-      {
         id: 'daily-registry',
         label: 'Open Daily Registry & Personal History',
         category: 'Study',
@@ -4750,16 +4734,7 @@ export default function App() {
         </button>
 
 
-        {/* MY DAY IN REVIEW Feature Button */}
-        <button
-          onClick={() => setDayInReviewModalOpen(true)}
-          title="MY DAY IN REVIEW (Daily Activity Tracker, Cloud History & PDF Reports)"
-          aria-label="Open My Day In Review"
-          className="px-3 py-2 sm:px-4 sm:py-3 min-h-[44px] sm:min-h-[48px] rounded-2xl hud-btn cursor-pointer flex items-center justify-center bg-gradient-to-r from-cyan-500/25 via-indigo-500/20 to-purple-500/25 hover:from-cyan-500/40 hover:to-purple-500/40 border border-cyan-400/50 text-cyan-300 transition shadow-[0_0_20px_rgba(6,182,212,0.3)] font-extrabold text-xs gap-2"
-        >
-          <CalendarIcon className="w-4 h-4 sm:w-5 sm:h-5 text-cyan-300" />
-          <span className="hidden xl:inline text-xs font-black font-['Plus_Jakarta_Sans'] tracking-tight">MY DAY IN REVIEW</span>
-        </button>
+
 
         {/* Fullscreen Mode Icon */}
         <button
@@ -5129,10 +5104,19 @@ export default function App() {
           {config.clock.showDate && (
             <div
               id="date-display"
-              className="mt-3 font-medium tracking-wide opacity-75"
+              className="mt-3 font-medium tracking-wide opacity-75 flex items-center justify-center gap-3 flex-wrap"
               style={{ fontSize: `${dateFontSize}px`, color: config.clock.color }}
             >
               <span id="date-text">{dateFormatted}</span>
+              <button
+                type="button"
+                onClick={togglePomodoro}
+                className="no-drag px-2.5 py-0.5 rounded-full bg-amber-500/20 hover:bg-amber-500/40 text-amber-300 font-bold text-[10px] border border-amber-500/40 transition cursor-pointer flex items-center gap-1 shadow"
+                title="Start or pause study timer"
+              >
+                <span>⏱</span>
+                <span>{focusSessionState === 'running' ? 'Pause Timer' : 'Start Timer'}</span>
+              </button>
             </div>
           )}
         </div>
@@ -7640,44 +7624,7 @@ export default function App() {
               </div>
             </button>
 
-            {/* MY DAY IN REVIEW Button in Drawer */}
-            <button
-              type="button"
-              onClick={() => { setDayInReviewModalOpen(true); setDrawerOpen(false); }}
-              className="flex items-center gap-2 p-3 rounded-2xl bg-gradient-to-r from-cyan-500/20 via-indigo-500/20 to-purple-500/20 hover:from-cyan-500/35 hover:to-purple-500/35 border border-cyan-400/50 text-cyan-300 text-xs font-medium transition cursor-pointer text-left col-span-2 sm:col-span-3 min-h-[50px] shadow-[0_0_15px_rgba(6,182,212,0.2)]"
-              title="Open MY DAY IN REVIEW (Daily Activity Tracker & PDF Reports)"
-            >
-              <CalendarIcon className="w-5 h-5 text-cyan-400 shrink-0" />
-              <div className="flex-1 flex items-center justify-between">
-                <div>
-                  <span className="font-extrabold text-white text-xs tracking-tight">MY DAY IN REVIEW</span>
-                  <span className="text-[10px] text-cyan-300/80 block">Activity Tracker, 24h Timeline & PDF Reports</span>
-                </div>
-                <span className="px-2.5 py-1 rounded-full text-[10px] font-mono font-bold bg-cyan-400 text-black shadow">
-                  FEATURE
-                </span>
-              </div>
-            </button>
 
-
-            {/* Daily Summary History & Combined Report Button */}
-            <button
-              type="button"
-              onClick={() => { setDayInReviewModalOpen(true); setDrawerOpen(false); }}
-              className="flex items-center gap-2 p-2.5 rounded-xl bg-gradient-to-r from-cyan-500/15 to-emerald-500/15 hover:from-cyan-500/30 hover:to-emerald-500/30 border border-cyan-400/40 text-cyan-200 text-xs font-medium transition cursor-pointer text-left col-span-2 sm:col-span-3 min-h-[44px] shadow-sm"
-              title="Daily Summary History & Combined PDF Reports"
-            >
-              <CalendarIcon className="w-4 h-4 text-cyan-400 shrink-0" />
-              <div className="flex-1 flex items-center justify-between">
-                <div>
-                  <span className="font-bold text-white text-xs">Daily Summary History & Reports</span>
-                  <span className="text-[10px] text-cyan-300/80 block">My Day in Review, Timeline & Multi-Day PDF Export</span>
-                </div>
-                <span className="px-2 py-0.5 rounded-full text-[10px] font-mono font-bold bg-cyan-500/20 text-cyan-300 border border-cyan-500/30">
-                  EXPORT PDF
-                </span>
-              </div>
-            </button>
 
             {/* 9. Daily Registry & History Quick Button */}
             <button
