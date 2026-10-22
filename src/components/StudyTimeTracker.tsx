@@ -389,152 +389,149 @@ export default function StudyTimeTracker({
   };
 
   return (
-    <div className="w-full h-full p-4 sm:p-5 flex flex-col justify-between text-white select-none">
-      {/* Top Header Bar */}
-      <div className="flex items-center justify-between pb-2 border-b border-white/10 no-drag">
-        <div className="flex items-center gap-2">
-          <span
-            className={`w-2 h-2 rounded-full ${
-              sessionState === 'running'
-                ? 'bg-emerald-400 animate-ping'
-                : sessionState === 'paused'
-                ? 'bg-amber-400'
-                : 'bg-cyan-400'
-            }`}
-          />
-          <span className="text-[11px] font-black uppercase tracking-wider text-cyan-300 flex items-center gap-1.5 font-mono">
-            <Flame className="w-3.5 h-3.5 text-cyan-400" />
-            <span>Study Time Tracker</span>
-          </span>
-          <span
-            className={`px-1.5 py-0.2 text-[9px] font-bold uppercase rounded ${
-              sessionState === 'running'
-                ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
-                : sessionState === 'paused'
-                ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
-                : sessionState === 'completed'
-                ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/30'
-                : 'bg-white/10 text-white/50'
-            }`}
-          >
-            {sessionState === 'running' ? 'Active' : sessionState === 'paused' ? 'Paused' : sessionState === 'completed' ? 'Saved' : 'Idle'}
-          </span>
-        </div>
+    <div className="w-full h-full p-4 sm:p-5 flex flex-col justify-between text-white select-none relative overflow-hidden">
+      {/* 3D Glassmorphism Background Layer */}
+      <div className="absolute inset-0 bg-gradient-to-br from-white/10 to-transparent backdrop-blur-2xl rounded-3xl border border-white/20 shadow-[0_20px_50px_rgba(0,0,0,0.5),inset_0_1px_1px_rgba(255,255,255,0.2)]"></div>
+      
+      {/* Subtle Depth-giving inner highlight */}
+      <div className="absolute inset-x-2 top-1 h-[1px] bg-gradient-to-r from-transparent via-white/30 to-transparent"></div>
 
-        {onOpenHistory && (
-          <button
-            type="button"
-            onClick={onOpenHistory}
-            className="text-[10px] text-cyan-300 hover:text-cyan-200 underline cursor-pointer font-mono flex items-center gap-1 transition"
-          >
-            <BookOpen className="w-3 h-3" />
-            <span>History & PDF →</span>
-          </button>
-        )}
-      </div>
-
-      {/* Today's Cumulative Study Total Pill */}
-      <div className="pt-2 no-drag flex items-center justify-between text-[11px] text-white/70">
-        <div className="flex items-center gap-1.5 font-mono">
-          <Clock className="w-3.5 h-3.5 text-amber-400" />
-          <span>Today's Total:</span>
-          <strong className="text-amber-300 font-bold">{todayStats.formatted}</strong>
-        </div>
-        <div className="text-[10px] text-white/50 font-mono">
-          <span>{todayStats.count} session{todayStats.count !== 1 ? 's' : ''} today</span>
-        </div>
-      </div>
-
-      {/* Main Digits Display (HH:MM:SS) */}
-      <div className="py-2.5 text-center space-y-1 no-drag">
-        <div className="text-4xl sm:text-5xl font-black font-mono tracking-tight text-white drop-shadow-[0_0_25px_rgba(6,182,212,0.4)] tabular-digits">
-          {formatHHMMSS(elapsedSeconds)}
-        </div>
-        <div className="text-[10px] font-mono text-cyan-300/80 uppercase tracking-widest">
-          {sessionState === 'running'
-            ? '● ACCUMULATING STUDY TIME'
-            : sessionState === 'paused'
-            ? '❚❚ SESSION PAUSED (TIME FROZEN)'
-            : sessionState === 'completed'
-            ? '✓ SESSION FINALIZED & SAVED'
-            : 'READY TO START (UNLIMITED SESSIONS)'}
-        </div>
-        {syncNotice && (
-          <div className="text-[10px] font-mono text-emerald-400 animate-pulse">
-            {syncNotice}
+      {/* Main Content (relative to stay above backdrop) */}
+      <div className="relative z-10 flex flex-col h-full justify-between">
+        {/* Top Header Bar */}
+        <div className="flex items-center justify-between pb-2 border-b border-white/10 no-drag">
+          <div className="flex items-center gap-2">
+            <span
+              className={`w-2 h-2 rounded-full ${
+                sessionState === 'running'
+                  ? 'bg-emerald-400 animate-ping'
+                  : sessionState === 'paused'
+                  ? 'bg-amber-400'
+                  : 'bg-cyan-400'
+              }`}
+            />
+            <span className="text-[11px] font-black uppercase tracking-wider text-cyan-300 flex items-center gap-1.5 font-mono">
+              <Flame className="w-3.5 h-3.5 text-cyan-400" />
+              <span>Study Time Tracker</span>
+            </span>
           </div>
-        )}
-      </div>
 
-      {/* Action Controls: 4 Explicit Buttons */}
-      <div className="pt-2 border-t border-white/10 flex items-center justify-center gap-2 no-drag">
-        {sessionState === 'idle' && (
-          <button
-            type="button"
-            onClick={handleStartStudy}
-            className="flex-1 py-2.5 px-4 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-black font-black text-xs tracking-wider transition cursor-pointer flex items-center justify-center gap-2 shadow-[0_0_15px_rgba(16,185,129,0.3)] active:scale-95"
-            title="Start a new general study session immediately"
-          >
-            <Play className="w-4 h-4 fill-current" />
-            <span>START STUDY</span>
-          </button>
-        )}
-
-        {sessionState === 'running' && (
-          <>
+          {onOpenHistory && (
             <button
               type="button"
-              onClick={handlePauseStudy}
-              className="flex-1 py-2.5 px-3 rounded-xl bg-amber-500/20 hover:bg-amber-500/35 text-amber-300 font-bold text-xs border border-amber-500/40 transition cursor-pointer flex items-center justify-center gap-1.5 active:scale-95"
-              title="Pause study timer (freeze accumulated duration)"
+              onClick={onOpenHistory}
+              className="text-[10px] text-cyan-300 hover:text-cyan-200 underline cursor-pointer font-mono flex items-center gap-1 transition"
             >
-              <Pause className="w-3.5 h-3.5 fill-current" />
-              <span>PAUSE</span>
+              <BookOpen className="w-3 h-3" />
+              <span>History & PDF →</span>
             </button>
-            <button
-              type="button"
-              onClick={handleStopAndSave}
-              disabled={isSaving}
-              className="flex-1 py-2.5 px-3 rounded-xl bg-rose-500 hover:bg-rose-400 text-white font-black text-xs transition cursor-pointer flex items-center justify-center gap-1.5 shadow-[0_0_15px_rgba(244,63,94,0.3)] active:scale-95 disabled:opacity-50"
-              title="Stop timer and save session to Firebase"
-            >
-              <Square className="w-3.5 h-3.5 fill-current" />
-              <span>{isSaving ? 'SAVING...' : 'STOP AND SAVE'}</span>
-            </button>
-          </>
-        )}
+          )}
+        </div>
 
-        {sessionState === 'paused' && (
-          <>
-            <button
-              type="button"
-              onClick={handleResumeStudy}
-              className="flex-1 py-2.5 px-3 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-black font-black text-xs transition cursor-pointer flex items-center justify-center gap-1.5 active:scale-95"
-              title="Resume same study session without counting pause time"
-            >
-              <Play className="w-3.5 h-3.5 fill-current" />
-              <span>RESUME</span>
-            </button>
-            <button
-              type="button"
-              onClick={handleStopAndSave}
-              disabled={isSaving}
-              className="flex-1 py-2.5 px-3 rounded-xl bg-rose-500 hover:bg-rose-400 text-white font-black text-xs transition cursor-pointer flex items-center justify-center gap-1.5 shadow-[0_0_15px_rgba(244,63,94,0.3)] active:scale-95 disabled:opacity-50"
-              title="Stop and save session to Firebase"
-            >
-              <Square className="w-3.5 h-3.5 fill-current" />
-              <span>{isSaving ? 'SAVING...' : 'STOP AND SAVE'}</span>
-            </button>
-          </>
-        )}
-
-        {sessionState === 'completed' && (
-          <div className="w-full py-2 text-center text-xs text-emerald-400 font-bold flex items-center justify-center gap-1.5 animate-pulse">
-            <CheckCircle2 className="w-4 h-4" />
-            <span>Study Session Finalized & Recorded!</span>
+        {/* Today's Cumulative Study Total Pill */}
+        <div className="pt-2 no-drag flex items-center justify-between text-[11px] text-white/70">
+          <div className="flex items-center gap-1.5 font-mono">
+            <Clock className="w-3.5 h-3.5 text-amber-400" />
+            <span>Today's Total:</span>
+            <strong className="text-amber-300 font-bold">{todayStats.formatted}</strong>
           </div>
-        )}
+          <div className="text-[10px] text-white/50 font-mono">
+            <span>{todayStats.count} session{todayStats.count !== 1 ? 's' : ''} today</span>
+          </div>
+        </div>
+
+        {/* Main Digits Display (HH:MM:SS) */}
+        <div className="py-2.5 text-center space-y-1 no-drag">
+          <div className="text-4xl sm:text-5xl font-black font-mono tracking-tight text-white drop-shadow-[0_0_10px_rgba(255,255,255,0.3)] tabular-digits">
+            {formatHHMMSS(elapsedSeconds)}
+          </div>
+          <div className="text-[10px] font-mono text-cyan-300/80 uppercase tracking-widest">
+            {sessionState === 'running'
+              ? '● ACCUMULATING STUDY TIME'
+              : sessionState === 'paused'
+              ? '❚❚ SESSION PAUSED (TIME FROZEN)'
+              : sessionState === 'completed'
+              ? '✓ SESSION FINALIZED & SAVED'
+              : 'READY TO START (UNLIMITED SESSIONS)'}
+          </div>
+          {syncNotice && (
+            <div className="text-[10px] font-mono text-emerald-400 animate-pulse">
+              {syncNotice}
+            </div>
+          )}
+        </div>
+
+        {/* Action Controls: 4 Explicit Buttons */}
+        <div className="pt-2 border-t border-white/10 flex items-center justify-center gap-2 no-drag">
+          {sessionState === 'idle' && (
+            <button
+              type="button"
+              onClick={handleStartStudy}
+              className="flex-1 py-2.5 px-4 rounded-xl bg-emerald-500/80 hover:bg-emerald-400 text-black font-black text-xs tracking-wider transition cursor-pointer flex items-center justify-center gap-2 shadow-[0_5px_15px_rgba(16,185,129,0.3),inset_0_2px_1px_rgba(255,255,255,0.2)] active:scale-95"
+              title="Start a new general study session immediately"
+            >
+              <Play className="w-4 h-4 fill-current" />
+              <span>START STUDY</span>
+            </button>
+          )}
+
+          {sessionState === 'running' && (
+            <>
+              <button
+                type="button"
+                onClick={handlePauseStudy}
+                className="flex-1 py-2.5 px-3 rounded-xl bg-amber-500/20 hover:bg-amber-500/35 text-amber-300 font-bold text-xs border border-amber-500/40 transition cursor-pointer flex items-center justify-center gap-1.5 active:scale-95"
+                title="Pause study timer (freeze accumulated duration)"
+              >
+                <Pause className="w-3.5 h-3.5 fill-current" />
+                <span>PAUSE</span>
+              </button>
+              <button
+                type="button"
+                onClick={handleStopAndSave}
+                disabled={isSaving}
+                className="flex-1 py-2.5 px-3 rounded-xl bg-rose-500/80 hover:bg-rose-400 text-white font-black text-xs transition cursor-pointer flex items-center justify-center gap-1.5 shadow-[0_5px_15px_rgba(244,63,94,0.3),inset_0_2px_1px_rgba(255,255,255,0.2)] active:scale-95 disabled:opacity-50"
+                title="Stop timer and save session to Firebase"
+              >
+                <Square className="w-3.5 h-3.5 fill-current" />
+                <span>{isSaving ? 'SAVING...' : 'STOP AND SAVE'}</span>
+              </button>
+            </>
+          )}
+
+          {sessionState === 'paused' && (
+            <>
+              <button
+                type="button"
+                onClick={handleResumeStudy}
+                className="flex-1 py-2.5 px-3 rounded-xl bg-emerald-500/80 hover:bg-emerald-400 text-black font-black text-xs transition cursor-pointer flex items-center justify-center gap-1.5 shadow-[0_5px_15px_rgba(16,185,129,0.3),inset_0_2px_1px_rgba(255,255,255,0.2)] active:scale-95"
+                title="Resume same study session without counting pause time"
+              >
+                <Play className="w-3.5 h-3.5 fill-current" />
+                <span>RESUME</span>
+              </button>
+              <button
+                type="button"
+                onClick={handleStopAndSave}
+                disabled={isSaving}
+                className="flex-1 py-2.5 px-3 rounded-xl bg-rose-500/80 hover:bg-rose-400 text-white font-black text-xs transition cursor-pointer flex items-center justify-center gap-1.5 shadow-[0_5px_15px_rgba(244,63,94,0.3),inset_0_2px_1px_rgba(255,255,255,0.2)] active:scale-95 disabled:opacity-50"
+                title="Stop and save session to Firebase"
+              >
+                <Square className="w-3.5 h-3.5 fill-current" />
+                <span>{isSaving ? 'SAVING...' : 'STOP AND SAVE'}</span>
+              </button>
+            </>
+          )}
+
+          {sessionState === 'completed' && (
+            <div className="w-full py-2 text-center text-xs text-emerald-400 font-bold flex items-center justify-center gap-1.5 animate-pulse">
+              <CheckCircle2 className="w-4 h-4" />
+              <span>Study Session Finalized & Recorded!</span>
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );
+
 }
