@@ -128,6 +128,8 @@ import FocusSetupModal from './components/FocusSetupModal';
 import FocusStreakBadgeModal from './components/FocusStreakBadgeModal';
 import SmartBreakSuggestions from './components/SmartBreakSuggestions';
 import BreakStatisticsWidget from './components/BreakStatisticsWidget';
+import StudyHistoryModal from './components/StudyHistoryModal';
+import StudyTimeTracker from './components/StudyTimeTracker';
 import {
   STUDIO_LAYOUT_ARRANGEMENTS,
   computePresetWidgetCoordinates,
@@ -519,6 +521,14 @@ interface DashboardConfig {
     width: number;
     height: number;
   };
+  studyTracker: {
+    visible: boolean;
+    glassBg: boolean;
+    x: number | null;
+    y: number | null;
+    width: number;
+    height: number;
+  };
   activeThemeId?: string;
   bgSaturation?: number;
   bgBrightness?: number;
@@ -695,6 +705,14 @@ const DEFAULT_CONFIG: DashboardConfig = {
     width: 380,
     height: 240,
   },
+  studyTracker: {
+    visible: true,
+    glassBg: true,
+    x: null,
+    y: null,
+    width: 380,
+    height: 260,
+  },
 };
 
 export interface SmartBreakExerciseItem {
@@ -862,6 +880,7 @@ export default function App() {
   const [isFocusModeActive, setIsFocusModeActive] = useState(false);
   const [focusedWidget, setFocusedWidget] = useState<DashboardWidgetKey | null>(null);
   const [urlInput, setUrlInput] = useState('');
+  const [studyHistoryModalOpen, setStudyHistoryModalOpen] = useState(false);
 
   // Task Completion Animation State
   const [justCompletedTaskId, setJustCompletedTaskId] = useState<string | null>(null);
@@ -1185,6 +1204,7 @@ export default function App() {
   const pomodoroRef = useRef<HTMLDivElement | null>(null);
   const scratchpadRef = useRef<HTMLDivElement | null>(null);
   const breakStatsRef = useRef<HTMLDivElement | null>(null);
+  const studyTrackerRef = useRef<HTMLDivElement | null>(null);
   const dashboardRef = useRef<HTMLDivElement | null>(null);
   const [placementModal, setPlacementModal] = useState<{
     isOpen: boolean;
@@ -1503,6 +1523,7 @@ export default function App() {
       nameWidget: { ...p.nameWidget, glassBg: !transparent },
       scratchpad: { ...p.scratchpad, glassBg: !transparent },
       breakStats: { ...(p.breakStats || DEFAULT_CONFIG.breakStats), glassBg: !transparent },
+      studyTracker: { ...DEFAULT_CONFIG.studyTracker, ...(p.studyTracker || {}), glassBg: !transparent },
     }));
   }, [updateConfig]);
 
@@ -1517,7 +1538,8 @@ export default function App() {
       !config.nameWidget.glassBg &&
       !config.pomodoro?.glassBg &&
       !config.scratchpad?.glassBg &&
-      !config.breakStats?.glassBg
+      !config.breakStats?.glassBg &&
+      !config.studyTracker?.glassBg
     );
   }, [config]);
 
@@ -1540,6 +1562,7 @@ export default function App() {
     { id: 'pomodoro', label: 'Deep Focus Study Station & Brevo Break', defaultW: 380, defaultH: 260, icon: Flame, category: 'Focus' },
     { id: 'scratchpad', label: 'Daily Register (Study Notes & Summary)', defaultW: 400, defaultH: 340, icon: FileText, category: 'Register' },
     { id: 'breakStats', label: 'Break Statistics & Wellness', defaultW: 380, defaultH: 240, icon: Coffee, category: 'Wellness' },
+    { id: 'studyTracker', label: 'Study Time Tracker & Timer', defaultW: 380, defaultH: 260, icon: Timer, category: 'Study' },
   ], []);
 
   const hexToRgba = useCallback((hex: string, alpha: number): string => {
@@ -2188,6 +2211,7 @@ export default function App() {
                       totalBreakMinutes: saved.totalBreakMinutes || 0,
                       createdAt: new Date().toISOString(),
                     };
+                    console.log(`[Firebase FocusSession Write] Saving session to users/${user.uid}/focusSessions/`, expiredRecord);
                     saveFocusSessionRecord(user.uid, expiredRecord).catch(() => {});
                     setSessionRecoveryNotice(`Previous ${elapsedMins}m focus sprint completed while you were away. Record saved to your Focus History.`);
                   }
@@ -3254,6 +3278,7 @@ export default function App() {
       };
 
       try {
+        console.log(`[Firebase FocusSession Write] Saving session to users/${currentUser.uid}/focusSessions/`, interruptedRecord);
         await saveFocusSessionRecord(currentUser.uid, interruptedRecord);
         setUserFocusSessions(prev => [interruptedRecord, ...prev.filter(s => s.sessionId !== sessionId)]);
       } catch (err) {
@@ -3341,6 +3366,7 @@ export default function App() {
       };
 
       try {
+        console.log(`[Firebase FocusSession Write] Saving session to users/${currentUser.uid}/focusSessions/`, sessionRecord);
         await saveFocusSessionRecord(currentUser.uid, sessionRecord);
         setUserFocusSessions(prev => [sessionRecord, ...prev.filter(s => s.sessionId !== sessionId)]);
       } catch (err) {
@@ -4139,6 +4165,8 @@ export default function App() {
         return scratchpadRef.current;
       case 'breakStats':
         return breakStatsRef.current;
+      case 'studyTracker':
+        return studyTrackerRef.current;
     }
   };
 
@@ -6325,6 +6353,80 @@ export default function App() {
         </div>
       )}
 
+      {/* ================= WIDGET 9: STUDY TIME TRACKER WIDGET ================= */}
+      {config.studyTracker?.visible !== false && !isFocusModeActive && (
+        <div
+          ref={studyTrackerRef}
+          id="study-tracker-widget"
+          data-widget-id="studyTracker"
+          onPointerDown={e => handlePointerDown(e, 'studyTracker')}
+          onWheel={e => handleWheelZoom(e, 'studyTracker')}
+          className={`dashboard-widget z-20 px-4 py-3 flex flex-col justify-between ${
+            config.optionalFeatures.widgetCustomization ? 'cursor-grab active:cursor-grabbing' : 'cursor-default'
+          } ${getWidgetMaterialClass(config.studyTracker?.glassBg ?? true)} ${focusedWidget === 'studyTracker' ? 'widget-focused' : ''} ${radiusClass}`}
+          style={{
+            width: config.studyTracker?.width || 380,
+            height: config.studyTracker?.height || 260,
+            left: config.studyTracker?.x ?? 540,
+            top: config.studyTracker?.y ?? 520,
+            ...getWidgetComputedStyle('studyTracker'),
+          }}
+        >
+          {showHandles && (
+            <>
+              <div className="drag-pill absolute top-2 left-1/2 -translate-x-1/2 w-8 h-1 rounded-full bg-cyan-400/40 pointer-events-none" />
+              <button
+                type="button"
+                onClick={e => {
+                  e.stopPropagation();
+                  toggleWidgetTransparency('studyTracker');
+                }}
+                title={config.studyTracker?.glassBg ? 'Switch Study Tracker to Transparent' : 'Switch Study Tracker to Glass Card'}
+                className="no-drag absolute top-2 right-2 px-2 py-0.5 rounded-md bg-black/60 hover:bg-black/90 text-[9px] font-mono text-white/80 hover:text-white border border-white/20 transition cursor-pointer z-30 flex items-center gap-1 shadow-sm"
+              >
+                <span className={`w-1.5 h-1.5 rounded-full ${config.studyTracker?.glassBg ? 'bg-cyan-400' : 'bg-amber-400'}`} />
+                <span>{config.studyTracker?.glassBg ? 'Glass' : 'Transp.'}</span>
+              </button>
+            </>
+          )}
+
+          <div className="w-full h-full no-drag">
+            <StudyTimeTracker
+              uid={currentUser?.uid || null}
+              activeSubject={activeSubject}
+              activeTask={activeTask}
+              onOpenHistory={() => setStudyHistoryModalOpen(true)}
+              onSessionCompleted={rec => {
+                setUserFocusSessions(prev => [rec, ...prev]);
+                if (currentUser) {
+                  const today = getLocalDateString();
+                  recordDailyRegistryActivity({
+                    timestamp: new Date().toISOString(),
+                    time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+                    eventType: 'study_session',
+                    description: `Study Session: ${rec.subject} (${rec.actualElapsedMinutes}m)`,
+                    durationMinutes: rec.actualElapsedMinutes,
+                    status: 'completed',
+                    rating: 5,
+                    topic: rec.task,
+                    subject: rec.subject,
+                  }, today);
+                }
+              }}
+            />
+          </div>
+
+          {showHandles && (
+            <>
+              <div className="resize-handle resize-se text-amber-400" data-handle="se" />
+              <div className="resize-handle resize-sw text-amber-400" data-handle="sw" />
+              <div className="resize-handle resize-ne text-amber-400" data-handle="ne" />
+              <div className="resize-handle resize-nw text-amber-400" data-handle="nw" />
+            </>
+          )}
+        </div>
+      )}
+
       {/* ================= 1. DEEP FOCUS SESSION COMPLETION ALERT MODAL ================= */}
       {focusAlertActive && focusAlertMessage && (
         <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-center justify-center p-4 animate-in fade-in duration-200">
@@ -7623,6 +7725,25 @@ export default function App() {
               <div className="truncate">
                 <div className="font-semibold text-white text-xs">Studio</div>
                 <div className="text-[10px] text-cyan-300/80">Themes & Fonts (V)</div>
+              </div>
+            </button>
+
+            {/* Study History & PDF Report Button */}
+            <button
+              type="button"
+              onClick={() => { setStudyHistoryModalOpen(true); setDrawerOpen(false); }}
+              className="flex items-center gap-2 p-2.5 rounded-xl bg-cyan-500/15 hover:bg-cyan-500/30 border border-cyan-400/40 text-cyan-200 text-xs font-medium transition cursor-pointer text-left col-span-2 sm:col-span-3 min-h-[44px]"
+              title="Permanent Study Session History & PDF Report"
+            >
+              <Timer className="w-4 h-4 text-cyan-400 shrink-0" />
+              <div className="flex-1 flex items-center justify-between">
+                <div>
+                  <span className="font-bold text-white text-xs">Study History & PDF Report</span>
+                  <span className="text-[10px] text-cyan-300/80 block">Aggregated totals & PDF export</span>
+                </div>
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-mono font-bold bg-cyan-500/20 text-cyan-300 border border-cyan-500/30">
+                  {userFocusSessions.length} Sessions
+                </span>
               </div>
             </button>
 
@@ -9447,7 +9568,7 @@ export default function App() {
               </div>
 
               {/* Deep Focus Study Station */}
-              <div className="flex items-center justify-between text-xs text-white/80 py-1">
+              <div className="flex items-center justify-between text-xs text-white/80 py-1 border-b border-white/5">
                 <span>Deep Focus Station & Brevo Break Timer</span>
                 <div className="flex items-center gap-2">
                   <button
@@ -9460,6 +9581,25 @@ export default function App() {
                     type="checkbox"
                     checked={config.pomodoro?.visible}
                     onChange={e => updateConfig(p => ({ ...p, pomodoro: { ...p.pomodoro, visible: e.target.checked } }))}
+                    className="w-4 h-4 rounded text-cyan-500"
+                  />
+                </div>
+              </div>
+
+              {/* Study Time Tracker */}
+              <div className="flex items-center justify-between text-xs text-white/80 py-1">
+                <span>Study Time Tracker (Real Duration & PDF)</span>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => updateConfig(p => ({ ...p, studyTracker: { ...DEFAULT_CONFIG.studyTracker, ...(p.studyTracker || {}), glassBg: !(p.studyTracker?.glassBg ?? true) } }))}
+                    className="text-[10px] text-white/50 hover:text-white underline cursor-pointer"
+                  >
+                    {(config.studyTracker?.glassBg ?? true) ? 'Glass' : 'Transparent'}
+                  </button>
+                  <input
+                    type="checkbox"
+                    checked={config.studyTracker?.visible !== false}
+                    onChange={e => updateConfig(p => ({ ...p, studyTracker: { ...DEFAULT_CONFIG.studyTracker, ...(p.studyTracker || {}), visible: e.target.checked } }))}
                     className="w-4 h-4 rounded text-cyan-500"
                   />
                 </div>
@@ -9819,6 +9959,7 @@ export default function App() {
               { id: 'motivation', label: 'Daily Motivation', visible: config.motivation.visible, glass: config.motivation.glassBg },
               { id: 'nameWidget', label: 'Centum Badge', visible: config.nameWidget.visible, glass: config.nameWidget.glassBg },
               { id: 'pomodoro', label: 'Deep Focus Timer', visible: config.pomodoro?.visible ?? true, glass: config.pomodoro?.glassBg ?? true },
+              { id: 'studyTracker', label: 'Study Time Tracker', visible: config.studyTracker?.visible ?? true, glass: config.studyTracker?.glassBg ?? true },
             ].map(item => (
               <div key={item.id} className="flex items-center justify-between p-1.5 rounded-lg bg-white/[0.02] hover:bg-white/[0.05] text-[11px]">
                 <label className="flex items-center gap-2 cursor-pointer flex-1">
@@ -9923,6 +10064,16 @@ export default function App() {
           onClose={() => setDayInReviewModalOpen(false)}
           uid={currentUser?.uid || null}
           userEmail={currentUser?.email || (currentUser?.isAnonymous ? 'Guest Student' : null)}
+        />
+      )}
+
+      {/* ================= STUDY HISTORY & PDF EXPORT MODAL ================= */}
+      {studyHistoryModalOpen && (
+        <StudyHistoryModal
+          isOpen={studyHistoryModalOpen}
+          onClose={() => setStudyHistoryModalOpen(false)}
+          sessions={userFocusSessions}
+          userName={currentUser?.displayName || currentUser?.email || 'APES AI Student'}
         />
       )}
 

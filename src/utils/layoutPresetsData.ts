@@ -13,7 +13,8 @@ export type DashboardWidgetKey =
   | 'motivation'
   | 'pomodoro'
   | 'scratchpad'
-  | 'breakStats';
+  | 'breakStats'
+  | 'studyTracker';
 
 export interface GridCellSlot {
   widgetKey: DashboardWidgetKey;
@@ -1079,6 +1080,7 @@ export function computeLaptopFitCoordinates(
     notification: { x: Math.round(notifX), y: Math.round(notifY), width: Math.round(notifW), height: Math.round(notifH) },
     calendar: { x: Math.round(calX), y: Math.round(calY), width: Math.round(calW), height: Math.round(calH) },
     breakStats: { x: Math.round(taskX), y: Math.round(taskY + taskH + 12), width: Math.round(taskW), height: 180 },
+    studyTracker: { x: Math.round(regX), y: Math.round(regY + regH + 16), width: Math.round(regW), height: 240 },
   };
 }
 
@@ -1111,6 +1113,10 @@ export function computeMobileFitCoordinates(
   const pomodoro = { x: pad, y: currentY, width: usableW, height: pomoH };
   currentY += pomoH + 12;
 
+  const stH = 240;
+  const studyTracker = { x: pad, y: currentY, width: usableW, height: stH };
+  currentY += stH + 12;
+
   const taskH = 220;
   const tasks = { x: pad, y: currentY, width: usableW, height: taskH };
   currentY += taskH + 12;
@@ -1139,6 +1145,7 @@ export function computeMobileFitCoordinates(
     countdown,
     scratchpad,
     pomodoro,
+    studyTracker,
     tasks,
     motivation,
     nameWidget,

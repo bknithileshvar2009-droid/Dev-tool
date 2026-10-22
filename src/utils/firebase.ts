@@ -974,6 +974,106 @@ export async function saveFocusSessionRecord(
 }
 
 /**
+ * Save a Study Session Record to Firebase at users/{uid}/studySessions/{sessionId}
+ * Dual-write: Cloud Firestore users/{uid}/studySessions/{sessionId}
+ * Mirror: Realtime Database users/{uid}/studySessions/{sessionId}
+ */
+export async function saveStudySessionRecord(
+  uid: string,
+  record: FocusSessionRecord
+): Promise<boolean> {
+  if (!uid || !record?.sessionId) return false;
+
+  const cleaned: Record<string, any> = {};
+  for (const [k, v] of Object.entries(record)) {
+    if (v !== undefined) cleaned[k] = v;
+  }
+
+  let firestoreSuccess = false;
+  try {
+    const docRef = doc(db, 'users', uid, 'studySessions', record.sessionId);
+    await setDoc(docRef, cleaned, { merge: true });
+    firestoreSuccess = true;
+    console.log(`[Firebase Firestore] Saved study session ${record.sessionId} at users/${uid}/studySessions`);
+  } catch (err) {
+    console.warn(`[Firebase Firestore] Failed to save study session ${record.sessionId}:`, err);
+  }
+
+  // Realtime Database mirror under users/{uid}/studySessions/{sessionId}
+  try {
+    const rtdbTargetRef = rtdbRef(rtdb, `users/${uid}/studySessions/${record.sessionId}`);
+    await rtdbSet(rtdbTargetRef, cleaned);
+    console.log(`[Firebase RTDB] Saved study session ${record.sessionId} at users/${uid}/studySessions`);
+  } catch (err) {
+    console.warn(`[Firebase RTDB] Failed to save study session ${record.sessionId}:`, err);
+  }
+
+  // Also maintain focusSessions record for compatibility
+  saveFocusSessionRecord(uid, record).catch(() => {});
+
+  return firestoreSuccess;
+}
+
+/**
+ * Load all user study session records from users/{uid}/studySessions
+ */
+export async function loadUserStudySessions(uid: string): Promise<FocusSessionRecord[]> {
+  if (!uid) return [];
+
+  // 1. Try Cloud Firestore users/{uid}/studySessions
+  try {
+    const collRef = collection(db, 'users', uid, 'studySessions');
+    const q = query(collRef, orderBy('startTimestamp', 'desc'));
+    const snap = await getDocs(q);
+    if (!snap.empty) {
+      return snap.docs.map(d => d.data() as FocusSessionRecord);
+    }
+  } catch (fsErr) {
+    console.warn(`[Firebase Firestore] Query failed for studySessions UID: ${uid}:`, fsErr);
+  }
+
+  // 2. Fallback to RTDB users/{uid}/studySessions
+  try {
+    const rtdbTargetRef = rtdbRef(rtdb, `users/${uid}/studySessions`);
+    const snap = await rtdbGet(rtdbTargetRef);
+    if (snap.exists()) {
+      const val = snap.val();
+      if (val && typeof val === 'object') {
+        const records = Object.values(val) as FocusSessionRecord[];
+        records.sort((a, b) => (b.startTimestamp || 0) - (a.startTimestamp || 0));
+        return records;
+      }
+    }
+  } catch (rtdbErr) {
+    console.warn(`[Firebase RTDB] Query failed for studySessions UID: ${uid}:`, rtdbErr);
+  }
+
+  // 3. Fallback to focusSessions if studySessions collection is not yet populated
+  return loadUserFocusSessions(uid);
+}
+
+/**
+ * Get User Profile (Display Name & Email) from Firebase
+ */
+export async function getUserProfile(uid: string): Promise<{ displayName?: string; email?: string } | null> {
+  if (!uid) return null;
+  if (auth.currentUser && auth.currentUser.uid === uid) {
+    return {
+      displayName: auth.currentUser.displayName || undefined,
+      email: auth.currentUser.email || undefined,
+    };
+  }
+  try {
+    const docRef = doc(db, 'users', uid, 'profile', 'info');
+    const snap = await getDoc(docRef);
+    if (snap.exists()) {
+      return snap.data() as any;
+    }
+  } catch {}
+  return null;
+}
+
+/**
  * Load all user focus session records from Firebase (Firestore primary, RTDB fallback)
  */
 export async function loadUserFocusSessions(uid: string): Promise<FocusSessionRecord[]> {
