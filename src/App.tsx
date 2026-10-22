@@ -1006,6 +1006,54 @@ export default function App() {
   const pendingSavePromiseRef = useRef<Promise<any> | null>(null);
   const userEditedAtRef = useRef<number>(0);
 
+  // Layout Snapshots State (Study Focus vs General Overview)
+  const [layoutSnapshotA, setLayoutSnapshotA] = useState<any>(() => {
+    try {
+      const saved = localStorage.getItem('apesflow_layout_snapshot_a');
+      return saved ? JSON.parse(saved) : null;
+    } catch { return null; }
+  });
+  const [layoutSnapshotB, setLayoutSnapshotB] = useState<any>(() => {
+    try {
+      const saved = localStorage.getItem('apesflow_layout_snapshot_b');
+      return saved ? JSON.parse(saved) : null;
+    } catch { return null; }
+  });
+
+  const handleQuickSaveLayout = (slot: 'A' | 'B') => {
+    const snapshot = {
+      clock: config.clock,
+      countdown: config.countdown,
+      tasks: config.tasks,
+      calendar: config.calendar,
+      motivation: config.motivation,
+      pomodoro: config.pomodoro,
+      scratchpad: config.scratchpad,
+      nameWidget: config.nameWidget,
+      notification: config.notification,
+      layoutMode: config.layoutMode,
+      widgetStyles: config.widgetStyles,
+      activeWallpaper: config.activeWallpaper,
+      wallpaperUrl: config.wallpaperUrl,
+    };
+    if (slot === 'A') {
+      setLayoutSnapshotA(snapshot);
+      localStorage.setItem('apesflow_layout_snapshot_a', JSON.stringify(snapshot));
+    } else {
+      setLayoutSnapshotB(snapshot);
+      localStorage.setItem('apesflow_layout_snapshot_b', JSON.stringify(snapshot));
+    }
+  };
+
+  const handleApplyLayoutSnapshot = (slot: 'A' | 'B') => {
+    const snapshot = slot === 'A' ? layoutSnapshotA : layoutSnapshotB;
+    if (!snapshot) return;
+    setConfig(prev => ({
+      ...prev,
+      ...snapshot,
+    }));
+  };
+
   // Firebase Daily Registry + Personal History State
   const [dailyRegistryHistory, setDailyRegistryHistory] = useState<Record<string, DailyRegistryDayRecord>>(() => {
     try {
@@ -7644,6 +7692,66 @@ export default function App() {
                 </span>
               </div>
             </button>
+          </div>
+        </div>
+
+        {/* Layout Snapshots Section (Study Focus vs General Overview) */}
+        <div className="mt-4 p-3.5 rounded-2xl bg-white/[0.04] border border-white/10 space-y-3">
+          <div className="flex items-center justify-between text-[11px] font-semibold text-white/70 uppercase tracking-wider px-1">
+            <span>Dashboard Arrangement Snapshots</span>
+            <span className="text-[10px] text-emerald-400 font-mono">Quick Switch</span>
+          </div>
+
+          <div className="grid grid-cols-2 gap-2 text-xs">
+            {/* Slot A: Study Focus */}
+            <div className="p-2.5 rounded-xl bg-black/40 border border-white/10 space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="font-bold text-cyan-300">Layout A (Focus)</span>
+                <span className="text-[9px] text-white/40">{layoutSnapshotA ? 'Saved' : 'Empty'}</span>
+              </div>
+              <div className="grid grid-cols-2 gap-1.5 pt-1">
+                <button
+                  type="button"
+                  onClick={() => handleQuickSaveLayout('A')}
+                  className="py-1.5 px-2 rounded-lg bg-cyan-500/20 hover:bg-cyan-500/30 text-cyan-300 font-semibold text-[10px] border border-cyan-500/30 transition cursor-pointer"
+                >
+                  Quick Save A
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleApplyLayoutSnapshot('A')}
+                  disabled={!layoutSnapshotA}
+                  className="py-1.5 px-2 rounded-lg bg-white/10 hover:bg-white/20 text-white font-semibold text-[10px] border border-white/10 transition cursor-pointer disabled:opacity-40"
+                >
+                  Apply A
+                </button>
+              </div>
+            </div>
+
+            {/* Slot B: General Overview */}
+            <div className="p-2.5 rounded-xl bg-black/40 border border-white/10 space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="font-bold text-amber-300">Layout B (General)</span>
+                <span className="text-[9px] text-white/40">{layoutSnapshotB ? 'Saved' : 'Empty'}</span>
+              </div>
+              <div className="grid grid-cols-2 gap-1.5 pt-1">
+                <button
+                  type="button"
+                  onClick={() => handleQuickSaveLayout('B')}
+                  className="py-1.5 px-2 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 font-semibold text-[10px] border border-amber-500/30 transition cursor-pointer"
+                >
+                  Quick Save B
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleApplyLayoutSnapshot('B')}
+                  disabled={!layoutSnapshotB}
+                  className="py-1.5 px-2 rounded-lg bg-white/10 hover:bg-white/20 text-white font-semibold text-[10px] border border-white/10 transition cursor-pointer disabled:opacity-40"
+                >
+                  Apply B
+                </button>
+              </div>
+            </div>
           </div>
         </div>
 
