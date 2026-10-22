@@ -1085,72 +1085,12 @@ export function computeLaptopFitCoordinates(
 }
 
 /**
- * Calculates responsive coordinates for mobile screens (viewport < 768px)
- * ensuring full-width clean stack without clipping or horizontal scroll.
+ * Mobile-specific stack is permanently disabled.
+ * Strictly returns laptop-fit multi-column positioning for all screens.
  */
 export function computeMobileFitCoordinates(
   screenWidth: number,
   screenHeight: number
 ): Record<DashboardWidgetKey, { x: number; y: number; width: number; height: number }> {
-  const pad = 12;
-  const usableW = Math.max(290, screenWidth - pad * 2);
-
-  let currentY = pad;
-
-  const clockH = 140;
-  const clock = { x: pad, y: currentY, width: usableW, height: clockH };
-  currentY += clockH + 12;
-
-  const cdH = 150;
-  const countdown = { x: pad, y: currentY, width: usableW, height: cdH };
-  currentY += cdH + 12;
-
-  const regH = 260;
-  const scratchpad = { x: pad, y: currentY, width: usableW, height: regH };
-  currentY += regH + 12;
-
-  const pomoH = 220;
-  const pomodoro = { x: pad, y: currentY, width: usableW, height: pomoH };
-  currentY += pomoH + 12;
-
-  const stH = 240;
-  const studyTracker = { x: pad, y: currentY, width: usableW, height: stH };
-  currentY += stH + 12;
-
-  const taskH = 220;
-  const tasks = { x: pad, y: currentY, width: usableW, height: taskH };
-  currentY += taskH + 12;
-
-  const motH = 95;
-  const motivation = { x: pad, y: currentY, width: usableW, height: motH };
-  currentY += motH + 12;
-
-  const nameH = 80;
-  const nameWidget = { x: pad, y: currentY, width: usableW, height: nameH };
-  currentY += nameH + 12;
-
-  const notifH = 130;
-  const notification = { x: pad, y: currentY, width: usableW, height: notifH };
-  currentY += notifH + 12;
-
-  const calH = 240;
-  const calendar = { x: pad, y: currentY, width: usableW, height: calH };
-  currentY += calH + 12;
-
-  const bsH = 200;
-  const breakStats = { x: pad, y: currentY, width: usableW, height: bsH };
-
-  return {
-    clock,
-    countdown,
-    scratchpad,
-    pomodoro,
-    studyTracker,
-    tasks,
-    motivation,
-    nameWidget,
-    notification,
-    calendar,
-    breakStats,
-  };
+  return computeLaptopFitCoordinates(screenWidth, screenHeight);
 }

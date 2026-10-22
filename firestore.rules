@@ -52,7 +52,7 @@ service cloud.firestore {
     match /users/{userId}/dashboard/data {
       allow get: if isValidId(userId) && isOwner(userId);
       allow create: if isValidId(userId) && isOwner(userId) && isValidUserDashboard(incoming());
-      allow update: if isValidId(userId) && isOwner(userId) && isValidUserDashboard(incoming()) && incoming().userId == resource.data.userId;
+      allow update: if isValidId(userId) && isOwner(userId) && isValidUserDashboard(incoming());
       allow delete: if isValidId(userId) && isOwner(userId);
     }
 

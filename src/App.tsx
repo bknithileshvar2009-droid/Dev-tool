@@ -115,6 +115,7 @@ import {
   getDayOfWeekName,
   saveFocusSessionRecord,
   loadUserFocusSessions,
+  loadUserStudySessions,
   subscribeToUserFocusSessions,
   FocusSessionRecord,
   resetUserDashboardData,
@@ -135,7 +136,6 @@ import {
   STUDIO_LAYOUT_ARRANGEMENTS,
   computePresetWidgetCoordinates,
   computeLaptopFitCoordinates,
-  computeMobileFitCoordinates,
   DashboardWidgetKey,
 } from './utils/layoutPresetsData';
 import {
@@ -1033,6 +1033,15 @@ export default function App() {
   const lastSyncedPayloadRef = useRef<string | null>(null);
   const pendingSavePromiseRef = useRef<Promise<any> | null>(null);
   const userEditedAtRef = useRef<number>(0);
+  const lastLocalUpdateTimeRef = useRef<number>(
+    (() => {
+      try {
+        const saved = localStorage.getItem('flocus_dashboard_updated_at');
+        if (saved) return new Date(saved).getTime();
+      } catch {}
+      return Date.now();
+    })()
+  );
 
   // Layout Snapshots State (Study Focus vs General Overview)
   const [layoutSnapshotA, setLayoutSnapshotA] = useState<any>(() => {
@@ -1258,6 +1267,12 @@ export default function App() {
 
   // Save config helper
   const updateConfig = useCallback((updater: (prev: DashboardConfig) => DashboardConfig) => {
+    const now = Date.now();
+    lastLocalUpdateTimeRef.current = now;
+    userEditedAtRef.current = now;
+    try {
+      localStorage.setItem('flocus_dashboard_updated_at', new Date(now).toISOString());
+    } catch {}
     setConfig(prev => {
       const next = updater(prev);
       try {
@@ -1506,31 +1521,6 @@ export default function App() {
     setPlacementModal(null);
   }, [updateConfig]);
 
-  // Responsive Layout: Fit all widgets for Mobile screens
-  const applyMobileFitLayout = useCallback(() => {
-    const coords = computeMobileFitCoordinates(window.innerWidth, window.innerHeight);
-    updateConfig(prev => {
-      const next = { ...prev };
-      (Object.keys(coords) as DashboardWidgetKey[]).forEach(k => {
-        if ((next as any)[k]) {
-          (next as any)[k] = {
-            ...(next as any)[k],
-            x: coords[k].x,
-            y: coords[k].y,
-            width: coords[k].width,
-            height: coords[k].height,
-            visible: true,
-          };
-        }
-      });
-      return {
-        ...next,
-        layoutMode: 'freeform',
-        freeformLayout: coords,
-      };
-    });
-    setPlacementModal(null);
-  }, [updateConfig]);
 
   // Right-Click Context Menu State & Widget Management
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; visible: boolean } | null>(null);
@@ -2157,10 +2147,23 @@ export default function App() {
           if (isCancelled) return;
 
           if (cloudData && (cloudData.config || cloudData.tasks)) {
-            console.log(`[Firebase Auth] Existing dashboard record found for UID: ${user.uid}. Restoring all widgets, wallpapers, and settings...`);
-            restoreDashboardFromCloudData(cloudData);
-            setSyncStatus('saved');
-            console.log(`[Firebase Auth] User dashboard restored completely for UID: ${user.uid}`);
+            const cloudTime = cloudData.updatedAt ? new Date(cloudData.updatedAt).getTime() : 0;
+            const localTime = lastLocalUpdateTimeRef.current;
+
+            // CRITICAL TIMESTAMP CHECK: If local storage has newer settings/wallpapers than the remote cloud record, preserve local and sync up!
+            if (localTime > 0 && cloudTime > 0 && localTime > cloudTime + 1500) {
+              console.log(`[Firebase Auth] Local settings (${new Date(localTime).toISOString()}) are newer than cloud record (${new Date(cloudTime).toISOString()}). Preserving local customizations and syncing to cloud.`);
+              const localPayload = buildCurrentDashboardPayload(user.uid);
+              await saveUserDashboard(user.uid, localPayload);
+              lastSyncedPayloadRef.current = localPayload.updatedAt;
+              setLastSyncedTime(new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }));
+              setSyncStatus('saved');
+            } else {
+              console.log(`[Firebase Auth] Restoring cloud dashboard state for UID: ${user.uid}...`);
+              restoreDashboardFromCloudData(cloudData);
+              setSyncStatus('saved');
+            }
+            console.log(`[Firebase Auth] User dashboard confirmed active for UID: ${user.uid}`);
             verifyWritePermission(user.uid).catch(() => {});
           } else {
             console.log(`[Firebase Auth] No previous cloud record found for UID: ${user.uid}. Initializing new account template...`);
@@ -2195,11 +2198,23 @@ export default function App() {
             }
           });
 
-          // Load user's Focus Sessions History from Firebase
-          console.log(`[Firebase Auth] Loading Focus Sessions for UID: ${user.uid}`);
-          const focusRecords = await loadUserFocusSessions(user.uid);
+          // Load user's Focus and Study Sessions History from Firebase
+          console.log(`[Firebase Auth] Loading Focus & Study Sessions for UID: ${user.uid}`);
+          const [focusRecords, studyRecords] = await Promise.all([
+            loadUserFocusSessions(user.uid),
+            loadUserStudySessions(user.uid),
+          ]);
           if (!isCancelled) {
-            setUserFocusSessions(focusRecords || []);
+            const mergedMap: Record<string, FocusSessionRecord> = {};
+            [...(studyRecords || []), ...(focusRecords || [])].forEach(rec => {
+              if (rec && rec.sessionId && !mergedMap[rec.sessionId]) {
+                mergedMap[rec.sessionId] = rec;
+              }
+            });
+            const mergedList = Object.values(mergedMap);
+            mergedList.sort((a, b) => (b.startTimestamp || 0) - (a.startTimestamp || 0));
+            setUserFocusSessions(mergedList);
+            console.log(`[Firebase Auth] Restored ${mergedList.length} total study & focus sessions for UID: ${user.uid}`);
           }
 
           if (focusSessionsUnsubRef.current) {
@@ -2207,7 +2222,15 @@ export default function App() {
           }
           focusSessionsUnsubRef.current = subscribeToUserFocusSessions(user.uid, records => {
             if (!isCancelled) {
-              setUserFocusSessions(records || []);
+              setUserFocusSessions(prev => {
+                const map: Record<string, FocusSessionRecord> = {};
+                [...(records || []), ...prev].forEach(r => {
+                  if (r && r.sessionId) map[r.sessionId] = r;
+                });
+                const combined = Object.values(map);
+                combined.sort((a, b) => (b.startTimestamp || 0) - (a.startTimestamp || 0));
+                return combined;
+              });
             }
           });
 
@@ -2375,6 +2398,14 @@ export default function App() {
       currentUser.uid,
       cloudData => {
         if (!cloudData || !cloudData.config || isSavingRef.current) return;
+
+        // Strict timestamp ordering check: never overwrite with older or identical cloud payload!
+        const incomingTime = cloudData.updatedAt ? new Date(cloudData.updatedAt).getTime() : 0;
+        const localTime = lastLocalUpdateTimeRef.current;
+        if (incomingTime > 0 && localTime > 0 && incomingTime <= localTime) {
+          return;
+        }
+
         // Ignore incoming updates if user edited settings/tasks within last 4 seconds
         if (Date.now() - userEditedAtRef.current < 4000) {
           return;
@@ -2384,7 +2415,7 @@ export default function App() {
           return;
         }
 
-        console.log(`[Firebase Sync] Incoming remote update detected for UID: ${currentUser.uid}`);
+        console.log(`[Firebase Sync] Incoming newer remote update detected for UID: ${currentUser.uid}`);
         restoreDashboardFromCloudData(cloudData);
         setSyncStatus('saved');
       },
@@ -2448,7 +2479,7 @@ export default function App() {
         isSavingRef.current = false;
         pendingSavePromiseRef.current = null;
       }
-    }, 2000);
+    }, 800);
 
     return () => {
       if (syncTimeoutRef.current) window.clearTimeout(syncTimeoutRef.current);
@@ -3173,7 +3204,6 @@ export default function App() {
         (document as any).msFullscreenElement
       );
       if (!isCurrentlyFullscreen) {
-        applyLaptopFitLayout();
         const docEl = document.documentElement as any;
         if (docEl.requestFullscreen) {
           await docEl.requestFullscreen();
@@ -3784,125 +3814,24 @@ export default function App() {
       return;
     }
 
-    const nameW = config.nameWidget.width || 480;
-    const nameH = config.nameWidget.height || 100;
-    const clockW = config.clock.width || 580;
-    const clockH = config.clock.height || 180;
-    const cdW = config.countdown.width || 460;
-    const cdH = config.countdown.height || 170;
-    const notifW = config.notification.width || 460;
-    const notifH = config.notification.height || 170;
-    const tasksW = config.tasks.width || 360;
-    const tasksH = config.tasks.height || 340;
-    const calW = config.calendar.width || 380;
-    const calH = config.calendar.height || 340;
-    const motW = config.motivation.width || 440;
-    const motH = config.motivation.height || 140;
-    const pomoW = config.pomodoro?.width || 360;
-    const pomoH = config.pomodoro?.height || 240;
-    const spW = config.scratchpad?.width || 380;
-    const spH = config.scratchpad?.height || 300;
-
-    if (sw >= 1400) {
-      // 1. Top section: Title header and Clock hero
-      const nameX = Math.max(10, Math.round((sw - nameW) / 2));
-      const nameY = Math.max(16, Math.round(sh * 0.025));
-
-      const clockX = Math.max(10, Math.round((sw - clockW) / 2));
-      const clockY = nameY + nameH + gapY;
-
-      const topEnd = clockY + clockH;
-      const availableMiddleH = sh - topEnd - bottomReserved - gapY;
-
-      // 2. Middle section center-line balancing
-      const middleY = topEnd + gapY + Math.max(0, Math.round((availableMiddleH - Math.max(cdH, notifH)) / 2));
-      const cdX = Math.max(20, Math.round((sw / 2) - cdW - gapX / 2));
-      const notifX = Math.min(sw - notifW - 20, Math.round((sw / 2) + gapX / 2));
-
-      // 3. Side columns expanding vertically to balance the viewport
-      const pomoX = Math.max(20, sw - pomoW - 30);
-      const pomoY = nameY;
-      const tasksX = Math.max(20, sw - tasksW - 30);
-      const availableRight = sh - pomoY - pomoH - bottomReserved - gapY;
-      const tasksY = Math.min(sh - tasksH - bottomReserved, pomoY + pomoH + gapY + Math.max(0, Math.round((availableRight - tasksH) / 2)));
-
-      const motX = 30;
-      const motY = nameY;
-      const calX = 30;
-      const availableLeft = sh - motY - motH - bottomReserved - gapY;
-      const calY = Math.min(sh - calH - bottomReserved, motY + motH + gapY + Math.max(0, Math.round((availableLeft - calH) / 2)));
-
-      const spX = Math.max(20, Math.round((sw - spW) / 2));
-      const spY = Math.min(sh - spH - 20, Math.max(topEnd + gapY, sh - spH - 30));
-
-      updateConfig(prev => ({
-        ...prev,
-        nameWidget: { ...prev.nameWidget, x: nameX, y: nameY },
-        clock: { ...prev.clock, x: clockX, y: clockY },
-        countdown: { ...prev.countdown, x: cdX, y: middleY },
-        notification: { ...prev.notification, x: notifX, y: middleY },
-        tasks: { ...prev.tasks, x: tasksX, y: tasksY },
-        calendar: { ...prev.calendar, x: calX, y: calY },
-        motivation: { ...prev.motivation, x: motX, y: motY },
-        pomodoro: { ...prev.pomodoro, x: pomoX, y: pomoY },
-        scratchpad: { ...prev.scratchpad, x: prev.scratchpad?.x ?? spX, y: prev.scratchpad?.y ?? spY, width: spW, height: spH },
-      }));
-    } else {
-      const nameX = Math.max(10, Math.round((sw - nameW) / 2));
-      const nameY = Math.max(12, Math.round(sh * 0.015));
-      const stepGap = Math.max(8, Math.min(18, Math.round(gapY * 0.65)));
-
-      const clockX = Math.max(10, Math.round((sw - clockW) / 2));
-      const clockY = nameY + nameH + stepGap;
-      const cdX = Math.max(10, Math.round((sw - cdW) / 2));
-      const cdY = clockY + clockH + stepGap;
-      const notifX = Math.max(10, Math.round((sw - notifW) / 2));
-      const notifY = cdY + cdH + stepGap;
-      const tasksX = Math.max(10, Math.round((sw - tasksW) / 2));
-      const tasksY = notifY + notifH + stepGap;
-      const pomoX = Math.max(10, Math.round((sw - pomoW) / 2));
-      const pomoY = tasksY + tasksH + stepGap;
-      const calX = Math.max(10, Math.round((sw - calW) / 2));
-      const calY = pomoY + pomoH + stepGap;
-      const motX = Math.max(10, Math.round((sw - motW) / 2));
-      const motY = calY + calH + stepGap;
-      const spX = Math.max(10, Math.round((sw - spW) / 2));
-      const spY = motY + motH + stepGap;
-
-      updateConfig(prev => ({
-        ...prev,
-        nameWidget: { ...prev.nameWidget, x: nameX, y: nameY },
-        clock: { ...prev.clock, x: clockX, y: clockY },
-        countdown: { ...prev.countdown, x: cdX, y: cdY },
-        notification: { ...prev.notification, x: notifX, y: notifY },
-        tasks: { ...prev.tasks, x: tasksX, y: tasksY },
-        calendar: { ...prev.calendar, x: calX, y: calY },
-        motivation: { ...prev.motivation, x: motX, y: motY },
-        pomodoro: { ...prev.pomodoro, x: pomoX, y: pomoY },
-        scratchpad: { ...prev.scratchpad, x: prev.scratchpad?.x ?? spX, y: prev.scratchpad?.y ?? spY, width: spW, height: spH },
-      }));
-    }
+    // Strictly enforce multi-column Laptop Fit layout for all screens without collapsing into mobile stacks
+    const coords = computeLaptopFitCoordinates(Math.max(1200, sw), Math.max(700, sh));
+    updateConfig(prev => ({
+      ...prev,
+      nameWidget: { ...prev.nameWidget, ...coords.nameWidget },
+      clock: { ...prev.clock, ...coords.clock },
+      countdown: { ...prev.countdown, ...coords.countdown },
+      notification: { ...prev.notification, ...coords.notification },
+      tasks: { ...prev.tasks, ...coords.tasks },
+      calendar: { ...prev.calendar, ...coords.calendar },
+      motivation: { ...prev.motivation, ...coords.motivation },
+      pomodoro: { ...prev.pomodoro, ...coords.pomodoro },
+      studyTracker: { ...prev.studyTracker, ...coords.studyTracker },
+      scratchpad: { ...prev.scratchpad, ...coords.scratchpad },
+    }));
   }, [
     config.layoutMode,
     config.selectedGridPresetId,
-    config.nameWidget.width,
-    config.nameWidget.height,
-    config.clock.width,
-    config.clock.height,
-    config.countdown.width,
-    config.countdown.height,
-    config.notification.width,
-    config.notification.height,
-    config.tasks.width,
-    config.tasks.height,
-    config.calendar.width,
-    config.calendar.height,
-    config.motivation.width,
-    config.motivation.height,
-    config.pomodoro?.width,
-    config.pomodoro?.height,
-    config.scratchpad?.width,
-    config.scratchpad?.height,
     updateConfig,
   ]);
 
@@ -3957,11 +3886,10 @@ export default function App() {
           hudEl.style.display = 'flex';
         }
       }
-      recenterWidgets();
     };
 
     const handleResize = () => {
-      recenterWidgets();
+      // Do not overwrite user widget positions on window resize
     };
 
     document.addEventListener('fullscreenchange', handleFullscreenChange);
@@ -3972,7 +3900,7 @@ export default function App() {
       document.removeEventListener('webkitfullscreenchange', handleFullscreenChange);
       window.removeEventListener('resize', handleResize);
     };
-  }, [recenterWidgets]);
+  }, []);
 
   useEffect(() => {
     if (zenMode) {
@@ -6288,14 +6216,17 @@ export default function App() {
           data-widget-id="studyTracker"
           onPointerDown={e => handlePointerDown(e, 'studyTracker')}
           onWheel={e => handleWheelZoom(e, 'studyTracker')}
-          className={`dashboard-widget z-20 px-4 py-3 flex flex-col justify-between ${
+          className={`dashboard-widget z-20 p-0 flex flex-col justify-between ${
             config.optionalFeatures.widgetCustomization ? 'cursor-grab active:cursor-grabbing' : 'cursor-default'
-          } ${getWidgetMaterialClass(config.studyTracker?.glassBg ?? true)} ${focusedWidget === 'studyTracker' ? 'widget-focused' : ''} ${radiusClass}`}
+          } ${focusedWidget === 'studyTracker' ? 'widget-focused' : ''} ${radiusClass}`}
           style={{
             width: config.studyTracker?.width || 380,
             height: config.studyTracker?.height || 260,
             left: config.studyTracker?.x ?? 540,
             top: config.studyTracker?.y ?? 520,
+            backgroundColor: 'transparent',
+            borderColor: 'transparent',
+            boxShadow: 'none',
             ...getWidgetComputedStyle('studyTracker'),
           }}
         >
@@ -9955,10 +9886,32 @@ export default function App() {
           onClose={() => setStudioOpen(false)}
           currentConfig={config}
           onApply={updates => {
-            updateConfig(prev => ({
-              ...prev,
-              ...updates,
-            }));
+            updateConfig(prev => {
+              const next = { ...prev, ...updates };
+              // Immediate write to Firebase and localStorage so wallpapers and settings never revert
+              if (currentUser) {
+                const nowIso = new Date().toISOString();
+                const payload = {
+                  ...buildCurrentDashboardPayload(currentUser.uid),
+                  config: next,
+                  updatedAt: nowIso,
+                };
+                lastSyncedPayloadRef.current = nowIso;
+                lastLocalUpdateTimeRef.current = new Date(nowIso).getTime();
+                try {
+                  localStorage.setItem('flocus_dashboard_updated_at', nowIso);
+                  localStorage.setItem('flocus_dashboard_config', JSON.stringify(next));
+                } catch {}
+                saveUserDashboard(currentUser.uid, payload).then(() => {
+                  setSyncStatus('saved');
+                  setLastSyncedTime(new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }));
+                  console.log(`[Studio Save] Settings and wallpaper instantly saved to Firebase for UID: ${currentUser.uid}`);
+                }).catch(err => {
+                  console.warn('[Studio Save Notice] Saved locally:', err);
+                });
+              }
+              return next;
+            });
           }}
           savedPresets={savedPresets}
           onUpdatePresets={handleUpdatePresets}

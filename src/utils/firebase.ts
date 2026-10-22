@@ -357,35 +357,9 @@ export function subscribeToUserDashboard(
 ): () => void {
   if (!uid) return () => {};
 
-  let activeUnsubscribe: (() => void) | null = null;
-
-  try {
-    const rtdbTargetRef = rtdbRef(rtdb, `users/${uid}/dashboard`);
-    const unsubscribeRtdb = rtdbOnValue(
-      rtdbTargetRef,
-      (snapshot) => {
-        if (snapshot.exists()) {
-          const val = snapshot.val();
-          if (val && (val.config || val.tasks)) {
-            onData(val as UserDashboardPayload);
-          }
-        }
-      },
-      (err) => {
-        console.warn(`[Firebase RTDB Sync Error] Listener notice for UID: ${uid}:`, err);
-        if (onError) onError(err);
-      }
-    );
-    activeUnsubscribe = unsubscribeRtdb;
-  } catch (err) {
-    console.warn(`[Firebase RTDB] Failed to bind onValue listener for UID: ${uid}:`, err);
-  }
-
-  // Also bind Firestore onSnapshot as secondary channel
-  let unsubscribeFirestore: (() => void) | null = null;
   try {
     const docRef = doc(db, 'users', uid, 'dashboard', 'data');
-    unsubscribeFirestore = onSnapshot(
+    const unsubscribeFirestore = onSnapshot(
       docRef,
       (snap) => {
         if (snap.exists()) {
@@ -396,18 +370,15 @@ export function subscribeToUserDashboard(
         }
       },
       (err) => {
-        // Secondary channel notice - RTDB remains the primary channel
-        console.warn(`[Firestore Secondary Sync Notice] UID: ${uid}:`, err?.message || err);
+        console.warn(`[Firestore Sync Notice] UID: ${uid}:`, err?.message || err);
+        if (onError) onError(err);
       }
     );
-  } catch {
-    // ignore
+    return unsubscribeFirestore;
+  } catch (err) {
+    console.warn(`[Firestore Sync Error] Failed to bind listener for UID: ${uid}:`, err);
+    return () => {};
   }
-
-  return () => {
-    if (activeUnsubscribe) activeUnsubscribe();
-    if (unsubscribeFirestore) unsubscribeFirestore();
-  };
 }
 
 export {

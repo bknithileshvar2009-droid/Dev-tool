@@ -548,6 +548,7 @@ export default function VisualCustomizationStudio({
 
     const updates: any = {
       activeThemeId: stagedThemeId,
+      activeWallpaper: stagedThemeId || currentConfig.activeWallpaper || 'custom',
       wallpaperUrl: stagedWallpaperUrl,
       videoUrl: stagedVideoUrl,
       canvasTheme: stagedCanvasTheme,

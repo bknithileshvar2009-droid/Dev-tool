@@ -12,8 +12,10 @@ import {
   Flame,
   CheckCircle2,
   BookOpen,
-  Calendar,
   RotateCcw,
+  ShieldAlert,
+  Sparkles,
+  Zap,
 } from 'lucide-react';
 import {
   FocusSessionRecord,
@@ -53,10 +55,44 @@ export default function StudyTimeTracker({
   const [isSaving, setIsSaving] = useState<boolean>(false);
   const [syncNotice, setSyncNotice] = useState<string | null>(null);
 
+  // 3D Tilt & Holographic Lighting State
+  const cardRef = useRef<HTMLDivElement | null>(null);
+  const [tilt, setTilt] = useState<{ rx: number; ry: number; gx: number; gy: number; isHover: boolean }>({
+    rx: 0,
+    ry: 0,
+    gx: 50,
+    gy: 50,
+    isHover: false,
+  });
+
   const transitionLockRef = useRef<boolean>(false);
   const isRecoveringRef = useRef<boolean>(false);
 
-  // 1. RECOVERY: On mount or UID change, recover any active running/paused session
+  // 1. 3D POINTER TRACKING FOR IRON MAN HOLOGRAPHIC TILT
+  const handlePointerMove = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    if (!cardRef.current) return;
+    const rect = cardRef.current.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+    const midX = rect.width / 2;
+    const midY = rect.height / 2;
+
+    // Max rotation: -12deg to +12deg
+    const ry = ((x - midX) / midX) * 11;
+    const rx = -((y - midY) / midY) * 11;
+
+    // Glare coordinates in percent
+    const gx = Math.round((x / rect.width) * 100);
+    const gy = Math.round((y / rect.height) * 100);
+
+    setTilt({ rx, ry, gx, gy, isHover: true });
+  }, []);
+
+  const handlePointerLeave = useCallback(() => {
+    setTilt(prev => ({ ...prev, rx: 0, ry: 0, isHover: false }));
+  }, []);
+
+  // 2. RECOVERY: On mount or UID change, recover any active running/paused session
   useEffect(() => {
     isRecoveringRef.current = true;
     try {
@@ -124,7 +160,7 @@ export default function StudyTimeTracker({
     }
   }, [uid]);
 
-  // 2. PERSISTENCE: Save active state to localStorage & Firebase RTDB whenever running or paused
+  // 3. PERSISTENCE: Save active state to localStorage & Firebase RTDB whenever running or paused
   useEffect(() => {
     if (isRecoveringRef.current) return;
 
@@ -155,7 +191,7 @@ export default function StudyTimeTracker({
     }
   }, [sessionState, sessionId, startTimestamp, accumulatedPausedMs, pauseStartTimestamp, optionalNotes, uid]);
 
-  // 3. ACCURATE DRIFT-FREE INTERVAL & BACKGROUND TAB HANDLING
+  // 4. ACCURATE DRIFT-FREE INTERVAL & BACKGROUND TAB HANDLING
   useEffect(() => {
     if (sessionState !== 'running') return;
 
@@ -185,7 +221,7 @@ export default function StudyTimeTracker({
     };
   }, [sessionState, startTimestamp, accumulatedPausedMs]);
 
-  // 4. TODAY'S ACCUMULATED STUDY TIME & SESSION COUNT
+  // 5. TODAY'S ACCUMULATED STUDY TIME & SESSION COUNT
   const todayStats = useMemo(() => {
     const todayStr = getLocalDateString();
     let totalSec = 0;
@@ -232,19 +268,38 @@ export default function StudyTimeTracker({
     const now = Date.now();
     const newSessionId = `study_${now}_${Math.random().toString(36).substring(2, 8)}`;
 
+    const initialPayload = {
+      sessionId: newSessionId,
+      status: 'running' as const,
+      startTimestamp: now,
+      accumulatedPausedMs: 0,
+      pauseStartTimestamp: null,
+      notes: '',
+      updatedAt: now,
+      userId: uid || 'guest',
+    };
+
+    try {
+      localStorage.setItem(ACTIVE_STORAGE_KEY, JSON.stringify(initialPayload));
+    } catch {}
+
+    if (uid) {
+      saveActiveStudySession(uid, initialPayload).catch(() => {});
+    }
+
     setSessionId(newSessionId);
     setStartTimestamp(now);
     setAccumulatedPausedMs(0);
     setPauseStartTimestamp(0);
     setElapsedSeconds(0);
     setSessionState('running');
-    setSyncNotice(null);
+    setSyncNotice('Session Active (Firebase Live)');
 
     console.log(`[StudyTimer] Started general study session ${newSessionId}`);
     setTimeout(() => {
       transitionLockRef.current = false;
     }, 350);
-  }, [sessionState]);
+  }, [sessionState, uid]);
 
   // CONTROL 2: PAUSE STUDY
   // - Freezes accumulated duration, preserves session, excludes paused time
@@ -260,11 +315,31 @@ export default function StudyTimeTracker({
     const activeMs = Math.max(0, now - startTimestamp - accumulatedPausedMs);
     setElapsedSeconds(Math.floor(activeMs / 1000));
 
+    const pausedPayload = {
+      sessionId,
+      status: 'paused' as const,
+      startTimestamp,
+      accumulatedPausedMs,
+      pauseStartTimestamp: now,
+      notes: optionalNotes,
+      updatedAt: now,
+      userId: uid || 'guest',
+    };
+
+    try {
+      localStorage.setItem(ACTIVE_STORAGE_KEY, JSON.stringify(pausedPayload));
+    } catch {}
+
+    if (uid) {
+      saveActiveStudySession(uid, pausedPayload).catch(() => {});
+    }
+
+    setSyncNotice('Session Paused');
     console.log(`[StudyTimer] Paused session ${sessionId} at ${Math.floor(activeMs / 1000)}s`);
     setTimeout(() => {
       transitionLockRef.current = false;
     }, 350);
-  }, [sessionState, sessionId, startTimestamp, accumulatedPausedMs]);
+  }, [sessionState, sessionId, startTimestamp, accumulatedPausedMs, optionalNotes, uid]);
 
   // CONTROL 3: RESUME STUDY
   // - Continues same session from accumulated duration, doesn't count paused time
@@ -274,15 +349,37 @@ export default function StudyTimeTracker({
 
     const now = Date.now();
     const pauseDurationMs = Math.max(0, now - pauseStartTimestamp);
-    setAccumulatedPausedMs(prev => prev + pauseDurationMs);
+    const newAccumulatedPausedMs = accumulatedPausedMs + pauseDurationMs;
+
+    setAccumulatedPausedMs(newAccumulatedPausedMs);
     setPauseStartTimestamp(0);
     setSessionState('running');
 
+    const resumedPayload = {
+      sessionId,
+      status: 'running' as const,
+      startTimestamp,
+      accumulatedPausedMs: newAccumulatedPausedMs,
+      pauseStartTimestamp: null,
+      notes: optionalNotes,
+      updatedAt: now,
+      userId: uid || 'guest',
+    };
+
+    try {
+      localStorage.setItem(ACTIVE_STORAGE_KEY, JSON.stringify(resumedPayload));
+    } catch {}
+
+    if (uid) {
+      saveActiveStudySession(uid, resumedPayload).catch(() => {});
+    }
+
+    setSyncNotice('Session Resumed');
     console.log(`[StudyTimer] Resumed session ${sessionId} (added ${Math.round(pauseDurationMs / 1000)}s to paused duration)`);
     setTimeout(() => {
       transitionLockRef.current = false;
     }, 350);
-  }, [sessionState, sessionId, pauseStartTimestamp]);
+  }, [sessionState, sessionId, pauseStartTimestamp, accumulatedPausedMs, startTimestamp, optionalNotes, uid]);
 
   // CONTROL 4: STOP AND SAVE
   // - Finalizes session, persists actual accumulated duration, prevents duplicate writes on repeated clicks
@@ -389,80 +486,184 @@ export default function StudyTimeTracker({
   };
 
   return (
-    <div className="w-full h-full p-4 sm:p-5 flex flex-col justify-between text-white select-none relative overflow-hidden bg-black/80">
-      {/* Iron Man Holographic Effects */}
-      <div className="absolute inset-0 border-2 border-cyan-500/30 rounded-3xl pointer-events-none"></div>
-      <div className="absolute inset-0 bg-[linear-gradient(rgba(18,16,16,0)_50%,rgba(0,0,0,0.25)_50%),linear-gradient(90deg,rgba(255,0,0,0.06),rgba(0,255,255,0.06),rgba(0,0,255,0.06))] z-0 bg-[length:100%_2px,3px_100%] pointer-events-none"></div>
-      <div className="absolute top-0 left-0 w-full h-1 bg-cyan-500/50 shadow-[0_0_10px_#06b6d4]"></div>
-      <div className="absolute bottom-0 left-0 w-full h-1 bg-cyan-500/50 shadow-[0_0_10px_#06b6d4]"></div>
-      
-      {/* Main Content */}
-      <div className="relative z-10 flex flex-col h-full justify-between">
-        {/* Top Header Bar */}
-        <div className="flex items-center justify-between pb-2 border-b border-cyan-500/20 no-drag">
+    <div
+      className="w-full h-full select-none"
+      style={{ perspective: '1100px' }}
+      onPointerMove={handlePointerMove}
+      onPointerLeave={handlePointerLeave}
+    >
+      {/* 3D Transform Container with dynamic tilt and preserve-3d */}
+      <div
+        ref={cardRef}
+        className="w-full h-full relative rounded-2xl overflow-hidden text-white flex flex-col justify-between p-4 transition-transform duration-150 ease-out border border-cyan-500/40 shadow-[0_15px_40px_rgba(0,0,0,0.8),0_0_35px_rgba(6,182,212,0.2)]"
+        style={{
+          transformStyle: 'preserve-3d',
+          transform: `rotateX(${tilt.rx}deg) rotateY(${tilt.ry}deg)`,
+          background: 'linear-gradient(135deg, rgba(8, 14, 26, 0.94) 0%, rgba(4, 8, 16, 0.97) 100%)',
+        }}
+      >
+        {/* Layer 0: Titanium Hexagon Matrix & Holographic Grid Pattern */}
+        <div
+          className="absolute inset-0 pointer-events-none opacity-25"
+          style={{
+            backgroundImage: `radial-gradient(circle at 50% 50%, rgba(6,182,212,0.15) 0%, transparent 70%),
+              linear-gradient(rgba(6,182,212,0.08) 1px, transparent 1px),
+              linear-gradient(90deg, rgba(6,182,212,0.08) 1px, transparent 1px)`,
+            backgroundSize: '100% 100%, 20px 20px, 20px 20px',
+            transform: 'translateZ(0px)',
+          }}
+        />
+
+        {/* Dynamic Holographic Cursor Glare */}
+        <div
+          className="absolute inset-0 pointer-events-none transition-opacity duration-300"
+          style={{
+            background: `radial-gradient(circle 180px at ${tilt.gx}% ${tilt.gy}%, rgba(6,182,212,0.18), transparent 70%)`,
+            opacity: tilt.isHover ? 1 : 0.4,
+            transform: 'translateZ(10px)',
+          }}
+        />
+
+        {/* Layer 1: Iron Man Arc Reactor Rotating HUD Reticles */}
+        <div
+          className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-48 h-48 pointer-events-none flex items-center justify-center opacity-30"
+          style={{ transform: 'translate(-50%, -50%) translateZ(15px)' }}
+        >
+          {/* Outer Segmented Arc Ring (Slow Clockwise Spin) */}
+          <div
+            className={`absolute inset-0 rounded-full border-2 border-dashed border-cyan-400/40 ${
+              sessionState === 'running' ? 'animate-[spin_24s_linear_infinite]' : ''
+            }`}
+          />
+          {/* Inner Counter-Rotating Reticle */}
+          <div
+            className={`absolute inset-4 rounded-full border border-cyan-300/30 ${
+              sessionState === 'running' ? 'animate-[spin_14s_linear_infinite_reverse]' : ''
+            }`}
+            style={{ borderStyle: 'dotted' }}
+          />
+          {/* Core Glow Pulse */}
+          <div
+            className={`w-20 h-20 rounded-full blur-xl transition-all duration-500 ${
+              sessionState === 'running'
+                ? 'bg-cyan-400/35 animate-pulse'
+                : sessionState === 'paused'
+                ? 'bg-amber-400/30'
+                : 'bg-cyan-500/15'
+            }`}
+          />
+        </div>
+
+        {/* Top Stark Chevrons & HUD Bar (translateZ: 25px) */}
+        <div
+          className="relative z-10 flex items-center justify-between pb-2 border-b border-cyan-500/20 no-drag"
+          style={{ transform: 'translateZ(25px)' }}
+        >
           <div className="flex items-center gap-2">
             <span
-              className={`w-2 h-2 rounded-full ${
+              className={`w-2 h-2 rounded-full shadow-[0_0_10px_currentColor] transition-colors ${
                 sessionState === 'running'
-                  ? 'bg-emerald-400 animate-ping'
+                  ? 'bg-emerald-400 text-emerald-400 animate-ping'
                   : sessionState === 'paused'
-                  ? 'bg-amber-400'
-                  : 'bg-cyan-400'
+                  ? 'bg-amber-400 text-amber-400'
+                  : 'bg-cyan-400 text-cyan-400'
               }`}
             />
-            <span className="text-[11px] font-black uppercase tracking-wider text-cyan-300 flex items-center gap-1.5 font-mono drop-shadow-[0_0_5px_#06b6d4]">
-              <Flame className="w-3.5 h-3.5 text-cyan-400" />
-              <span>HOLO_TIMER_V1</span>
-            </span>
+            <div className="flex items-center gap-1.5 font-mono text-[11px] font-black tracking-wider text-cyan-300 uppercase">
+              <Zap className="w-3.5 h-3.5 text-cyan-400 fill-cyan-400/20" />
+              <span className="drop-shadow-[0_0_6px_#06b6d4]">STARK_ARC_HUD // MK-85</span>
+            </div>
           </div>
 
-          {onOpenHistory && (
-            <button
-              type="button"
-              onClick={onOpenHistory}
-              className="text-[10px] text-cyan-300 hover:text-cyan-200 underline cursor-pointer font-mono flex items-center gap-1 transition drop-shadow-[0_0_5px_#06b6d4]"
-            >
-              <BookOpen className="w-3 h-3" />
-              <span>History →</span>
-            </button>
-          )}
+          <div className="flex items-center gap-2">
+            {syncNotice && (
+              <span className="text-[9px] font-mono font-semibold px-2 py-0.5 rounded-full bg-cyan-500/15 text-cyan-300 border border-cyan-500/30">
+                {syncNotice}
+              </span>
+            )}
+            {onOpenHistory && (
+              <button
+                type="button"
+                onClick={onOpenHistory}
+                className="text-[10px] text-cyan-300 hover:text-white underline cursor-pointer font-mono flex items-center gap-1 transition drop-shadow-[0_0_5px_#06b6d4] active:scale-95"
+                title="View full historical records & PDF export"
+              >
+                <BookOpen className="w-3 h-3" />
+                <span>History →</span>
+              </button>
+            )}
+          </div>
         </div>
 
-        {/* Today's Cumulative Study Total Pill */}
-        <div className="pt-2 no-drag flex items-center justify-between text-[11px] text-white/70">
-          <div className="flex items-center gap-1.5 font-mono">
+        {/* Today's Cumulative Study Total Strip */}
+        <div
+          className="relative z-10 pt-1 flex items-center justify-between text-[11px] font-mono text-white/70 no-drag"
+          style={{ transform: 'translateZ(25px)' }}
+        >
+          <div className="flex items-center gap-1.5">
             <Clock className="w-3.5 h-3.5 text-amber-400" />
-            <span>Today's Total:</span>
-            <strong className="text-amber-300 font-bold">{todayStats.formatted}</strong>
+            <span className="text-white/60">Today's Total:</span>
+            <strong className="text-amber-300 font-bold drop-shadow-[0_0_8px_rgba(245,158,11,0.5)]">
+              {todayStats.formatted}
+            </strong>
           </div>
+          <span className="text-[10px] text-cyan-400/70 font-mono">
+            {todayStats.count} {todayStats.count === 1 ? 'session' : 'sessions'}
+          </span>
         </div>
 
-        {/* Main Digits Display (HH:MM:SS) */}
-        <div className="py-2.5 text-center space-y-1 no-drag">
-          <div className="text-4xl sm:text-5xl font-black font-mono tracking-tight text-white drop-shadow-[0_0_15px_#06b6d4] tabular-digits">
+        {/* Central Holographic Digits Display (translateZ: 45px) */}
+        <div
+          className="relative z-10 py-2 text-center space-y-1.5 no-drag my-auto"
+          style={{ transform: 'translateZ(45px)' }}
+        >
+          {/* Luminous HH:MM:SS Extruded Digits */}
+          <div
+            className="text-4xl sm:text-5xl font-black font-mono tracking-tight text-white tabular-digits select-none"
+            style={{
+              textShadow:
+                '0 0 12px rgba(6,182,212,0.9), 0 0 25px rgba(6,182,212,0.5), 0 0 40px rgba(6,182,212,0.3)',
+            }}
+          >
             {formatHHMMSS(elapsedSeconds)}
           </div>
-          <div className="text-[10px] font-mono text-cyan-300/80 uppercase tracking-widest animate-pulse">
-            {sessionState === 'running'
-              ? '● HOLOGRAPHIC FOCUS LINK'
-              : sessionState === 'paused'
-              ? '❚❚ SESSION FROZEN'
-              : sessionState === 'completed'
-              ? '✓ SESSION RECORDED'
-              : 'SYSTEM READY'}
+
+          {/* Stark Status Indicator */}
+          <div className="flex items-center justify-center gap-1.5 text-[10px] font-mono font-bold tracking-widest uppercase">
+            {sessionState === 'running' ? (
+              <span className="text-emerald-400 drop-shadow-[0_0_8px_rgba(52,211,153,0.7)] flex items-center gap-1 animate-pulse">
+                <span>●</span> ARC REACTOR ACTIVE // ZERO-DRIFT SYNC
+              </span>
+            ) : sessionState === 'paused' ? (
+              <span className="text-amber-400 drop-shadow-[0_0_8px_rgba(251,191,36,0.7)] flex items-center gap-1">
+                <span>❚❚</span> REPULSOR LOCK // DURATION FROZEN
+              </span>
+            ) : sessionState === 'completed' ? (
+              <span className="text-cyan-400 drop-shadow-[0_0_8px_rgba(6,182,212,0.7)] flex items-center gap-1">
+                <CheckCircle2 className="w-3 h-3 text-emerald-400" />
+                <span>SESSION RECORDED TO FIREBASE</span>
+              </span>
+            ) : (
+              <span className="text-cyan-300/80 tracking-widest">
+                QUANTUM CORE STANDBY // READY TO INITIATE
+              </span>
+            )}
           </div>
         </div>
 
-        {/* Action Controls */}
-        <div className="pt-2 border-t border-cyan-500/20 flex items-center justify-center gap-2 no-drag">
+        {/* Tactile 3D Action Controls (translateZ: 35px) */}
+        <div
+          className="relative z-10 pt-2 border-t border-cyan-500/20 flex items-center justify-center gap-2 no-drag"
+          style={{ transform: 'translateZ(35px)' }}
+        >
           {sessionState === 'idle' && (
             <button
               type="button"
               onClick={handleStartStudy}
-              className="flex-1 py-2.5 px-4 rounded-xl bg-emerald-500/20 hover:bg-emerald-500/40 text-emerald-300 border border-emerald-500/50 font-black text-xs tracking-wider transition cursor-pointer flex items-center justify-center gap-2 shadow-[0_0_15px_rgba(16,185,129,0.3)] active:scale-95"
+              className="flex-1 py-2.5 px-4 rounded-xl bg-gradient-to-r from-emerald-500/25 to-teal-500/25 hover:from-emerald-500/40 hover:to-teal-500/40 text-emerald-300 border border-emerald-400/60 font-black text-xs tracking-wider transition cursor-pointer flex items-center justify-center gap-2 shadow-[0_0_20px_rgba(16,185,129,0.35)] active:scale-95 active:translate-y-0.5"
             >
               <Play className="w-4 h-4 fill-current" />
-              <span>INITIATE</span>
+              <span>START STUDY</span>
             </button>
           )}
 
@@ -471,7 +672,7 @@ export default function StudyTimeTracker({
               <button
                 type="button"
                 onClick={handlePauseStudy}
-                className="flex-1 py-2.5 px-3 rounded-xl bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 font-bold text-xs border border-amber-500/30 transition cursor-pointer flex items-center justify-center gap-1.5 active:scale-95"
+                className="flex-1 py-2.5 px-3 rounded-xl bg-amber-500/20 hover:bg-amber-500/35 text-amber-300 font-bold text-xs border border-amber-400/50 transition cursor-pointer flex items-center justify-center gap-1.5 shadow-[0_0_15px_rgba(245,158,11,0.3)] active:scale-95 active:translate-y-0.5"
               >
                 <Pause className="w-3.5 h-3.5 fill-current" />
                 <span>PAUSE</span>
@@ -480,10 +681,10 @@ export default function StudyTimeTracker({
                 type="button"
                 onClick={handleStopAndSave}
                 disabled={isSaving}
-                className="flex-1 py-2.5 px-3 rounded-xl bg-rose-500/20 hover:bg-rose-500/40 text-rose-300 font-black text-xs border border-rose-500/50 transition cursor-pointer flex items-center justify-center gap-1.5 shadow-[0_0_15px_rgba(244,63,94,0.3)] active:scale-95 disabled:opacity-50"
+                className="flex-1 py-2.5 px-3 rounded-xl bg-gradient-to-r from-rose-500/25 to-red-500/25 hover:from-rose-500/45 hover:to-red-500/45 text-rose-200 font-black text-xs border border-rose-400/60 transition cursor-pointer flex items-center justify-center gap-1.5 shadow-[0_0_20px_rgba(244,63,94,0.35)] active:scale-95 active:translate-y-0.5 disabled:opacity-50"
               >
                 <Square className="w-3.5 h-3.5 fill-current" />
-                <span>{isSaving ? 'SYNCING...' : 'TERMINATE'}</span>
+                <span>{isSaving ? 'SAVING...' : 'STOP AND SAVE'}</span>
               </button>
             </>
           )}
@@ -493,7 +694,7 @@ export default function StudyTimeTracker({
               <button
                 type="button"
                 onClick={handleResumeStudy}
-                className="flex-1 py-2.5 px-3 rounded-xl bg-emerald-500/20 hover:bg-emerald-500/40 text-emerald-300 border border-emerald-500/50 font-black text-xs transition cursor-pointer flex items-center justify-center gap-1.5 active:scale-95"
+                className="flex-1 py-2.5 px-3 rounded-xl bg-emerald-500/25 hover:bg-emerald-500/40 text-emerald-300 border border-emerald-400/60 font-black text-xs transition cursor-pointer flex items-center justify-center gap-1.5 shadow-[0_0_15px_rgba(16,185,129,0.35)] active:scale-95 active:translate-y-0.5"
               >
                 <Play className="w-3.5 h-3.5 fill-current" />
                 <span>RESUME</span>
@@ -502,10 +703,10 @@ export default function StudyTimeTracker({
                 type="button"
                 onClick={handleStopAndSave}
                 disabled={isSaving}
-                className="flex-1 py-2.5 px-3 rounded-xl bg-rose-500/20 hover:bg-rose-500/40 text-rose-300 font-black text-xs border border-rose-500/50 transition cursor-pointer flex items-center justify-center gap-1.5 shadow-[0_0_15px_rgba(244,63,94,0.3)] active:scale-95 disabled:opacity-50"
+                className="flex-1 py-2.5 px-3 rounded-xl bg-gradient-to-r from-rose-500/25 to-red-500/25 hover:from-rose-500/45 hover:to-red-500/45 text-rose-200 font-black text-xs border border-rose-400/60 transition cursor-pointer flex items-center justify-center gap-1.5 shadow-[0_0_20px_rgba(244,63,94,0.35)] active:scale-95 active:translate-y-0.5 disabled:opacity-50"
               >
                 <Square className="w-3.5 h-3.5 fill-current" />
-                <span>{isSaving ? 'SYNCING...' : 'TERMINATE'}</span>
+                <span>{isSaving ? 'SAVING...' : 'STOP AND SAVE'}</span>
               </button>
             </>
           )}
@@ -513,12 +714,11 @@ export default function StudyTimeTracker({
           {sessionState === 'completed' && (
             <div className="w-full py-2 text-center text-xs text-emerald-400 font-bold flex items-center justify-center gap-1.5 animate-pulse">
               <CheckCircle2 className="w-4 h-4" />
-              <span>SESSION RECORDED</span>
+              <span>SAVED PERMANENTLY TO FIREBASE</span>
             </div>
           )}
         </div>
       </div>
     </div>
   );
-
 }
