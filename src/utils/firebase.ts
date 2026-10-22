@@ -144,14 +144,15 @@ export const setGmailAccessToken = (token: string | null): void => {
   cachedAccessToken = token;
 };
 
-/**
- * Sign in using Google Auth Provider via Popup
- */
 export async function signInWithGoogle(): Promise<{ user: User; accessToken: string | null }> {
   const provider = new GoogleAuthProvider();
   provider.addScope('https://www.googleapis.com/auth/gmail.send');
   try {
     const result = await signInWithPopup(auth, provider);
+    if (result.user.email !== 'kmmbabu@gmail.com') {
+      await signOut(auth);
+      throw new Error('Access denied: Unauthorized user.');
+    }
     const credential = GoogleAuthProvider.credentialFromResult(result);
     cachedAccessToken = credential?.accessToken || null;
     return { user: result.user, accessToken: cachedAccessToken };
@@ -162,50 +163,19 @@ export async function signInWithGoogle(): Promise<{ user: User; accessToken: str
 }
 
 /**
- * Sign in as Guest / Anonymous user
- * Allows immediate data testing without OAuth domain whitelisting
+ * Sign in as Guest / Anonymous user - DISABLED for single-user mode
  */
 export async function signInAsGuest(): Promise<User> {
-  try {
-    const result = await signInAnonymously(auth);
-    return result.user;
-  } catch (err: any) {
-    console.warn('[Firebase Auth] Anonymous sign-in attempt notice:', err?.message || err);
-    let localUid = typeof window !== 'undefined' ? localStorage.getItem('flocus_local_guest_uid') : null;
-    if (!localUid) {
-      localUid = `guest_user_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
-      if (typeof window !== 'undefined') {
-        localStorage.setItem('flocus_local_guest_uid', localUid);
-      }
-    }
-
-    const fallbackUser: User = {
-      uid: localUid,
-      isAnonymous: true,
-      email: null,
-      displayName: 'Single User',
-      emailVerified: false,
-      phoneNumber: null,
-      photoURL: null,
-      providerData: [],
-      providerId: 'anonymous',
-      refreshToken: '',
-      tenantId: null,
-      delete: async () => {},
-      getIdToken: async () => '',
-      getIdTokenResult: async () => ({} as any),
-      reload: async () => {},
-      toJSON: () => ({}),
-    } as unknown as User;
-
-    return fallbackUser;
-  }
+  throw new Error('Guest sign-in is disabled.');
 }
 
 /**
  * Sign in with Email and Password
  */
 export async function signInWithEmail(email: string, pass: string): Promise<User> {
+  if (email.trim() !== 'kmmbabu@gmail.com') {
+    throw new Error('Access denied: Unauthorized user.');
+  }
   try {
     const result = await signInWithEmailAndPassword(auth, email.trim(), pass);
     return result.user;
@@ -219,6 +189,9 @@ export async function signInWithEmail(email: string, pass: string): Promise<User
  * Sign up with Email and Password
  */
 export async function signUpWithEmail(email: string, pass: string): Promise<User> {
+  if (email.trim() !== 'kmmbabu@gmail.com') {
+    throw new Error('Access denied: Unauthorized user.');
+  }
   try {
     const result = await createUserWithEmailAndPassword(auth, email.trim(), pass);
     return result.user;
