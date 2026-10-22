@@ -84,5 +84,19 @@ service cloud.firestore {
     match /users/{userId}/focusSessions/{sessionId} {
       allow read, write: if isValidId(userId) && isOwner(userId);
     }
+
+    // User Study Sessions
+    match /users/{userId}/studySessions {
+      allow list: if isValidId(userId) && isOwner(userId);
+    }
+
+    match /users/{userId}/studySessions/{sessionId} {
+      allow read, write: if isValidId(userId) && isOwner(userId);
+    }
+
+    // User profile
+    match /users/{userId}/profile/{info} {
+      allow read, write: if isValidId(userId) && isOwner(userId);
+    }
   }
 }

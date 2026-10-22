@@ -117,6 +117,7 @@ import {
   loadUserFocusSessions,
   subscribeToUserFocusSessions,
   FocusSessionRecord,
+  resetUserDashboardData,
 } from './utils/firebase';
 import VisualCustomizationStudio from './components/VisualCustomizationStudio';
 import AnimatedCharacterBackdrop from './components/AnimatedCharacterBackdrop';
@@ -931,6 +932,14 @@ export default function App() {
   const [focusAlertActive, setFocusAlertActive] = useState<boolean>(false);
   const [focusAlertMessage, setFocusAlertMessage] = useState<{ title: string; body: string; type: 'focus_complete' | 'break_complete' } | null>(null);
 
+  const [isMobile, setIsMobile] = useState(false);
+  useEffect(() => {
+    const checkMobile = () => setIsMobile(window.innerWidth < 1024);
+    checkMobile();
+    window.addEventListener('resize', checkMobile);
+    return () => window.removeEventListener('resize', checkMobile);
+  }, []);
+  
   // Focus Mode Phase 2: Goals, Setup, History, Recovery & Analytics State
   const [focusSetupModalOpen, setFocusSetupModalOpen] = useState<boolean>(false);
   const [focusHistoryModalOpen, setFocusHistoryModalOpen] = useState<boolean>(false);
@@ -1290,14 +1299,16 @@ export default function App() {
     });
   }, []);
 
+  const [isSavingRegistry, setIsSavingRegistry] = useState(false);
+
   // Helper: Safely add an activity entry to Firebase Daily Registry under users/{uid}/dailyRegistry/{date}/entries/{id}
   const recordDailyRegistryActivity = useCallback(async (
     entryData: Omit<DailyRegistryEntryItem, 'id' | 'createdAt'>,
     targetDate: string = getLocalDateString()
-  ) => {
+  ): Promise<boolean> => {
     if (!currentUser) {
       console.log('[DailyRegistry Local] Activity noted (unauthenticated):', entryData.description);
-      return;
+      return false;
     }
 
     const entryId = `entry_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
@@ -1308,72 +1319,120 @@ export default function App() {
     };
 
     try {
-      // Common registry: ignore subject-wise logic, update day-level totals only
       const currentDay = dailyRegistryHistory[targetDate];
       const prevEntries = currentDay?.entries ? Object.values(currentDay.entries) : [];
       const updatedEntriesList = [...prevEntries, fullEntry];
       const totalMinutes = updatedEntriesList.reduce((acc, e) => acc + (e.durationMinutes || 0), 0);
 
       const fullPath = `users/${currentUser.uid}/dailyRegistry/${targetDate}/entries/${entryId}`;
-      console.debug(`[DailyRegistry] Writing activity to path: ${fullPath}`);
+      console.log(`[DailyRegistry] Writing activity to verified path: ${fullPath}`);
 
-      await saveDailyRegistryEntryItem(currentUser.uid, targetDate, fullEntry, {
+      const writeSuccess = await saveDailyRegistryEntryItem(currentUser.uid, targetDate, fullEntry, {
         totalStudyMinutes: totalMinutes,
       });
 
+      // Optimistic update so UI updates immediately and never wipes history
+      setDailyRegistryHistory(prev => {
+        const existingDay = prev[targetDate] || {
+          userId: currentUser.uid,
+          date: targetDate,
+          dayOfWeek: getDayOfWeekName(new Date(targetDate + 'T12:00:00')),
+          subjectsStudied: [],
+          plannedTasks: [],
+          completedTasks: [],
+          studySessions: [],
+          totalStudyMinutes: totalMinutes,
+          tuitionRevisionProgress: '',
+          dailyGoals: [],
+          dailySummaryNotes: '',
+          examPrepProgress: '',
+          entries: {},
+          updatedAt: new Date().toISOString(),
+        };
+
+        const nextMap = {
+          ...prev,
+          [targetDate]: {
+            ...existingDay,
+            totalStudyMinutes: totalMinutes,
+            entries: {
+              ...(existingDay.entries || {}),
+              [entryId]: fullEntry,
+            },
+            updatedAt: new Date().toISOString(),
+          },
+        };
+
+        try {
+          localStorage.setItem('flocus_daily_registry_history', JSON.stringify(nextMap));
+        } catch {}
+
+        return nextMap;
+      });
+
       console.log(`[DailyRegistry] Successfully recorded activity for ${targetDate}: ${entryData.description}`);
-      
-      // Force-sync state from database
-      const updatedHistory = await loadUserDailyRegistryAll(currentUser.uid);
-      setDailyRegistryHistory(updatedHistory || {});
+      return writeSuccess;
     } catch (err: any) {
       console.error(`[DailyRegistry Critical Error] Failed to save entry for UID ${currentUser.uid} at ${targetDate}:`, err);
-      console.error(`Error Code: ${err.code || 'N/A'}, Message: ${err.message || 'No message provided'}`);
       setSyncStatus('error');
+      return false;
     }
   }, [currentUser, dailyRegistryHistory]);
 
-  const handleAddDailyRegisterEntry = useCallback(() => {
+  const handleAddDailyRegisterEntry = useCallback(async () => {
+    if (isSavingRegistry) return;
     if (!newRegTopic.trim() && !newRegNotes.trim()) return;
 
+    setIsSavingRegistry(true);
     const localDate = getLocalDateString();
     const localTime = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    const topicText = newRegTopic.trim() || `${newRegSubject} Session`;
+    const notesText = newRegNotes.trim() || 'Logged via Daily Register.';
+
     const newEntry: DailyRegisterEntry = {
       id: `entry-${Date.now()}`,
       date: localDate,
       time: localTime,
       subject: newRegSubject,
-      topic: newRegTopic.trim() || `${newRegSubject} Session`,
-      notes: newRegNotes.trim() || 'Logged via Daily Register.',
+      topic: topicText,
+      notes: notesText,
       durationMinutes: newRegDuration,
       status: 'completed',
       rating: newRegRating,
       createdAt: Date.now(),
     };
 
-    saveDailyRegisterList(prev => [newEntry, ...prev]);
+    try {
+      saveDailyRegisterList(prev => [newEntry, ...prev]);
 
-    // Automatically record to persistent Firebase Daily Registry under users/{uid}/dailyRegistry/{date}/entries
-    if (currentUser) {
-        recordDailyRegistryActivity({
+      if (currentUser) {
+        setSyncStatus('saving');
+        await recordDailyRegistryActivity({
           timestamp: new Date().toISOString(),
           time: localTime,
           eventType: 'manual_log',
-          description: `${newRegTopic.trim() || 'Study Session'}`,
-          topic: newRegTopic.trim() || undefined,
+          description: topicText,
+          topic: topicText,
           durationMinutes: newRegDuration,
-          notes: newRegNotes.trim() || undefined,
+          notes: notesText,
           status: 'completed',
           rating: newRegRating,
         }, localDate);
-    }
+        setSyncStatus('saved');
+      }
 
-    setNewRegTopic('');
-    setNewRegNotes('');
-    setRegisterSuccessPulse(true);
-    playWebAudioChime('task');
-    setTimeout(() => setRegisterSuccessPulse(false), 2000);
-  }, [newRegSubject, newRegTopic, newRegNotes, newRegDuration, newRegRating, saveDailyRegisterList, currentUser, recordDailyRegistryActivity]);
+      setNewRegTopic('');
+      setNewRegNotes('');
+      setRegisterSuccessPulse(true);
+      playWebAudioChime('task');
+      setTimeout(() => setRegisterSuccessPulse(false), 2000);
+    } catch (err) {
+      console.error('[DailyRegister] Save entry failed:', err);
+      setSyncStatus('error');
+    } finally {
+      setIsSavingRegistry(false);
+    }
+  }, [isSavingRegistry, newRegSubject, newRegTopic, newRegNotes, newRegDuration, newRegRating, saveDailyRegisterList, currentUser, recordDailyRegistryActivity]);
 
   const handleSaveDayNotes = useCallback(async (date: string, notes: string, aiSummary?: string) => {
     if (!currentUser) return false;
@@ -1522,7 +1581,6 @@ export default function App() {
       pomodoro: { ...p.pomodoro, glassBg: !transparent },
       nameWidget: { ...p.nameWidget, glassBg: !transparent },
       scratchpad: { ...p.scratchpad, glassBg: !transparent },
-      breakStats: { ...(p.breakStats || DEFAULT_CONFIG.breakStats), glassBg: !transparent },
       studyTracker: { ...DEFAULT_CONFIG.studyTracker, ...(p.studyTracker || {}), glassBg: !transparent },
     }));
   }, [updateConfig]);
@@ -1538,7 +1596,6 @@ export default function App() {
       !config.nameWidget.glassBg &&
       !config.pomodoro?.glassBg &&
       !config.scratchpad?.glassBg &&
-      !config.breakStats?.glassBg &&
       !config.studyTracker?.glassBg
     );
   }, [config]);
@@ -1561,7 +1618,6 @@ export default function App() {
     { id: 'motivation', label: 'Daily Intention & Motivation', defaultW: 440, defaultH: 140, icon: Sparkles, category: 'Mindset' },
     { id: 'pomodoro', label: 'Deep Focus Study Station & Brevo Break', defaultW: 380, defaultH: 260, icon: Flame, category: 'Focus' },
     { id: 'scratchpad', label: 'Daily Register (Study Notes & Summary)', defaultW: 400, defaultH: 340, icon: FileText, category: 'Register' },
-    { id: 'breakStats', label: 'Break Statistics & Wellness', defaultW: 380, defaultH: 240, icon: Coffee, category: 'Wellness' },
     { id: 'studyTracker', label: 'Study Time Tracker & Timer', defaultW: 380, defaultH: 260, icon: Timer, category: 'Study' },
   ], []);
 
@@ -2315,7 +2371,7 @@ export default function App() {
 
   // Real-time bi-directional auto-sync listener (Active only after initial restoration is safely completed)
   useEffect(() => {
-    if (!currentUser || !autoSyncEnabled) return;
+    if (!currentUser?.uid || !autoSyncEnabled) return;
     if (isRestoringRef.current || restoredUserUidRef.current !== currentUser.uid) return;
 
     console.log(`[Firebase Sync] Binding real-time change listener for UID: ${currentUser.uid}`);
@@ -4695,6 +4751,15 @@ export default function App() {
         isPlacementModeActive ? 'cursor-crosshair' : !config.optionalFeatures.widgetCustomization ? 'cursor-default' : ''
       }`}
     >
+      {/* Desktop Only Warning */}
+      <div className={`fixed inset-0 z-[100] bg-black items-center justify-center p-6 ${isMobile ? 'flex' : 'hidden'}`}>
+        <div className="text-center space-y-4">
+          <div className="text-4xl">💻</div>
+          <h2 className="text-white text-xl font-bold">Desktop Only</h2>
+          <p className="text-white/60 text-sm">This application is designed exclusively for laptop and desktop use. Please access from a larger screen.</p>
+        </div>
+      </div>
+      
       {/* ================= CINEMATIC ANIMATED BACKDROP & WALLPAPER LAYER ================= */}
       <AnimatedCharacterBackdrop
         canvasTheme={config.canvasTheme}
@@ -4726,20 +4791,14 @@ export default function App() {
           isFullscreen ? 'hidden pointer-events-none opacity-0' : 'flex'
         }`}
       >
-        {/* Responsive Screen Auto-Fit Button (Laptop / Mobile) */}
+        {/* Layout Control */}
         <button
-          onClick={() => {
-            if (isMobileScreen) {
-              applyMobileFitLayout();
-            } else {
-              applyLaptopFitLayout();
-            }
-          }}
-          title={isMobileScreen ? 'Fit all widgets perfectly for Mobile Screen' : 'Fit all widgets perfectly for Laptop Screen'}
-          aria-label="Responsive Layout Auto-Fit"
-          className="p-2.5 sm:p-3 min-w-[44px] min-h-[44px] sm:min-w-[48px] sm:min-h-[48px] rounded-2xl hud-btn cursor-pointer flex items-center justify-center bg-black/40 hover:bg-black/60 border border-white/10 text-cyan-300 hover:text-white transition shadow-sm"
+          onClick={applyLaptopFitLayout}
+          title="Reset Layout to Default Laptop Fit"
+          aria-label="Reset Layout"
+          className="p-2.5 sm:p-3 min-w-[44px] min-h-[44px] sm:min-w-[48px] sm:min-h-[48px] rounded-2xl hud-btn cursor-pointer flex items-center justify-center bg-black/40 hover:bg-black/60 border border-white/10 text-cyan-400 hover:text-white transition shadow-sm"
         >
-          {isMobileScreen ? <Smartphone className="w-4 h-4 sm:w-5 sm:h-5 text-amber-400" /> : <Laptop className="w-4 h-4 sm:w-5 sm:h-5 text-cyan-400" />}
+          <Laptop className="w-4 h-4 sm:w-5 sm:h-5" />
         </button>
 
         {/* Click-to-Add Placement Mode Button */}
@@ -4771,20 +4830,24 @@ export default function App() {
 
 
 
-        {/* Firebase User Profile / Cloud Status Badge */}
-        <button
-          onClick={() => { setStudioOpen(true); setActiveTab('cloud'); }}
-          title={currentUser ? `Signed in as ${currentUser.email || currentUser.uid}` : 'Click to sign in with Firebase'}
-          aria-label="Firebase Account Status"
-          className="px-3 py-2 min-h-[44px] sm:min-h-[48px] rounded-2xl hud-btn cursor-pointer flex items-center gap-2 bg-black/50 hover:bg-black/70 border border-white/10 text-xs text-white transition shadow-sm"
+        {/* Unobtrusive Background Auto Sync Status Pill */}
+        <div
+          title={isOffline ? 'Offline mode - changes saved locally' : syncStatus === 'saving' ? 'Syncing to cloud storage...' : 'Auto Sync Active - All data persistently backed up'}
+          className="px-3 py-2 min-h-[44px] sm:min-h-[48px] rounded-2xl flex items-center gap-2 bg-black/40 border border-white/10 text-xs text-white shadow-sm"
         >
-          <div className="w-6 h-6 rounded-full bg-gradient-to-tr from-cyan-500 to-emerald-400 text-black font-extrabold flex items-center justify-center text-[10px] shrink-0">
-            {currentUser?.displayName ? currentUser.displayName.charAt(0).toUpperCase() : currentUser?.email ? currentUser.email.charAt(0).toUpperCase() : '👤'}
-          </div>
-          <span className="hidden lg:inline font-mono text-[11px] text-cyan-200 truncate max-w-[140px]">
-            {currentUser?.email || (currentUser ? 'Guest User' : 'Sign In')}
+          <span className={`w-2 h-2 rounded-full ${
+            isOffline ? 'bg-amber-400 animate-pulse' :
+            syncStatus === 'saving' ? 'bg-cyan-400 animate-ping' :
+            syncStatus === 'error' ? 'bg-rose-400' :
+            'bg-emerald-400'
+          }`} />
+          <span className="font-mono text-[11px] text-white/80 hidden sm:inline">
+            {isOffline ? 'Offline' : syncStatus === 'saving' ? 'Syncing...' : syncStatus === 'error' ? 'Sync Retry' : 'Synced'}
           </span>
-        </button>
+          <span className="font-bold text-[10px] px-1.5 py-0.5 rounded bg-white/5 text-amber-300 font-mono hidden md:inline border border-white/5">
+            BK NITHILESHVAR
+          </span>
+        </div>
 
         {/* Visual Customization Studio Button (Themes, Wallpapers, 50 Presets) */}
         <button
@@ -6158,17 +6221,23 @@ export default function App() {
                     <button
                       type="button"
                       onClick={handleAddDailyRegisterEntry}
-                      disabled={!newRegTopic.trim() && !newRegNotes.trim()}
+                      disabled={isSavingRegistry || (!newRegTopic.trim() && !newRegNotes.trim())}
                       className={`px-3 py-1 rounded-xl font-bold text-[11px] transition cursor-pointer flex items-center gap-1 shadow-md ${
                         registerSuccessPulse
                           ? 'bg-emerald-400 text-black'
+                          : isSavingRegistry
+                          ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40 cursor-wait'
                           : (!newRegTopic.trim() && !newRegNotes.trim())
                           ? 'bg-white/10 text-white/30 cursor-not-allowed border border-white/10'
                           : 'bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 hover:to-teal-400 text-black border border-emerald-400/40'
                       }`}
                     >
-                      <Check className="w-3.5 h-3.5" />
-                      <span>{registerSuccessPulse ? 'Saved!' : 'Save Entry'}</span>
+                      {isSavingRegistry ? (
+                        <RefreshCw className="w-3.5 h-3.5 animate-spin text-amber-300" />
+                      ) : (
+                        <Check className="w-3.5 h-3.5" />
+                      )}
+                      <span>{registerSuccessPulse ? 'Saved!' : isSavingRegistry ? 'Saving...' : 'Save Entry'}</span>
                     </button>
                   </div>
                 </div>
@@ -6216,144 +6285,7 @@ export default function App() {
         </div>
       )}
 
-      {/* ================= WIDGET 8: BREAK STATISTICS & WELLNESS ================= */}
-      {config.breakStats?.visible && !isFocusModeActive && (
-        <div
-          ref={breakStatsRef}
-          id="breakstats-widget"
-          data-widget-id="breakStats"
-          onPointerDown={e => handlePointerDown(e, 'breakStats')}
-          onWheel={e => handleWheelZoom(e, 'breakStats')}
-          className={`dashboard-widget z-20 px-4 py-3 flex flex-col justify-between ${
-            config.optionalFeatures.widgetCustomization ? 'cursor-grab active:cursor-grabbing' : 'cursor-default'
-          } ${getWidgetMaterialClass(config.breakStats?.glassBg ?? true)} ${focusedWidget === 'breakStats' ? 'widget-focused' : ''} ${radiusClass}`}
-          style={{
-            width: config.breakStats?.width || 380,
-            height: config.breakStats?.height || 240,
-            left: config.breakStats?.x ?? 480,
-            top: config.breakStats?.y ?? 480,
-            ...getWidgetComputedStyle('breakStats'),
-          }}
-        >
-          {/* Header */}
-          <div className="flex items-center justify-between border-b border-white/10 pb-2 mb-2 no-drag">
-            <div className="flex items-center gap-2">
-              <div className="w-7 h-7 rounded-lg bg-amber-500/20 border border-amber-500/30 flex items-center justify-center text-amber-300">
-                <Coffee className="w-4 h-4" />
-              </div>
-              <div>
-                <h3 className="font-bold text-xs text-white flex items-center gap-1.5 font-['Plus_Jakarta_Sans']">
-                  <span>Break Statistics & Wellness</span>
-                </h3>
-                <span className="text-[9px] text-white/50 block">Cognitive rest & physical wellness</span>
-              </div>
-            </div>
-
-            <div className="flex items-center gap-1.5">
-              <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-300 border border-amber-500/30 flex items-center gap-1">
-                <span>🔥</span>
-                <span>Streak: {focusStreak}</span>
-              </span>
-              <button
-                type="button"
-                onClick={() => setSmartBreakModalOpen(true)}
-                title="View Smart Break Physical Exercises"
-                className="p-1 rounded-md bg-white/5 hover:bg-white/15 text-cyan-300 transition cursor-pointer"
-              >
-                <Sparkles className="w-3.5 h-3.5" />
-              </button>
-            </div>
-          </div>
-
-          {/* Metrics Grid */}
-          <div className="grid grid-cols-3 gap-2 my-1 no-drag">
-            {/* Metric 1: Total Breaks */}
-            <div className="p-2 rounded-xl bg-black/40 border border-white/5 flex flex-col justify-between">
-              <span className="text-[9px] text-white/50 uppercase font-semibold tracking-wider">Total Breaks</span>
-              <div className="flex items-baseline gap-1 my-1">
-                <span className="text-xl font-black text-amber-400 font-mono">
-                  {breakAnalytics.totalBreaksTaken}
-                </span>
-                <span className="text-[10px] text-white/40">taken</span>
-              </div>
-              <span className="text-[9px] text-amber-300/80 truncate">
-                ☕ {breakAnalytics.totalBreaksTaken > 0 ? `${breakAnalytics.totalBreaksTaken * 5}m total` : '0m total'}
-              </span>
-            </div>
-
-            {/* Metric 2: This Week */}
-            <div className="p-2 rounded-xl bg-black/40 border border-white/5 flex flex-col justify-between">
-              <span className="text-[9px] text-white/50 uppercase font-semibold tracking-wider">This Week</span>
-              <div className="flex items-baseline gap-1 my-1">
-                <span className="text-xl font-black text-cyan-400 font-mono">
-                  {breakAnalytics.timeSpentOnBreaksThisWeek}
-                </span>
-                <span className="text-[10px] text-white/40">min</span>
-              </div>
-              <span className="text-[9px] text-cyan-300/80 truncate">
-                {breakAnalytics.timeSpentOnBreaksThisWeek > 0 ? `${Math.round(breakAnalytics.timeSpentOnBreaksThisWeek / 5)} pauses` : '0 pauses'}
-              </span>
-            </div>
-
-            {/* Metric 3: Productivity Impact Score */}
-            <div className="p-2 rounded-xl bg-black/40 border border-white/5 flex flex-col justify-between">
-              <span className="text-[9px] text-white/50 uppercase font-semibold tracking-wider">Impact Score</span>
-              <div className="flex items-baseline gap-1 my-1">
-                <span className="text-xl font-black text-emerald-400 font-mono">
-                  {breakAnalytics.productivityImpactScore}%
-                </span>
-              </div>
-              <span className="text-[9px] text-emerald-300/80 truncate">
-                {breakAnalytics.productivityImpactScore >= 95 ? '✨ Peak Balance' : '🎯 Steady Focus'}
-              </span>
-            </div>
-          </div>
-
-          {/* Productivity Impact Explanation */}
-          <div className="px-2.5 py-1.5 rounded-xl bg-white/[0.03] border border-white/5 text-[10px] text-white/70 flex items-center justify-between no-drag">
-            <span className="text-white/50">Optimal 5:1 ratio:</span>
-            <span className="text-emerald-300 font-medium">5m rest per 25-50m study</span>
-            <button
-              type="button"
-              onClick={() => setFocusHistoryModalOpen(true)}
-              className="text-cyan-400 hover:text-cyan-300 underline font-semibold text-[10px] cursor-pointer"
-            >
-              History →
-            </button>
-          </div>
-
-          {/* Quick Action Footer */}
-          <div className="flex items-center gap-1.5 pt-2 border-t border-white/5 mt-1 no-drag">
-            <button
-              type="button"
-              onClick={() => setSmartBreakModalOpen(true)}
-              className="flex-1 py-1.5 px-2 rounded-xl bg-white/5 hover:bg-white/10 text-white text-[10px] font-semibold border border-white/10 transition cursor-pointer flex items-center justify-center gap-1"
-            >
-              <span>🧘 Smart Exercises</span>
-            </button>
-            <button
-              type="button"
-              onClick={handleOpenBreakModal}
-              disabled={focusSessionState === 'onBreak'}
-              className="flex-1 py-1.5 px-2 rounded-xl bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 text-[10px] font-bold border border-amber-500/30 transition cursor-pointer flex items-center justify-center gap-1 disabled:opacity-40"
-            >
-              <Mail className="w-3 h-3 text-amber-400" />
-              <span>Request Break</span>
-            </button>
-          </div>
-
-          {showHandles && (
-            <>
-              <div className="resize-handle resize-se text-amber-400" data-handle="se" />
-              <div className="resize-handle resize-sw text-amber-400" data-handle="sw" />
-              <div className="resize-handle resize-ne text-amber-400" data-handle="ne" />
-              <div className="resize-handle resize-nw text-amber-400" data-handle="nw" />
-            </>
-          )}
-        </div>
-      )}
-
-      {/* ================= WIDGET 9: STUDY TIME TRACKER WIDGET ================= */}
+      {/* ================= STUDY TIME TRACKER WIDGET ================= */}
       {config.studyTracker?.visible !== false && !isFocusModeActive && (
         <div
           ref={studyTrackerRef}
@@ -6395,6 +6327,7 @@ export default function App() {
               uid={currentUser?.uid || null}
               activeSubject={activeSubject}
               activeTask={activeTask}
+              existingSessions={userFocusSessions}
               onOpenHistory={() => setStudyHistoryModalOpen(true)}
               onSessionCompleted={rec => {
                 setUserFocusSessions(prev => [rec, ...prev]);
@@ -7747,20 +7680,6 @@ export default function App() {
               </div>
             </button>
 
-            {/* 2. Quick Search */}
-            <button
-              type="button"
-              onClick={() => { setCommandMenuOpen(true); setDrawerOpen(false); setCommandSearch(''); setSelectedCommandIndex(0); }}
-              className="flex items-center gap-2 p-2.5 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 text-white text-xs font-medium transition cursor-pointer text-left min-h-[48px]"
-              title="Quick Access Search (⌘K)"
-            >
-              <Search className="w-4 h-4 text-cyan-400 shrink-0" />
-              <div className="truncate">
-                <div className="font-semibold text-white text-xs">Search</div>
-                <div className="text-[10px] text-white/50">Palette (⌘K)</div>
-              </div>
-            </button>
-
             {/* Center & Align */}
             <button
               type="button"
@@ -7925,14 +7844,6 @@ export default function App() {
             }`}
           >
             Backup
-          </button>
-          <button
-            onClick={() => setActiveTab('cloud')}
-            className={`py-1.5 rounded-lg transition cursor-pointer truncate px-0.5 ${
-              activeTab === 'cloud' ? 'text-white bg-white/15' : 'text-white/50 hover:text-white'
-            }`}
-          >
-            Firebase
           </button>
           <button
             onClick={() => setActiveTab('registry')}
@@ -8428,7 +8339,7 @@ export default function App() {
               <p className="text-[11px] text-white/50">Export dashboard data or restore previous configurations</p>
             </div>
 
-            {backupMessage && (
+             {backupMessage && (
               <div
                 className={`p-3 rounded-xl text-xs flex items-center gap-2 ${
                   backupMessage.type === 'success'
@@ -8440,6 +8351,31 @@ export default function App() {
                 <span>{backupMessage.text}</span>
               </div>
             )}
+
+            <div className="p-4 rounded-2xl bg-rose-500/10 border border-rose-500/30 space-y-3">
+              <div className="flex items-center gap-2">
+                <Trash2 className="w-4 h-4 text-rose-400" />
+                <label className="text-[11px] font-semibold uppercase tracking-wider text-white/80">
+                  Factory Reset
+                </label>
+              </div>
+              <p className="text-[11px] text-white/50">
+                Reset all dashboard settings, data, and configurations to factory defaults. This action is irreversible.
+              </p>
+              <button
+                onClick={async () => {
+                  if (confirm('Are you sure you want to reset everything? This will clear all data and settings.')) {
+                    if (currentUser) {
+                       await resetUserDashboardData(currentUser.uid);
+                       window.location.reload();
+                    }
+                  }
+                }}
+                className="w-full px-4 py-2 rounded-xl bg-rose-500/20 hover:bg-rose-500/40 text-rose-300 text-xs font-bold transition cursor-pointer"
+              >
+                Reset to Factory Defaults
+              </button>
+            </div>
 
             <div className="p-4 rounded-2xl bg-white/[0.03] border border-white/10 space-y-3">
               <div className="flex items-center gap-2">

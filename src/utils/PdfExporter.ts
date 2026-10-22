@@ -5,23 +5,43 @@
 
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
-import { FocusSessionRecord, loadUserStudySessions, getUserProfile } from './firebase';
+import {
+  FocusSessionRecord,
+  loadUserStudySessions,
+  getUserProfile,
+  splitSessionByLocalCalendarDays,
+  getLocalDateString,
+} from './firebase';
 
 export interface ExportStudyReportOptions {
   sessions: FocusSessionRecord[];
   rangeLabel: string;
   userName?: string;
+  isPrint?: boolean;
+}
+
+/**
+ * Format total minutes or seconds into a clean "Xh Ym" string (handles > 24 hours accurately)
+ */
+export function formatTotalDurationHours(totalMinutes: number): string {
+  const hrs = Math.floor(Math.max(0, totalMinutes) / 60);
+  const mins = Math.max(0, Math.round(totalMinutes % 60));
+  if (hrs > 0) {
+    return `${hrs}h ${mins}m`;
+  }
+  return `${mins}m`;
 }
 
 /**
  * Generate a professional, printer-friendly PDF report from study session history.
- * Formats daily summaries, detailed session breakdown, student name, and pagination.
+ * Formats daily summaries with midnight splits, detailed session breakdown, student name, and pagination.
  */
 export function exportStudyHistoryToPDF({
   sessions,
   rangeLabel,
-  userName = 'APES AI Student',
-}: ExportStudyReportOptions): void {
+  userName = 'BK NITHILESHVAR',
+  isPrint = false,
+}: ExportStudyReportOptions): jsPDF {
   const doc = new jsPDF({
     orientation: 'p',
     unit: 'mm',
@@ -31,9 +51,9 @@ export function exportStudyHistoryToPDF({
   const pageWidth = doc.internal.pageSize.getWidth();
   const pageHeight = doc.internal.pageSize.getHeight();
 
-  // 1. Header Banner
-  doc.setFillColor(11, 17, 32);
-  doc.rect(0, 0, pageWidth, 35, 'F');
+  // 1. Header Banner (Iron Man-inspired Black & Gold Accents)
+  doc.setFillColor(11, 15, 25);
+  doc.rect(0, 0, pageWidth, 36, 'F');
 
   doc.setTextColor(255, 255, 255);
   doc.setFont('helvetica', 'bold');
@@ -42,87 +62,95 @@ export function exportStudyHistoryToPDF({
 
   doc.setFontSize(10);
   doc.setFont('helvetica', 'normal');
-  doc.setTextColor(6, 182, 212);
-  doc.text(`Report Period: ${rangeLabel}`, 14, 23);
+  doc.setTextColor(6, 182, 212); // Cyan accent
+  doc.text(`Selected Range: ${rangeLabel}`, 14, 23);
 
   doc.setFontSize(8);
   doc.setTextColor(148, 163, 184);
   const genDate = new Date().toLocaleString();
   doc.text(`Generated: ${genDate} | Student: ${userName}`, pageWidth - 14, 23, { align: 'right' });
 
-  // 2. Metrics & Daily Summaries Calculation
-  let totalMins = 0;
-  const dailySummaryMap: Record<string, { minutes: number; sessionCount: number; subjects: Set<string> }> = {};
+  // 2. Metrics & Daily Summaries Calculation (Attributing Midnight Spans Accurately)
+  let totalActiveMinutes = 0;
+  const dailySummaryMap: Record<string, { activeSeconds: number; sessionCount: number }> = {};
 
   sessions.forEach(s => {
-    const elapsed = s.actualElapsedMinutes || Math.round(((s.endTimestamp || Date.now()) - s.startTimestamp) / 60000) || 0;
-    totalMins += elapsed;
+    const sStart = s.startTimestamp || (s.createdAt ? new Date(s.createdAt).getTime() : Date.now());
+    const sEnd = s.endTimestamp || (sStart + (s.actualElapsedMinutes || 0) * 60000);
+    const activeSec = (s.actualElapsedMinutes || Math.round((sEnd - sStart) / 60000)) * 60;
+    totalActiveMinutes += Math.round(activeSec / 60);
 
-    const dateKey = new Date(s.startTimestamp).toISOString().slice(0, 10);
-    if (!dailySummaryMap[dateKey]) {
-      dailySummaryMap[dateKey] = { minutes: 0, sessionCount: 0, subjects: new Set() };
+    // Attribute active seconds across midnight boundaries to each calendar date
+    const split = splitSessionByLocalCalendarDays(sStart, sEnd, activeSec);
+    Object.entries(split).forEach(([dayKey, sliceSec]) => {
+      if (!dailySummaryMap[dayKey]) {
+        dailySummaryMap[dayKey] = { activeSeconds: 0, sessionCount: 0 };
+      }
+      dailySummaryMap[dayKey].activeSeconds += sliceSec;
+    });
+
+    // Count session on starting date
+    const startDayKey = getLocalDateString(new Date(sStart));
+    if (dailySummaryMap[startDayKey]) {
+      dailySummaryMap[startDayKey].sessionCount += 1;
     }
-    dailySummaryMap[dateKey].minutes += elapsed;
-    dailySummaryMap[dateKey].sessionCount += 1;
-    if (s.subject) dailySummaryMap[dateKey].subjects.add(s.subject);
   });
 
-  let currentY = 42;
+  let currentY = 44;
 
-  // Executive Metric Box
+  // Executive Metric Cards
   doc.setFillColor(248, 250, 252);
   doc.setDrawColor(226, 232, 240);
-  doc.roundedRect(14, currentY, pageWidth - 28, 20, 3, 3, 'FD');
+  doc.roundedRect(14, currentY, pageWidth - 28, 22, 3, 3, 'FD');
 
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(8);
-  doc.setTextColor(30, 41, 59);
-  doc.text('TOTAL RECORDED STUDY TIME', 20, currentY + 7);
+  doc.setTextColor(71, 85, 105);
+  doc.text('TOTAL ACTIVE STUDY TIME', 20, currentY + 7);
   doc.setFontSize(13);
-  doc.setTextColor(16, 185, 129);
-  doc.text(`${Math.floor(totalMins / 60)}h ${totalMins % 60}m (${totalMins} mins)`, 20, currentY + 15);
+  doc.setTextColor(16, 185, 129); // Emerald
+  doc.text(formatTotalDurationHours(totalActiveMinutes), 20, currentY + 16);
 
   doc.setFontSize(8);
-  doc.setTextColor(30, 41, 59);
-  doc.text('TOTAL STUDY SESSIONS', 95, currentY + 7);
+  doc.setTextColor(71, 85, 105);
+  doc.text('TOTAL SESSIONS', 90, currentY + 7);
   doc.setFontSize(13);
-  doc.setTextColor(6, 182, 212);
-  doc.text(`${sessions.length} Sessions`, 95, currentY + 15);
+  doc.setTextColor(6, 182, 212); // Cyan
+  doc.text(`${sessions.length} Sessions`, 90, currentY + 16);
 
   doc.setFontSize(8);
-  doc.setTextColor(30, 41, 59);
-  doc.text('ACTIVE DAYS LOGGED', 155, currentY + 7);
+  doc.setTextColor(71, 85, 105);
+  doc.text('CALENDAR DAYS WITH STUDY', 150, currentY + 7);
   doc.setFontSize(13);
-  doc.setTextColor(99, 102, 241);
-  doc.text(`${Object.keys(dailySummaryMap).length} Days`, 155, currentY + 15);
+  doc.setTextColor(245, 158, 11); // Amber
+  doc.text(`${Object.keys(dailySummaryMap).length} Days`, 150, currentY + 16);
 
-  currentY += 28;
+  currentY += 30;
 
-  // 3. Daily Summary Table
+  // 3. Daily Summary Table (Accurately reporting midnight splits)
   const dailyRows = Object.entries(dailySummaryMap)
     .sort((a, b) => b[0].localeCompare(a[0]))
     .map(([dateKey, stats]) => {
-      const fullDate = new Date(dateKey + 'T00:00:00').toLocaleDateString('en-US', {
-        weekday: 'short',
+      const fullDate = new Date(dateKey + 'T12:00:00').toLocaleDateString('en-US', {
+        weekday: 'long',
         year: 'numeric',
         month: 'short',
         day: 'numeric',
       });
-      const hoursStr = `${Math.floor(stats.minutes / 60)}h ${stats.minutes % 60}m`;
-      const subjectsStr = Array.from(stats.subjects).join(', ') || 'General Study';
-      return [fullDate, hoursStr, `${stats.sessionCount} sessions`, subjectsStr];
+      const durationStr = formatTotalDurationHours(Math.round(stats.activeSeconds / 60));
+      return [fullDate, durationStr, `${stats.sessionCount} session(s)`];
     });
 
   if (dailyRows.length > 0) {
     doc.setFont('helvetica', 'bold');
     doc.setFontSize(11);
     doc.setTextColor(15, 23, 42);
-    doc.text('Daily Study Breakdown', 14, currentY);
+    doc.text('Daily Study Summary (Midnight-Adjusted Totals)', 14, currentY);
     currentY += 4;
 
     autoTable(doc, {
       startY: currentY,
-      head: [['Calendar Date', 'Total Time', 'Sessions', 'Subjects Studied']],
+      head: [['Calendar Date & Weekday', 'Total Actual Study Time', 'Sessions Count']],
       body: dailyRows,
       theme: 'grid',
       headStyles: { fillColor: [30, 41, 59], textColor: [255, 255, 255], fontStyle: 'bold', fontSize: 8 },
@@ -131,38 +159,44 @@ export function exportStudyHistoryToPDF({
       margin: { left: 14, right: 14 },
     });
 
-    currentY = (doc as any).lastAutoTable.finalY + 10;
+    currentY = (doc as any).lastAutoTable.finalY + 12;
   }
 
-  // 4. Session Details Table
+  // 4. Detailed Session Log Table
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(11);
   doc.setTextColor(15, 23, 42);
-  doc.text('Detailed Session Log', 14, currentY);
+  doc.text('Individual Session Log', 14, currentY);
   currentY += 4;
 
   const sessionRows = sessions.map((s, idx) => {
-    const dateStr = new Date(s.startTimestamp).toLocaleDateString();
-    const startStr = new Date(s.startTimestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-    const endStr = s.endTimestamp ? new Date(s.endTimestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Active';
-    const dur = `${s.actualElapsedMinutes || Math.round(((s.endTimestamp || Date.now()) - s.startTimestamp) / 60000)} mins`;
+    const sStart = s.startTimestamp || (s.createdAt ? new Date(s.createdAt).getTime() : 0);
+    const startDateStr = new Date(sStart).toLocaleDateString();
+    const startTimeStr = new Date(sStart).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    const endTimeStr = s.endTimestamp ? new Date(s.endTimestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Incomplete';
+    const activeMins = s.actualElapsedMinutes || Math.round(((s.endTimestamp || Date.now()) - sStart) / 60000);
+    const durationStr = formatTotalDurationHours(activeMins);
+    const pausedStr = s.totalBreakMinutes ? `${s.totalBreakMinutes}m paused` : 'None';
+    const statusStr = (s.status || 'completed').toUpperCase();
+    const shortId = (s.sessionId || `session_${idx + 1}`).replace(/^study_/, '').slice(0, 10);
+
     return [
       idx + 1,
-      dateStr,
-      s.subject || 'General Study',
-      s.task || 'Focus Sprint',
-      `${startStr} - ${endStr}`,
-      dur,
-      s.status ? s.status.toUpperCase() : 'COMPLETED',
+      shortId,
+      startDateStr,
+      `${startTimeStr} - ${endTimeStr}`,
+      durationStr,
+      pausedStr,
+      statusStr,
     ];
   });
 
   autoTable(doc, {
     startY: currentY,
-    head: [['#', 'Date', 'Subject', 'Topic / Goal', 'Time Window', 'Duration', 'Status']],
-    body: sessionRows.length > 0 ? sessionRows : [['-', '-', 'No recorded sessions', '-', '-', '-', '-']],
+    head: [['#', 'Ref ID', 'Date', 'Time Window', 'Active Duration', 'Paused', 'Status']],
+    body: sessionRows.length > 0 ? sessionRows : [['-', '-', 'No study sessions recorded', '-', '-', '-', '-']],
     theme: 'grid',
-    headStyles: { fillColor: [11, 17, 32], textColor: [255, 255, 255], fontStyle: 'bold', fontSize: 8 },
+    headStyles: { fillColor: [11, 15, 25], textColor: [255, 255, 255], fontStyle: 'bold', fontSize: 8 },
     bodyStyles: { fontSize: 8, textColor: [30, 41, 59] },
     alternateRowStyles: { fillColor: [241, 245, 249] },
     margin: { left: 14, right: 14 },
@@ -171,16 +205,27 @@ export function exportStudyHistoryToPDF({
       doc.setFontSize(8);
       doc.setTextColor(148, 163, 184);
       doc.text(`Page ${data.pageNumber} of ${pageCount}`, pageWidth - 14, pageHeight - 10, { align: 'right' });
-      doc.text(`APES AI • Verified Academic Report • Student: ${userName}`, 14, pageHeight - 10);
+      doc.text(`APES AI • Verified Academic Study Report • Student: ${userName}`, 14, pageHeight - 10);
     },
   });
 
-  doc.save(`APES_AI_Study_Report_${rangeLabel.replace(/\s+/g, '_')}.pdf`);
+  if (isPrint) {
+    doc.autoPrint();
+    const blobUrl = doc.output('bloburl');
+    const printWindow = window.open(blobUrl, '_blank');
+    if (printWindow) {
+      printWindow.focus();
+    }
+  } else {
+    doc.save(`APES_AI_Study_Report_${rangeLabel.replace(/\s+/g, '_')}.pdf`);
+  }
+
+  return doc;
 }
 
 /**
- * Convenience utility that directly retrieves study sessions from 'users/{uid}/studySessions',
- * retrieves the user's name from their profile, and generates the PDF report.
+ * Convenience utility to export study history for UID, fetching all available sessions
+ * if "All Available History" is requested to ensure zero missing pages or records.
  */
 export async function generateStudySessionPDF(
   uid: string,
@@ -188,32 +233,34 @@ export async function generateStudySessionPDF(
     rangeLabel?: string;
     userName?: string;
     sessions?: FocusSessionRecord[];
+    isPrint?: boolean;
   }
 ): Promise<void> {
-  if (!uid) {
-    console.warn('[PdfExporter] Cannot generate PDF without authenticated UID.');
-    return;
-  }
-
-  // 1. Fetch study sessions from users/{uid}/studySessions if not provided
   let sessions = options?.sessions;
-  if (!sessions) {
-    sessions = await loadUserStudySessions(uid);
-  }
 
-  // 2. Fetch user's profile name from Firebase if not provided
-  let studentName = options?.userName;
-  if (!studentName || studentName === 'APES AI Student') {
-    const profile = await getUserProfile(uid);
-    if (profile?.displayName) {
-      studentName = profile.displayName;
+  // If sessions not provided or "All Available History", fetch complete dataset from Firebase
+  if (!sessions || options?.rangeLabel === 'All Available History') {
+    if (uid) {
+      sessions = await loadUserStudySessions(uid);
+    } else {
+      sessions = sessions || [];
     }
   }
 
-  // 3. Export PDF
+  let studentName = options?.userName;
+  if (!studentName || studentName === 'APES AI Student') {
+    if (uid) {
+      const profile = await getUserProfile(uid);
+      studentName = profile?.displayName || 'BK NITHILESHVAR';
+    } else {
+      studentName = 'BK NITHILESHVAR';
+    }
+  }
+
   exportStudyHistoryToPDF({
     sessions: sessions || [],
-    rangeLabel: options?.rangeLabel || 'All History',
-    userName: studentName || 'APES AI Student',
+    rangeLabel: options?.rangeLabel || 'All Available History',
+    userName: studentName || 'BK NITHILESHVAR',
+    isPrint: !!options?.isPrint,
   });
 }

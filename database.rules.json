@@ -7,14 +7,6 @@
         ".read": "auth != null && auth.uid === $uid",
         ".write": "auth != null && auth.uid === $uid"
       }
-    },
-    "daily_checkins": {
-      ".read": true,
-      ".write": true
-    },
-    "site_telemetry": {
-      ".read": true,
-      ".write": true
     }
   }
 }

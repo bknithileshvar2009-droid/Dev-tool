@@ -252,6 +252,29 @@ export interface UserDashboardPayload {
 }
 
 /**
+ * Reset user dashboard data to default in Firebase
+ */
+export async function resetUserDashboardData(uid: string): Promise<boolean> {
+  if (!uid) return false;
+  
+  try {
+    // 1. Clear primary data path in RTDB
+    const rtdbTargetRef = rtdbRef(rtdb, `users/${uid}/dashboard`);
+    await rtdbRemove(rtdbTargetRef);
+    
+    // 2. Clear data path in Firestore
+    const docRef = doc(db, 'users', uid, 'dashboard', 'data');
+    await setDoc(docRef, { config: {}, tasks: [] }, { merge: false });
+    
+    console.log(`[Firebase] Reset dashboard data for UID: ${uid}`);
+    return true;
+  } catch (err) {
+    console.error(`[Firebase] Reset failed for UID: ${uid}:`, err);
+    return false;
+  }
+}
+
+/**
  * Save user dashboard data to Firebase
  * Primary: Realtime Database under users/{uid}/dashboard
  * Redundancy: Firestore under users/{uid}/dashboard/data
@@ -648,28 +671,32 @@ export async function saveDailyRegistryDay(
   };
 
   const cleanedPayload = JSON.parse(JSON.stringify(payload));
+  let rtdbSuccess = false;
 
+  // 1. Primary write to Realtime Database (zero-latency, reliable)
+  try {
+    const targetRef = rtdbRef(rtdb, `users/${uid}/dailyRegistry/${date}`);
+    await rtdbSet(targetRef, cleanedPayload);
+    rtdbSuccess = true;
+    console.log(`[DailyRegistry RTDB] Saved day ${date} for UID: ${uid}`);
+  } catch (rtdbErr) {
+    console.warn(`[DailyRegistry RTDB Warning] Save day ${date}:`, rtdbErr);
+  }
+
+  // 2. Mirror write to Cloud Firestore (non-blocking)
   try {
     const docRef = doc(db, 'users', uid, 'dailyRegistry', date);
-    await setDoc(docRef, cleanedPayload, { merge: true });
-    console.log(`[DailyRegistry Firestore] Saved day ${date} for UID: ${uid}`);
+    setDoc(docRef, cleanedPayload, { merge: true }).catch(err => {
+      console.warn(`[DailyRegistry Firestore Mirror Notice] ${date}:`, err?.message || err);
+    });
+  } catch {}
 
-    // Optional non-blocking RTDB mirror
-    try {
-      const targetRef = rtdbRef(rtdb, `users/${uid}/dailyRegistry/${date}`);
-      rtdbSet(targetRef, cleanedPayload).catch(() => {});
-    } catch {}
-
-    return true;
-  } catch (err) {
-    console.error(`[DailyRegistry Firestore Error] Save failed for day ${date}:`, err);
-    throw err;
-  }
+  return rtdbSuccess;
 }
 
 /**
  * Save an individual activity entry to users/{uid}/dailyRegistry/{YYYY-MM-DD}/entries/{entryId}
- * Safely adds or updates the entry in Firestore without destroying other entries or overwriting the day!
+ * Safely adds or updates the entry in RTDB and Firestore without destroying other entries or overwriting the day!
  */
 export async function saveDailyRegistryEntryItem(
   uid: string,
@@ -680,34 +707,52 @@ export async function saveDailyRegistryEntryItem(
   if (!uid || !date || !entry || !entry.id) return false;
 
   const nowIso = new Date().toISOString();
-  const rawPayload = {
-    userId: uid,
-    date,
-    updatedAt: nowIso,
-    entries: {
-      [entry.id]: entry,
-    },
-    ...(dayMeta || {}),
-  };
-  const cleanedPayload = JSON.parse(JSON.stringify(rawPayload));
+  let rtdbSuccess = false;
 
+  // 1. Realtime Database primary write
   try {
-    const docRef = doc(db, 'users', uid, 'dailyRegistry', date);
-    await setDoc(docRef, cleanedPayload, { merge: true });
+    const entryRef = rtdbRef(rtdb, `users/${uid}/dailyRegistry/${date}/entries/${entry.id}`);
+    await rtdbSet(entryRef, entry);
+    rtdbSuccess = true;
 
-    console.log(`[DailyRegistry Firestore] Entry ${entry.id} saved for ${date}`);
+    // Also update day-level metadata in RTDB if supplied
+    if (dayMeta) {
+      const metaToUpdate: Record<string, any> = {
+        updatedAt: nowIso,
+        userId: uid,
+        date,
+      };
+      if (typeof dayMeta.totalStudyMinutes === 'number') {
+        metaToUpdate.totalStudyMinutes = dayMeta.totalStudyMinutes;
+      }
+      const dayRef = rtdbRef(rtdb, `users/${uid}/dailyRegistry/${date}`);
+      rtdbUpdate(dayRef, metaToUpdate).catch(() => {});
+    }
 
-    // Optional non-blocking RTDB mirror
-    try {
-      const entryRef = rtdbRef(rtdb, `users/${uid}/dailyRegistry/${date}/entries/${entry.id}`);
-      rtdbSet(entryRef, entry).catch(() => {});
-    } catch {}
-
-    return true;
-  } catch (err) {
-    console.error(`[DailyRegistry Save Error] Write failed for entry ${entry.id}:`, err);
-    throw err;
+    console.log(`[DailyRegistry RTDB] Entry ${entry.id} saved for ${date}`);
+  } catch (rtdbErr) {
+    console.warn(`[DailyRegistry RTDB Warning] Failed saving entry ${entry.id}:`, rtdbErr);
   }
+
+  // 2. Cloud Firestore mirror write
+  try {
+    const rawPayload = {
+      userId: uid,
+      date,
+      updatedAt: nowIso,
+      entries: {
+        [entry.id]: entry,
+      },
+      ...(dayMeta || {}),
+    };
+    const cleanedPayload = JSON.parse(JSON.stringify(rawPayload));
+    const docRef = doc(db, 'users', uid, 'dailyRegistry', date);
+    setDoc(docRef, cleanedPayload, { merge: true }).catch(err => {
+      console.warn(`[DailyRegistry Firestore Mirror Notice] Entry ${entry.id}:`, err?.message || err);
+    });
+  } catch {}
+
+  return rtdbSuccess;
 }
 
 /**
@@ -807,29 +852,71 @@ export async function loadDailyRegistryDay(
 }
 
 /**
- * Load entire user daily registry history across all dates from Firestore
+ * Load entire user daily registry history across all dates from Firebase (RTDB primary, Firestore merge)
  */
 export async function loadUserDailyRegistryAll(
   uid: string
 ): Promise<Record<string, DailyRegistryDayRecord>> {
   if (!uid) return {};
 
+  const mergedResult: Record<string, DailyRegistryDayRecord> = {};
+
+  // 1. Primary: Realtime Database users/{uid}/dailyRegistry
+  try {
+    const targetRef = rtdbRef(rtdb, `users/${uid}/dailyRegistry`);
+    const snap = await rtdbGet(targetRef);
+    if (snap.exists()) {
+      const val = snap.val();
+      if (val && typeof val === 'object') {
+        Object.entries(val).forEach(([dateKey, dayData]) => {
+          if (dateKey !== '_probe' && dayData && typeof dayData === 'object') {
+            mergedResult[dateKey] = dayData as DailyRegistryDayRecord;
+          }
+        });
+        console.log(`[DailyRegistry RTDB] Loaded ${Object.keys(mergedResult).length} days of history for UID: ${uid}`);
+      }
+    }
+  } catch (rtdbErr) {
+    console.warn(`[DailyRegistry RTDB Read Warning]:`, rtdbErr);
+  }
+
+  // 2. Secondary: Cloud Firestore users/{uid}/dailyRegistry
   try {
     const collRef = collection(db, 'users', uid, 'dailyRegistry');
     const snap = await getDocs(collRef);
     if (!snap.empty) {
-      const result: Record<string, DailyRegistryDayRecord> = {};
       snap.forEach(docSnap => {
-        result[docSnap.id] = docSnap.data() as DailyRegistryDayRecord;
+        const docData = docSnap.data() as DailyRegistryDayRecord;
+        if (!mergedResult[docSnap.id]) {
+          mergedResult[docSnap.id] = docData;
+        } else {
+          // Merge entries if Firestore has entries not in RTDB
+          const existingEntries = mergedResult[docSnap.id].entries || {};
+          const fsEntries = docData.entries || {};
+          mergedResult[docSnap.id].entries = { ...fsEntries, ...existingEntries };
+        }
       });
-      console.log(`[DailyRegistry Firestore] Loaded ${Object.keys(result).length} days of history for UID: ${uid}`);
-      return result;
+      console.log(`[DailyRegistry Firestore] Merged history, total days: ${Object.keys(mergedResult).length}`);
     }
   } catch (err) {
-    console.warn(`[DailyRegistry Firestore All Read Notice]:`, err);
+    console.warn(`[DailyRegistry Firestore Read Notice]:`, err);
   }
 
-  return {};
+  // 3. Fallback safeguard: if network queries failed or returned empty, check localStorage
+  if (Object.keys(mergedResult).length === 0 && typeof window !== 'undefined') {
+    try {
+      const cached = localStorage.getItem('flocus_daily_registry_history');
+      if (cached) {
+        const parsed = JSON.parse(cached);
+        if (parsed && typeof parsed === 'object' && Object.keys(parsed).length > 0) {
+          console.log(`[DailyRegistry Cache] Preserved ${Object.keys(parsed).length} days from local cache safeguard`);
+          return parsed;
+        }
+      }
+    } catch {}
+  }
+
+  return mergedResult;
 }
 
 /**
@@ -974,9 +1061,53 @@ export async function saveFocusSessionRecord(
 }
 
 /**
+ * Split a study session across midnight so active duration is assigned
+ * accurately to each local calendar date without duplicating the session in history.
+ */
+export function splitSessionByLocalCalendarDays(
+  startTimestamp: number,
+  endTimestamp: number,
+  totalActiveSeconds: number
+): Record<string, number> {
+  if (totalActiveSeconds <= 0) return {};
+  const actualEnd = endTimestamp || (startTimestamp + totalActiveSeconds * 1000);
+  const startDate = new Date(startTimestamp);
+  const endDate = new Date(actualEnd);
+
+  const startDayStr = getLocalDateString(startDate);
+  const endDayStr = getLocalDateString(endDate);
+
+  if (startDayStr === endDayStr) {
+    return { [startDayStr]: totalActiveSeconds };
+  }
+
+  const totalSpanMs = Math.max(1000, actualEnd - startTimestamp);
+  const activeRatio = Math.min(1, totalActiveSeconds / (totalSpanMs / 1000));
+  const result: Record<string, number> = {};
+
+  let currentStart = startTimestamp;
+  while (currentStart < actualEnd) {
+    const d = new Date(currentStart);
+    const dayKey = getLocalDateString(d);
+
+    // Calculate start of next calendar day at midnight in local time
+    const nextMidnight = new Date(d.getFullYear(), d.getMonth(), d.getDate() + 1, 0, 0, 0, 0).getTime();
+    const currentEnd = Math.min(actualEnd, nextMidnight);
+
+    const sliceSpanSec = Math.max(0, (currentEnd - currentStart) / 1000);
+    const sliceActiveSec = Math.round(sliceSpanSec * activeRatio);
+
+    result[dayKey] = (result[dayKey] || 0) + sliceActiveSec;
+    currentStart = nextMidnight;
+  }
+
+  return result;
+}
+
+/**
  * Save a Study Session Record to Firebase at users/{uid}/studySessions/{sessionId}
- * Dual-write: Cloud Firestore users/{uid}/studySessions/{sessionId}
- * Mirror: Realtime Database users/{uid}/studySessions/{sessionId}
+ * Primary: Realtime Database users/{uid}/studySessions/{sessionId} (zero-latency, reliable)
+ * Mirror: Cloud Firestore users/{uid}/studySessions/{sessionId}
  */
 export async function saveStudySessionRecord(
   uid: string,
@@ -989,88 +1120,201 @@ export async function saveStudySessionRecord(
     if (v !== undefined) cleaned[k] = v;
   }
 
-  let firestoreSuccess = false;
-  try {
-    const docRef = doc(db, 'users', uid, 'studySessions', record.sessionId);
-    await setDoc(docRef, cleaned, { merge: true });
-    firestoreSuccess = true;
-    console.log(`[Firebase Firestore] Saved study session ${record.sessionId} at users/${uid}/studySessions`);
-  } catch (err) {
-    console.warn(`[Firebase Firestore] Failed to save study session ${record.sessionId}:`, err);
-  }
+  let rtdbSuccess = false;
 
-  // Realtime Database mirror under users/{uid}/studySessions/{sessionId}
+  // 1. Primary write to Realtime Database
   try {
     const rtdbTargetRef = rtdbRef(rtdb, `users/${uid}/studySessions/${record.sessionId}`);
     await rtdbSet(rtdbTargetRef, cleaned);
+    rtdbSuccess = true;
     console.log(`[Firebase RTDB] Saved study session ${record.sessionId} at users/${uid}/studySessions`);
   } catch (err) {
-    console.warn(`[Firebase RTDB] Failed to save study session ${record.sessionId}:`, err);
+    console.warn(`[Firebase RTDB Warning] Failed to save study session ${record.sessionId}:`, err);
   }
 
-  // Also maintain focusSessions record for compatibility
+  // 2. Non-blocking Cloud Firestore mirror
+  try {
+    const docRef = doc(db, 'users', uid, 'studySessions', record.sessionId);
+    setDoc(docRef, cleaned, { merge: true }).catch(err => {
+      console.warn(`[Firebase Firestore Mirror Notice] studySessions ${record.sessionId}:`, err?.message || err);
+    });
+  } catch {}
+
+  // 3. Clear active session in RTDB once session is completed/stopped
+  try {
+    const activeRef = rtdbRef(rtdb, `users/${uid}/activeStudySession`);
+    rtdbRemove(activeRef).catch(() => {});
+  } catch {}
+
+  // Also maintain focusSessions record for backwards compatibility
   saveFocusSessionRecord(uid, record).catch(() => {});
 
-  return firestoreSuccess;
+  return rtdbSuccess;
+}
+
+/**
+ * Persist currently active study session to allow recovery across tabs and devices
+ */
+export async function saveActiveStudySession(
+  uid: string,
+  sessionData: any
+): Promise<boolean> {
+  if (!uid) return false;
+  try {
+    const activeRef = rtdbRef(rtdb, `users/${uid}/activeStudySession`);
+    if (sessionData === null) {
+      await rtdbRemove(activeRef);
+    } else {
+      await rtdbSet(activeRef, sessionData);
+    }
+    return true;
+  } catch (err) {
+    console.warn('[Firebase RTDB] saveActiveStudySession notice:', err);
+    return false;
+  }
+}
+
+/**
+ * Retrieve saved active study session for UID to recover timer state
+ */
+export async function loadActiveStudySession(uid: string): Promise<any | null> {
+  if (!uid) return null;
+  try {
+    const activeRef = rtdbRef(rtdb, `users/${uid}/activeStudySession`);
+    const snap = await rtdbGet(activeRef);
+    if (snap.exists()) {
+      return snap.val();
+    }
+  } catch (err) {
+    console.warn('[Firebase RTDB] loadActiveStudySession notice:', err);
+  }
+  return null;
 }
 
 /**
  * Load all user study session records from users/{uid}/studySessions
+ * Merges RTDB and Firestore, deduplicates by sessionId, sorts by startTimestamp descending
  */
 export async function loadUserStudySessions(uid: string): Promise<FocusSessionRecord[]> {
   if (!uid) return [];
 
-  // 1. Try Cloud Firestore users/{uid}/studySessions
-  try {
-    const collRef = collection(db, 'users', uid, 'studySessions');
-    const q = query(collRef, orderBy('startTimestamp', 'desc'));
-    const snap = await getDocs(q);
-    if (!snap.empty) {
-      return snap.docs.map(d => d.data() as FocusSessionRecord);
-    }
-  } catch (fsErr) {
-    console.warn(`[Firebase Firestore] Query failed for studySessions UID: ${uid}:`, fsErr);
-  }
+  const sessionsMap: Record<string, FocusSessionRecord> = {};
 
-  // 2. Fallback to RTDB users/{uid}/studySessions
+  // 1. Primary: Realtime Database users/{uid}/studySessions
   try {
     const rtdbTargetRef = rtdbRef(rtdb, `users/${uid}/studySessions`);
     const snap = await rtdbGet(rtdbTargetRef);
     if (snap.exists()) {
       const val = snap.val();
       if (val && typeof val === 'object') {
-        const records = Object.values(val) as FocusSessionRecord[];
-        records.sort((a, b) => (b.startTimestamp || 0) - (a.startTimestamp || 0));
-        return records;
+        Object.values(val).forEach((rec: any) => {
+          if (rec && rec.sessionId) {
+            sessionsMap[rec.sessionId] = rec as FocusSessionRecord;
+          }
+        });
+        console.log(`[Firebase RTDB] Loaded ${Object.keys(sessionsMap).length} study sessions`);
       }
     }
   } catch (rtdbErr) {
-    console.warn(`[Firebase RTDB] Query failed for studySessions UID: ${uid}:`, rtdbErr);
+    console.warn(`[Firebase RTDB Read Warning] studySessions UID: ${uid}:`, rtdbErr);
   }
 
-  // 3. Fallback to focusSessions if studySessions collection is not yet populated
-  return loadUserFocusSessions(uid);
+  // 2. Secondary: Cloud Firestore users/{uid}/studySessions (merge missing records)
+  try {
+    const collRef = collection(db, 'users', uid, 'studySessions');
+    const q = query(collRef, orderBy('startTimestamp', 'desc'));
+    const snap = await getDocs(q);
+    if (!snap.empty) {
+      snap.docs.forEach(d => {
+        const rec = d.data() as FocusSessionRecord;
+        if (rec && rec.sessionId && !sessionsMap[rec.sessionId]) {
+          sessionsMap[rec.sessionId] = rec;
+        }
+      });
+      console.log(`[Firebase Firestore] Merged study sessions, total count: ${Object.keys(sessionsMap).length}`);
+    }
+  } catch (fsErr) {
+    console.warn(`[Firebase Firestore Read Notice] studySessions UID: ${uid}:`, fsErr);
+  }
+
+  // 3. Fallback to focusSessions if studySessions collection has no records
+  if (Object.keys(sessionsMap).length === 0) {
+    const focusRecs = await loadUserFocusSessions(uid);
+    focusRecs.forEach(rec => {
+      if (rec?.sessionId) sessionsMap[rec.sessionId] = rec;
+    });
+  }
+
+  const result = Object.values(sessionsMap);
+  result.sort((a, b) => (b.startTimestamp || 0) - (a.startTimestamp || 0));
+  return result;
+}
+
+/**
+ * Save user profile in Firebase (RTDB & Firestore)
+ */
+export async function saveUserProfile(
+  uid: string,
+  profile: { displayName?: string; email?: string }
+): Promise<boolean> {
+  if (!uid) return false;
+  try {
+    const rtdbProfileRef = rtdbRef(rtdb, `users/${uid}/profile/info`);
+    await rtdbSet(rtdbProfileRef, profile);
+    try {
+      const docRef = doc(db, 'users', uid, 'profile', 'info');
+      setDoc(docRef, profile, { merge: true }).catch(() => {});
+    } catch {}
+    return true;
+  } catch (err) {
+    console.warn('[Firebase RTDB] Failed to save user profile:', err);
+    return false;
+  }
 }
 
 /**
  * Get User Profile (Display Name & Email) from Firebase
  */
 export async function getUserProfile(uid: string): Promise<{ displayName?: string; email?: string } | null> {
-  if (!uid) return null;
+  if (!uid) return { displayName: 'BK NITHILESHVAR' };
+  
+  // 1. Try Realtime Database users/{uid}/profile/info
+  try {
+    const rtdbProfileRef = rtdbRef(rtdb, `users/${uid}/profile/info`);
+    const snap = await rtdbGet(rtdbProfileRef);
+    if (snap.exists()) {
+      const val = snap.val();
+      if (val && typeof val === 'object') {
+        return {
+          displayName: val.displayName || 'BK NITHILESHVAR',
+          email: val.email || undefined,
+        };
+      }
+    }
+  } catch {}
+
+  // 2. Try auth currentUser
   if (auth.currentUser && auth.currentUser.uid === uid) {
     return {
-      displayName: auth.currentUser.displayName || undefined,
+      displayName: auth.currentUser.displayName || 'BK NITHILESHVAR',
       email: auth.currentUser.email || undefined,
     };
   }
+
+  // 3. Try Cloud Firestore users/{uid}/profile/info
   try {
     const docRef = doc(db, 'users', uid, 'profile', 'info');
     const snap = await getDoc(docRef);
     if (snap.exists()) {
-      return snap.data() as any;
+      const data = snap.data() as any;
+      return {
+        displayName: data?.displayName || 'BK NITHILESHVAR',
+        email: data?.email || undefined,
+      };
     }
   } catch {}
-  return null;
+
+  return { displayName: 'BK NITHILESHVAR' };
 }
 
 /**
