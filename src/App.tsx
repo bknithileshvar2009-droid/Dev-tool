@@ -1185,15 +1185,11 @@ export default function App() {
   const [dailySummarySearch, setDailySummarySearch] = useState('');
   const [registerSuccessPulse, setRegisterSuccessPulse] = useState(false);
 
-  // Screen responsiveness detector (Laptop vs Mobile)
-  const [isMobileScreen, setIsMobileScreen] = useState(() => typeof window !== 'undefined' && window.innerWidth < 768);
   const [viewportWidth, setViewportWidth] = useState(() => typeof window !== 'undefined' ? window.innerWidth : 1280);
 
   useEffect(() => {
     const handleResize = () => {
-      const w = window.innerWidth;
-      setViewportWidth(w);
-      setIsMobileScreen(w < 768);
+      setViewportWidth(window.innerWidth);
     };
     window.addEventListener('resize', handleResize);
     return () => window.removeEventListener('resize', handleResize);
@@ -3177,6 +3173,7 @@ export default function App() {
         (document as any).msFullscreenElement
       );
       if (!isCurrentlyFullscreen) {
+        applyLaptopFitLayout();
         const docEl = document.documentElement as any;
         if (docEl.requestFullscreen) {
           await docEl.requestFullscreen();
@@ -4743,9 +4740,7 @@ export default function App() {
       id="app"
       onContextMenu={handleContextMenu}
       onClick={handleDashboardClick}
-      className={`relative w-screen h-screen min-h-screen h-[100dvh] ${
-        isMobileScreen ? 'overflow-y-auto overflow-x-hidden' : 'overflow-hidden'
-      } select-none bg-[#030407] text-slate-100 ${
+      className={`relative w-screen h-screen min-h-screen h-[100dvh] overflow-hidden select-none bg-[#030407] text-slate-100 ${
         isFullscreen ? 'is-fullscreen' : ''
       } ${
         isPlacementModeActive ? 'cursor-crosshair' : !config.optionalFeatures.widgetCustomization ? 'cursor-default' : ''
@@ -4924,11 +4919,11 @@ export default function App() {
             config.optionalFeatures.widgetCustomization ? 'cursor-grab active:cursor-grabbing' : 'cursor-default'
           } ${getWidgetMaterialClass(config.motivation.glassBg)} ${focusedWidget === 'motivation' ? 'widget-focused' : ''} ${radiusClass}`}
           style={{
-            width: isMobileScreen ? Math.min(viewportWidth - 24, config.motivation.width || 480) : (config.motivation.width || 480),
-            height: isMobileScreen ? 'auto' : (config.motivation.height || 165),
-            minHeight: isMobileScreen ? 140 : 155,
-            left: isMobileScreen ? 12 : (config.motivation.x ?? 30),
-            top: isMobileScreen ? (config.motivation.y ?? 24) : (config.motivation.y ?? 24),
+            width: (config.motivation.width || 480),
+            height: (config.motivation.height || 165),
+            minHeight: 155,
+            left: (config.motivation.x ?? 30),
+            top: (config.motivation.y ?? 24),
             ...getWidgetComputedStyle('motivation'),
           }}
         >
@@ -9791,13 +9786,6 @@ export default function App() {
                   className="py-1.5 px-2 rounded-lg bg-cyan-500/20 hover:bg-cyan-500/30 text-cyan-200 border border-cyan-400/30 text-[10px] font-semibold transition cursor-pointer flex items-center justify-center gap-1"
                 >
                   💻 Fit for Laptop
-                </button>
-                <button
-                  type="button"
-                  onClick={applyMobileFitLayout}
-                  className="py-1.5 px-2 rounded-lg bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-200 border border-emerald-400/30 text-[10px] font-semibold transition cursor-pointer flex items-center justify-center gap-1"
-                >
-                  📱 Fit for Mobile
                 </button>
               </div>
             </div>

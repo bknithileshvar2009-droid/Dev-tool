@@ -389,17 +389,17 @@ export default function StudyTimeTracker({
   };
 
   return (
-    <div className="w-full h-full p-4 sm:p-5 flex flex-col justify-between text-white select-none relative overflow-hidden">
-      {/* 3D Glassmorphism Background Layer */}
-      <div className="absolute inset-0 bg-gradient-to-br from-white/10 to-transparent backdrop-blur-2xl rounded-3xl border border-white/20 shadow-[0_20px_50px_rgba(0,0,0,0.5),inset_0_1px_1px_rgba(255,255,255,0.2)]"></div>
+    <div className="w-full h-full p-4 sm:p-5 flex flex-col justify-between text-white select-none relative overflow-hidden bg-black/80">
+      {/* Iron Man Holographic Effects */}
+      <div className="absolute inset-0 border-2 border-cyan-500/30 rounded-3xl pointer-events-none"></div>
+      <div className="absolute inset-0 bg-[linear-gradient(rgba(18,16,16,0)_50%,rgba(0,0,0,0.25)_50%),linear-gradient(90deg,rgba(255,0,0,0.06),rgba(0,255,255,0.06),rgba(0,0,255,0.06))] z-0 bg-[length:100%_2px,3px_100%] pointer-events-none"></div>
+      <div className="absolute top-0 left-0 w-full h-1 bg-cyan-500/50 shadow-[0_0_10px_#06b6d4]"></div>
+      <div className="absolute bottom-0 left-0 w-full h-1 bg-cyan-500/50 shadow-[0_0_10px_#06b6d4]"></div>
       
-      {/* Subtle Depth-giving inner highlight */}
-      <div className="absolute inset-x-2 top-1 h-[1px] bg-gradient-to-r from-transparent via-white/30 to-transparent"></div>
-
-      {/* Main Content (relative to stay above backdrop) */}
+      {/* Main Content */}
       <div className="relative z-10 flex flex-col h-full justify-between">
         {/* Top Header Bar */}
-        <div className="flex items-center justify-between pb-2 border-b border-white/10 no-drag">
+        <div className="flex items-center justify-between pb-2 border-b border-cyan-500/20 no-drag">
           <div className="flex items-center gap-2">
             <span
               className={`w-2 h-2 rounded-full ${
@@ -410,9 +410,9 @@ export default function StudyTimeTracker({
                   : 'bg-cyan-400'
               }`}
             />
-            <span className="text-[11px] font-black uppercase tracking-wider text-cyan-300 flex items-center gap-1.5 font-mono">
+            <span className="text-[11px] font-black uppercase tracking-wider text-cyan-300 flex items-center gap-1.5 font-mono drop-shadow-[0_0_5px_#06b6d4]">
               <Flame className="w-3.5 h-3.5 text-cyan-400" />
-              <span>Study Time Tracker</span>
+              <span>HOLO_TIMER_V1</span>
             </span>
           </div>
 
@@ -420,10 +420,10 @@ export default function StudyTimeTracker({
             <button
               type="button"
               onClick={onOpenHistory}
-              className="text-[10px] text-cyan-300 hover:text-cyan-200 underline cursor-pointer font-mono flex items-center gap-1 transition"
+              className="text-[10px] text-cyan-300 hover:text-cyan-200 underline cursor-pointer font-mono flex items-center gap-1 transition drop-shadow-[0_0_5px_#06b6d4]"
             >
               <BookOpen className="w-3 h-3" />
-              <span>History & PDF →</span>
+              <span>History →</span>
             </button>
           )}
         </div>
@@ -435,43 +435,34 @@ export default function StudyTimeTracker({
             <span>Today's Total:</span>
             <strong className="text-amber-300 font-bold">{todayStats.formatted}</strong>
           </div>
-          <div className="text-[10px] text-white/50 font-mono">
-            <span>{todayStats.count} session{todayStats.count !== 1 ? 's' : ''} today</span>
-          </div>
         </div>
 
         {/* Main Digits Display (HH:MM:SS) */}
         <div className="py-2.5 text-center space-y-1 no-drag">
-          <div className="text-4xl sm:text-5xl font-black font-mono tracking-tight text-white drop-shadow-[0_0_10px_rgba(255,255,255,0.3)] tabular-digits">
+          <div className="text-4xl sm:text-5xl font-black font-mono tracking-tight text-white drop-shadow-[0_0_15px_#06b6d4] tabular-digits">
             {formatHHMMSS(elapsedSeconds)}
           </div>
-          <div className="text-[10px] font-mono text-cyan-300/80 uppercase tracking-widest">
+          <div className="text-[10px] font-mono text-cyan-300/80 uppercase tracking-widest animate-pulse">
             {sessionState === 'running'
-              ? '● ACCUMULATING STUDY TIME'
+              ? '● HOLOGRAPHIC FOCUS LINK'
               : sessionState === 'paused'
-              ? '❚❚ SESSION PAUSED (TIME FROZEN)'
+              ? '❚❚ SESSION FROZEN'
               : sessionState === 'completed'
-              ? '✓ SESSION FINALIZED & SAVED'
-              : 'READY TO START (UNLIMITED SESSIONS)'}
+              ? '✓ SESSION RECORDED'
+              : 'SYSTEM READY'}
           </div>
-          {syncNotice && (
-            <div className="text-[10px] font-mono text-emerald-400 animate-pulse">
-              {syncNotice}
-            </div>
-          )}
         </div>
 
-        {/* Action Controls: 4 Explicit Buttons */}
-        <div className="pt-2 border-t border-white/10 flex items-center justify-center gap-2 no-drag">
+        {/* Action Controls */}
+        <div className="pt-2 border-t border-cyan-500/20 flex items-center justify-center gap-2 no-drag">
           {sessionState === 'idle' && (
             <button
               type="button"
               onClick={handleStartStudy}
-              className="flex-1 py-2.5 px-4 rounded-xl bg-emerald-500/80 hover:bg-emerald-400 text-black font-black text-xs tracking-wider transition cursor-pointer flex items-center justify-center gap-2 shadow-[0_5px_15px_rgba(16,185,129,0.3),inset_0_2px_1px_rgba(255,255,255,0.2)] active:scale-95"
-              title="Start a new general study session immediately"
+              className="flex-1 py-2.5 px-4 rounded-xl bg-emerald-500/20 hover:bg-emerald-500/40 text-emerald-300 border border-emerald-500/50 font-black text-xs tracking-wider transition cursor-pointer flex items-center justify-center gap-2 shadow-[0_0_15px_rgba(16,185,129,0.3)] active:scale-95"
             >
               <Play className="w-4 h-4 fill-current" />
-              <span>START STUDY</span>
+              <span>INITIATE</span>
             </button>
           )}
 
@@ -480,8 +471,7 @@ export default function StudyTimeTracker({
               <button
                 type="button"
                 onClick={handlePauseStudy}
-                className="flex-1 py-2.5 px-3 rounded-xl bg-amber-500/20 hover:bg-amber-500/35 text-amber-300 font-bold text-xs border border-amber-500/40 transition cursor-pointer flex items-center justify-center gap-1.5 active:scale-95"
-                title="Pause study timer (freeze accumulated duration)"
+                className="flex-1 py-2.5 px-3 rounded-xl bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 font-bold text-xs border border-amber-500/30 transition cursor-pointer flex items-center justify-center gap-1.5 active:scale-95"
               >
                 <Pause className="w-3.5 h-3.5 fill-current" />
                 <span>PAUSE</span>
@@ -490,11 +480,10 @@ export default function StudyTimeTracker({
                 type="button"
                 onClick={handleStopAndSave}
                 disabled={isSaving}
-                className="flex-1 py-2.5 px-3 rounded-xl bg-rose-500/80 hover:bg-rose-400 text-white font-black text-xs transition cursor-pointer flex items-center justify-center gap-1.5 shadow-[0_5px_15px_rgba(244,63,94,0.3),inset_0_2px_1px_rgba(255,255,255,0.2)] active:scale-95 disabled:opacity-50"
-                title="Stop timer and save session to Firebase"
+                className="flex-1 py-2.5 px-3 rounded-xl bg-rose-500/20 hover:bg-rose-500/40 text-rose-300 font-black text-xs border border-rose-500/50 transition cursor-pointer flex items-center justify-center gap-1.5 shadow-[0_0_15px_rgba(244,63,94,0.3)] active:scale-95 disabled:opacity-50"
               >
                 <Square className="w-3.5 h-3.5 fill-current" />
-                <span>{isSaving ? 'SAVING...' : 'STOP AND SAVE'}</span>
+                <span>{isSaving ? 'SYNCING...' : 'TERMINATE'}</span>
               </button>
             </>
           )}
@@ -504,8 +493,7 @@ export default function StudyTimeTracker({
               <button
                 type="button"
                 onClick={handleResumeStudy}
-                className="flex-1 py-2.5 px-3 rounded-xl bg-emerald-500/80 hover:bg-emerald-400 text-black font-black text-xs transition cursor-pointer flex items-center justify-center gap-1.5 shadow-[0_5px_15px_rgba(16,185,129,0.3),inset_0_2px_1px_rgba(255,255,255,0.2)] active:scale-95"
-                title="Resume same study session without counting pause time"
+                className="flex-1 py-2.5 px-3 rounded-xl bg-emerald-500/20 hover:bg-emerald-500/40 text-emerald-300 border border-emerald-500/50 font-black text-xs transition cursor-pointer flex items-center justify-center gap-1.5 active:scale-95"
               >
                 <Play className="w-3.5 h-3.5 fill-current" />
                 <span>RESUME</span>
@@ -514,11 +502,10 @@ export default function StudyTimeTracker({
                 type="button"
                 onClick={handleStopAndSave}
                 disabled={isSaving}
-                className="flex-1 py-2.5 px-3 rounded-xl bg-rose-500/80 hover:bg-rose-400 text-white font-black text-xs transition cursor-pointer flex items-center justify-center gap-1.5 shadow-[0_5px_15px_rgba(244,63,94,0.3),inset_0_2px_1px_rgba(255,255,255,0.2)] active:scale-95 disabled:opacity-50"
-                title="Stop and save session to Firebase"
+                className="flex-1 py-2.5 px-3 rounded-xl bg-rose-500/20 hover:bg-rose-500/40 text-rose-300 font-black text-xs border border-rose-500/50 transition cursor-pointer flex items-center justify-center gap-1.5 shadow-[0_0_15px_rgba(244,63,94,0.3)] active:scale-95 disabled:opacity-50"
               >
                 <Square className="w-3.5 h-3.5 fill-current" />
-                <span>{isSaving ? 'SAVING...' : 'STOP AND SAVE'}</span>
+                <span>{isSaving ? 'SYNCING...' : 'TERMINATE'}</span>
               </button>
             </>
           )}
@@ -526,7 +513,7 @@ export default function StudyTimeTracker({
           {sessionState === 'completed' && (
             <div className="w-full py-2 text-center text-xs text-emerald-400 font-bold flex items-center justify-center gap-1.5 animate-pulse">
               <CheckCircle2 className="w-4 h-4" />
-              <span>Study Session Finalized & Recorded!</span>
+              <span>SESSION RECORDED</span>
             </div>
           )}
         </div>

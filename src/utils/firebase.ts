@@ -27,6 +27,7 @@ import {
   serverTimestamp,
   query,
   orderBy,
+  persistentLocalCache,
 } from 'firebase/firestore';
 import firebaseConfig from '../../firebase-applet-config.json';
 
@@ -52,9 +53,9 @@ const customDbId = (configAny.firestoreDatabaseId &&
   ? configAny.firestoreDatabaseId
   : undefined;
 
-// Initialize Firestore with experimentalForceLongPolling to avoid WebChannel connection timeouts
+// Initialize Firestore with persistentLocalCache for offline support
 export const db = initializeFirestore(app, {
-  experimentalForceLongPolling: true,
+  localCache: persistentLocalCache(),
 }, customDbId);
 
 // Initialize Firebase Auth
