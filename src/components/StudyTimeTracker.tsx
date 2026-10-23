@@ -24,6 +24,7 @@ import {
   loadActiveStudySession,
   splitSessionByLocalCalendarDays,
   getLocalDateString,
+  SINGLE_USER_MASTER_UID,
 } from '../utils/firebase';
 
 interface StudyTimeTrackerProps {
@@ -45,6 +46,7 @@ export default function StudyTimeTracker({
   onSessionCompleted,
   onOpenHistory,
 }: StudyTimeTrackerProps) {
+  const activeUid = uid || SINGLE_USER_MASTER_UID;
   const [sessionState, setSessionState] = useState<'idle' | 'running' | 'paused' | 'completed'>('idle');
   const [elapsedSeconds, setElapsedSeconds] = useState<number>(0);
   const [sessionId, setSessionId] = useState<string>('');
@@ -127,9 +129,9 @@ export default function StudyTimeTracker({
         }
       }
 
-      // If nothing in localStorage and UID exists, check Firebase RTDB for active session
-      if (uid) {
-        loadActiveStudySession(uid).then(remoteActive => {
+      // Check Firebase RTDB for active session
+      if (activeUid) {
+        loadActiveStudySession(activeUid).then(remoteActive => {
           if (remoteActive && remoteActive.sessionId && (remoteActive.status === 'running' || remoteActive.status === 'paused')) {
             const now = Date.now();
             const start = remoteActive.startTimestamp || now;
@@ -158,7 +160,7 @@ export default function StudyTimeTracker({
     } finally {
       isRecoveringRef.current = false;
     }
-  }, [uid]);
+  }, [activeUid]);
 
   // 3. PERSISTENCE: Save active state to localStorage & Firebase RTDB whenever running or paused
   useEffect(() => {
@@ -168,8 +170,8 @@ export default function StudyTimeTracker({
       try {
         localStorage.removeItem(ACTIVE_STORAGE_KEY);
       } catch {}
-      if (uid) {
-        saveActiveStudySession(uid, null).catch(() => {});
+      if (activeUid) {
+        saveActiveStudySession(activeUid, null).catch(() => {});
       }
     } else if (sessionState === 'running' || sessionState === 'paused') {
       const activePayload = {
@@ -180,16 +182,16 @@ export default function StudyTimeTracker({
         pauseStartTimestamp: sessionState === 'paused' ? pauseStartTimestamp : null,
         notes: optionalNotes,
         updatedAt: Date.now(),
-        userId: uid || 'guest',
+        userId: activeUid,
       };
       try {
         localStorage.setItem(ACTIVE_STORAGE_KEY, JSON.stringify(activePayload));
       } catch {}
-      if (uid) {
-        saveActiveStudySession(uid, activePayload).catch(() => {});
+      if (activeUid) {
+        saveActiveStudySession(activeUid, activePayload).catch(() => {});
       }
     }
-  }, [sessionState, sessionId, startTimestamp, accumulatedPausedMs, pauseStartTimestamp, optionalNotes, uid]);
+  }, [sessionState, sessionId, startTimestamp, accumulatedPausedMs, pauseStartTimestamp, optionalNotes, activeUid]);
 
   // 4. ACCURATE DRIFT-FREE INTERVAL & BACKGROUND TAB HANDLING
   useEffect(() => {
@@ -405,7 +407,7 @@ export default function StudyTimeTracker({
 
     const record: FocusSessionRecord = {
       sessionId: finalSessionId,
-      userId: uid || 'guest',
+      userId: activeUid,
       subject: activeSubject || 'General Study',
       task: activeTask || 'General Study Session',
       goal: optionalNotes.trim() || undefined,
@@ -428,22 +430,18 @@ export default function StudyTimeTracker({
     } catch {}
 
     // 2. Persist to Firebase Realtime Database and Cloud Firestore
-    if (uid) {
-      try {
-        setSyncNotice('Saving to Firebase...');
-        const success = await saveStudySessionRecord(uid, record);
-        if (success) {
-          setSyncNotice('Saved to Firebase');
-          console.log(`[StudyTimer] Session ${finalSessionId} permanently saved to users/${uid}/studySessions`);
-        } else {
-          setSyncNotice('Saved locally (offline mode)');
-        }
-      } catch (err) {
-        console.warn('[StudyTimer] Save error, retained locally:', err);
-        setSyncNotice('Saved locally (network pending)');
+    try {
+      setSyncNotice('Saving to Firebase...');
+      const success = await saveStudySessionRecord(activeUid, record);
+      if (success) {
+        setSyncNotice('Saved to Firebase');
+        console.log(`[StudyTimer] Session ${finalSessionId} permanently saved to users/${activeUid}/studySessions`);
+      } else {
+        setSyncNotice('Saved locally (offline mode)');
       }
-    } else {
-      setSyncNotice('Saved locally');
+    } catch (err) {
+      console.warn('[StudyTimer] Save error, retained locally:', err);
+      setSyncNotice('Saved locally (network pending)');
     }
 
     if (onSessionCompleted) {

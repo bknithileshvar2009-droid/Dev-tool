@@ -266,7 +266,7 @@ export async function handleRequestBreak(
     process.env.BREAK_APPROVAL_EMAIL ||
     body.recipientEmail ||
     authResult.email ||
-    'kmmbabu@gmail.com';
+    'nithileshvarbk@gmail.com';
 
   if (!configuredRecipient || !configuredRecipient.includes('@')) {
     return {
@@ -308,7 +308,7 @@ export async function handleRequestBreak(
   // 6. Send transactional email using Brevo
   const brevoApiKey = process.env.BREVO_API_KEY || '';
   const brevoFromEmail =
-    process.env.BREVO_FROM_EMAIL || process.env.BREAK_APPROVAL_EMAIL || 'kmmbabu@gmail.com';
+    process.env.BREVO_FROM_EMAIL || process.env.BREAK_APPROVAL_EMAIL || 'nithileshvarbk@gmail.com';
 
   const emailSubject = 'APESFLOW Focus Mode: 5-Minute Break Approval Code';
   const emailHtml = `

@@ -1166,5 +1166,12 @@ body.zen-mode .dashboard-widget {
               height 0.35s cubic-bezier(0.16, 1, 0.3, 1) !important;
 }
 
+@media print {
+  #floating-hud, .resize-handle, .drag-pill, #drawer-menu, .widget-action-btn, 
+  body > *:not(#root), #root > *:not([role="dialog"]), .HUD {
+    display: none !important;
+  }
+}
+
 
 

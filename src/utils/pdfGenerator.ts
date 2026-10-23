@@ -577,8 +577,7 @@ export function generateCombinedMultiDayReportPDF({
   if (autoPrint) {
     try {
       doc.autoPrint();
-      const blobUrl = doc.output("bloburl");
-      window.open(blobUrl, "_blank");
+      doc.save(`APESFLOW_Combined_Daily_Summaries_${dateRangeLabel.replace(/[^a-zA-Z0-9]/g, "_")}.pdf`);
     } catch {
       doc.save(`APESFLOW_Combined_Daily_Summaries_${dateRangeLabel.replace(/[^a-zA-Z0-9]/g, "_")}.pdf`);
     }

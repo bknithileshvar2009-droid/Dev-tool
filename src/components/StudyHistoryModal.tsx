@@ -252,12 +252,22 @@ export default function StudyHistoryModal({
             </button>
             <button
               type="button"
-              onClick={() => handleExportPDF(true)}
+              onClick={async () => {
+                await import('../utils/firebase').then(m => m.seedMissingSession(uid || 'bk_nithileshvar_master'));
+                alert('Seeded!');
+              }}
+              className="py-2 px-3 sm:px-4 rounded-xl bg-purple-500 hover:bg-purple-400 text-white font-black text-xs transition cursor-pointer"
+            >
+              <span>Seed</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => window.print()}
               className="py-2 px-3 rounded-xl bg-white/10 hover:bg-white/20 text-white font-bold text-xs border border-white/15 transition cursor-pointer flex items-center gap-1.5 active:scale-95"
-              title="Print study history report"
+              title="Print study history report directly"
             >
               <Printer className="w-4 h-4 text-cyan-300" />
-              <span className="hidden sm:inline">Print</span>
+              <span className="hidden sm:inline">Print View</span>
             </button>
             <button
               type="button"

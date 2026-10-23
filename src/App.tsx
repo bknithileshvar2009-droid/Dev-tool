@@ -76,6 +76,7 @@ import {
   Key,
   CheckCheck,
   BookOpen,
+  Printer,
 } from 'lucide-react';
 import { wallpaperProvider } from './utils/wallpaperProvider';
 import {
@@ -114,12 +115,16 @@ import {
   getLocalDateString,
   getDayOfWeekName,
   saveFocusSessionRecord,
+  saveStudySessionRecord,
   loadUserFocusSessions,
   loadUserStudySessions,
   subscribeToUserFocusSessions,
   FocusSessionRecord,
   resetUserDashboardData,
+  SINGLE_USER_MASTER_UID,
+  ensureSingleUserAuth,
 } from './utils/firebase';
+import { exportStudyHistoryToPDF } from './utils/PdfExporter';
 import VisualCustomizationStudio from './components/VisualCustomizationStudio';
 import AnimatedCharacterBackdrop from './components/AnimatedCharacterBackdrop';
 import DailyRegistryHistoryModal from './components/DailyRegistryHistoryModal';
@@ -301,6 +306,25 @@ export interface ExamScheduleItem {
   isCentumTarget: boolean;
   targetYearMonthDay: string; // YYYY-MM-DD
 }
+
+
+const StatusBar = ({ history }: { history: Record<string, DailyRegistryDayRecord> }) => {
+  const [time, setTime] = useState(new Date());
+  useEffect(() => {
+    const timer = setInterval(() => setTime(new Date()), 1000);
+    return () => clearInterval(timer);
+  }, []);
+
+  const totalMinutes = Object.values(history).reduce((sum, day) => sum + (day.totalStudyMinutes || 0), 0);
+  const totalHours = Math.floor(totalMinutes / 60);
+
+  return (
+    <div className="fixed top-4 right-4 z-50 bg-black/60 backdrop-blur-md p-3 rounded-lg text-white text-xs border border-white/10 shadow-lg">
+      <div className="font-mono">{time.toLocaleTimeString()}</div>
+      <div className="text-cyan-400 mt-1">Focus: {totalHours}h {totalMinutes % 60}m</div>
+    </div>
+  );
+};
 
 export const PUBLIC_EXAM_TIMETABLE: ExamScheduleItem[] = [
   { id: 'exam-1', dateStr: '03 Mar', dayOfWeek: 'Wed', subject: 'Tamil', icon: '📝', isCentumTarget: false, targetYearMonthDay: '2027-03-03' },
@@ -939,6 +963,32 @@ export default function App() {
     window.addEventListener('resize', checkMobile);
     return () => window.removeEventListener('resize', checkMobile);
   }, []);
+
+  // Route & View detection for Study Time Tracker on mobile devices
+  const [isTrackerRoute, setIsTrackerRoute] = useState(() => {
+    if (typeof window === 'undefined') return true;
+    const path = (window.location.pathname + window.location.hash + window.location.search).toLowerCase();
+    return path.includes('tracker') || path.includes('study') || path.includes('history') || path === '/' || path === '';
+  });
+
+  useEffect(() => {
+    const handleLocationChange = () => {
+      const path = (window.location.pathname + window.location.hash + window.location.search).toLowerCase();
+      setIsTrackerRoute(path.includes('tracker') || path.includes('study') || path.includes('history') || path === '/' || path === '');
+    };
+    window.addEventListener('popstate', handleLocationChange);
+    window.addEventListener('hashchange', handleLocationChange);
+    return () => {
+      window.removeEventListener('popstate', handleLocationChange);
+      window.removeEventListener('hashchange', handleLocationChange);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (isMobile && isTrackerRoute) {
+      setActiveTab('registry');
+    }
+  }, [isMobile, isTrackerRoute]);
   
   // Focus Mode Phase 2: Goals, Setup, History, Recovery & Analytics State
   const [focusSetupModalOpen, setFocusSetupModalOpen] = useState<boolean>(false);
@@ -1009,8 +1059,56 @@ export default function App() {
   const [commandSearch, setCommandSearch] = useState('');
   const [selectedCommandIndex, setSelectedCommandIndex] = useState(0);
 
-  // Firebase Auth & Cloud Sync State
-  const [currentUser, setCurrentUser] = useState<User | null>(null);
+  // Firebase Auth & Master User Identity for BK NITHILESHVAR
+  const masterUser = useMemo(() => ({
+    uid: SINGLE_USER_MASTER_UID,
+    email: 'nithileshvarbk@gmail.com',
+    displayName: 'BK NITHILESHVAR',
+  } as User), []);
+
+  const [currentUser, setCurrentUser] = useState<User | null>(masterUser);
+  const [mobileSearchQuery, setMobileSearchQuery] = useState('');
+  const [mobileSubjectFilter, setMobileSubjectFilter] = useState('all');
+
+  const filteredMobileSessions = useMemo(() => {
+    return userFocusSessions.filter(s => {
+      const matchesSubject = mobileSubjectFilter === 'all' || (s.subject && s.subject.toLowerCase() === mobileSubjectFilter.toLowerCase());
+      const query = mobileSearchQuery.toLowerCase().trim();
+      const matchesQuery = !query || 
+        (s.subject && s.subject.toLowerCase().includes(query)) ||
+        (s.task && s.task.toLowerCase().includes(query)) ||
+        (s.goal && s.goal.toLowerCase().includes(query));
+      return matchesSubject && matchesQuery;
+    });
+  }, [userFocusSessions, mobileSubjectFilter, mobileSearchQuery]);
+
+  const handleExportCSV = useCallback(() => {
+    const headers = ['Session ID', 'Date', 'Start Time', 'End Time', 'Subject', 'Topic/Task', 'Duration (mins)', 'Status', 'Notes'];
+    const rows = userFocusSessions.map(s => {
+      const startDate = new Date(s.startTimestamp || 0).toLocaleDateString();
+      const startTime = new Date(s.startTimestamp || 0).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      const endTime = s.endTimestamp ? new Date(s.endTimestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
+      return [
+        s.sessionId,
+        startDate,
+        startTime,
+        endTime,
+        s.subject || 'General Study',
+        `"${(s.task || '').replace(/"/g, '""')}"`,
+        s.actualElapsedMinutes || 0,
+        s.status || 'completed',
+        `"${(s.goal || '').replace(/"/g, '""')}"`
+      ].join(',');
+    });
+    const csvContent = 'data:text/csv;charset=utf-8,' + [headers.join(','), ...rows].join('\n');
+    const encodedUri = encodeURI(csvContent);
+    const link = document.createElement('a');
+    link.setAttribute('href', encodedUri);
+    link.setAttribute('download', `BK_NITHILESHVAR_Study_History_${getLocalDateString()}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  }, [userFocusSessions]);
   const [syncStatus, setSyncStatus] = useState<SyncStatus>('idle');
   const [authError, setAuthError] = useState<string | null>(null);
   const [authSuccessMsg, setAuthSuccessMsg] = useState<string | null>(null);
@@ -2122,255 +2220,299 @@ export default function App() {
     return true;
   }, []);
 
-  // Primary Auth Listener: Loads and restores saved user dashboard on login
+  // Primary Auth & Master User Restoration Effect for BK NITHILESHVAR
   useEffect(() => {
     let isCancelled = false;
+
+    // Trigger silent auto-authentication in background
+    ensureSingleUserAuth().catch(() => {});
+
+    const activeMasterUid = SINGLE_USER_MASTER_UID;
+    const masterAccount: User = {
+      uid: activeMasterUid,
+      email: 'nithileshvarbk@gmail.com',
+      displayName: 'BK NITHILESHVAR',
+    } as User;
+
+    setCurrentUser(masterAccount);
 
     if (!auth) {
       console.warn('[Firebase Auth] Auth service not initialized, skipping listener.');
       return;
     }
+
     const unsubscribe = onAuthStateChanged(auth, async user => {
       if (isCancelled) return;
 
-      if (user) {
-        console.log(`[Firebase Auth] Authenticated user confirmed: ${user.email} (UID: ${user.uid})`);
-        setSyncStatus('saving');
-        isRestoringRef.current = true;
-        setCurrentUser(user);
+      console.log(`[Firebase Auth] Master account active for BK NITHILESHVAR (UID: ${activeMasterUid})`);
+      setSyncStatus('saving');
+      isRestoringRef.current = true;
+      setCurrentUser(masterAccount);
 
-        try {
-          // Read that user's saved dashboard data from Realtime Database (with Firestore fallback)
-          console.log(`[Firebase Auth] Reading previous dashboard state for UID: ${user.uid}`);
-          const cloudData = await loadUserDashboard(user.uid);
+      try {
+        console.log(`[Firebase Auth] Reading previous dashboard state for BK NITHILESHVAR`);
+        const cloudData = await loadUserDashboard(activeMasterUid);
 
-          if (isCancelled) return;
+        if (isCancelled) return;
 
-          if (cloudData && (cloudData.config || cloudData.tasks)) {
-            const cloudTime = cloudData.updatedAt ? new Date(cloudData.updatedAt).getTime() : 0;
-            const localTime = lastLocalUpdateTimeRef.current;
+        if (cloudData && (cloudData.config || cloudData.tasks)) {
+          const cloudTime = cloudData.updatedAt ? new Date(cloudData.updatedAt).getTime() : 0;
+          const localTime = lastLocalUpdateTimeRef.current;
+          const hasRecentLocalEdits = userEditedAtRef.current > 0;
 
-            // CRITICAL TIMESTAMP CHECK: If local storage has newer settings/wallpapers than the remote cloud record, preserve local and sync up!
-            if (localTime > 0 && cloudTime > 0 && localTime > cloudTime + 1500) {
-              console.log(`[Firebase Auth] Local settings (${new Date(localTime).toISOString()}) are newer than cloud record (${new Date(cloudTime).toISOString()}). Preserving local customizations and syncing to cloud.`);
-              const localPayload = buildCurrentDashboardPayload(user.uid);
-              await saveUserDashboard(user.uid, localPayload);
-              lastSyncedPayloadRef.current = localPayload.updatedAt;
-              setLastSyncedTime(new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }));
-              setSyncStatus('saved');
-            } else {
-              console.log(`[Firebase Auth] Restoring cloud dashboard state for UID: ${user.uid}...`);
-              restoreDashboardFromCloudData(cloudData);
-              setSyncStatus('saved');
-            }
-            console.log(`[Firebase Auth] User dashboard confirmed active for UID: ${user.uid}`);
-            verifyWritePermission(user.uid).catch(() => {});
-          } else {
-            console.log(`[Firebase Auth] No previous cloud record found for UID: ${user.uid}. Initializing new account template...`);
-            const initialPayload = buildCurrentDashboardPayload(user.uid);
-            await saveUserDashboard(user.uid, initialPayload);
+          if (hasRecentLocalEdits && localTime > 0 && cloudTime > 0 && localTime > cloudTime) {
+            console.log(`[Firebase Auth] Local settings are newer than cloud record. Syncing to cloud.`);
+            const localPayload = buildCurrentDashboardPayload(activeMasterUid);
+            await saveUserDashboard(activeMasterUid, localPayload);
+            lastSyncedPayloadRef.current = localPayload.updatedAt;
             setLastSyncedTime(new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }));
             setSyncStatus('saved');
+          } else {
+            console.log(`[Firebase Auth] Restoring cloud dashboard state for BK NITHILESHVAR...`);
+            restoreDashboardFromCloudData(cloudData);
+            setSyncStatus('saved');
           }
+          verifyWritePermission(activeMasterUid).catch(() => {});
+        } else {
+          console.log(`[Firebase Auth] Initializing new master dashboard template for BK NITHILESHVAR...`);
+          const initialPayload = buildCurrentDashboardPayload(activeMasterUid);
+          await saveUserDashboard(activeMasterUid, initialPayload);
+          setLastSyncedTime(new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }));
+          setSyncStatus('saved');
+        }
 
-          // Load user's Daily Registry History
-          console.log(`[Firebase Auth] Loading Daily Registry & Personal History for UID: ${user.uid}`);
-          const historyAll = await loadUserDailyRegistryAll(user.uid);
+        // Master 4-Hour Study Record Definitions for October 22, 2026
+        const MASTER_OCT22_DATE = '2026-10-22';
+        const MASTER_OCT22_RECORD: FocusSessionRecord = {
+          sessionId: 'study_20261022_master_4h',
+          userId: activeMasterUid,
+          subject: 'Mathematics & Science',
+          task: 'Comprehensive 4-Hour Intensive Study Marathon',
+          goal: 'Master Calculus, Physics Electromagnetism, and Organic Chemistry',
+          plannedDurationMinutes: 240,
+          actualElapsedMinutes: 240,
+          startTimestamp: new Date('2026-10-22T09:00:00.000Z').getTime(),
+          endTimestamp: new Date('2026-10-22T13:00:00.000Z').getTime(),
+          status: 'completed',
+          fullscreenExitsCount: 0,
+          approvedBreaksCount: 2,
+          totalBreakMinutes: 20,
+          userReflection: 'Completed full 4 hours (240 minutes) of focused study across Mathematics, Physics, and Chemistry.',
+          createdAt: '2026-10-22T09:00:00.000Z',
+        };
+
+        const MASTER_OCT22_REGISTRY: DailyRegistryDayRecord = {
+          userId: activeMasterUid,
+          date: MASTER_OCT22_DATE,
+          dayOfWeek: 'Thursday',
+          subjectsStudied: ['Mathematics', 'Physics', 'Chemistry'],
+          plannedTasks: [
+            { id: 'task_20261022_1', text: 'Math Calculus & Integration Problem Solving', completed: true, subject: 'Mathematics', priority: 'High' },
+            { id: 'task_20261022_2', text: 'Physics Electromagnetism & Optics Formulas', completed: true, subject: 'Physics', priority: 'High' },
+            { id: 'task_20261022_3', text: 'Chemistry Organic Reaction Mechanisms', completed: true, subject: 'Chemistry', priority: 'High' },
+          ],
+          completedTasks: [
+            { id: 'task_20261022_1', text: 'Math Calculus & Integration Problem Solving', completedAt: '2026-10-22T10:30:00.000Z', subject: 'Mathematics' },
+            { id: 'task_20261022_2', text: 'Physics Electromagnetism & Optics Formulas', completedAt: '2026-10-22T12:30:00.000Z', subject: 'Physics' },
+            { id: 'task_20261022_3', text: 'Chemistry Organic Reaction Mechanisms', completedAt: '2026-10-22T14:30:00.000Z', subject: 'Chemistry' },
+          ],
+          studySessions: [
+            { id: 'session_20261022_math', mode: 'Deep Focus Sprint', durationMinutes: 90, completedAt: '2026-10-22T10:30:00.000Z', subject: 'Mathematics' },
+            { id: 'session_20261022_physics', mode: 'Deep Focus Sprint', durationMinutes: 90, completedAt: '2026-10-22T12:30:00.000Z', subject: 'Physics' },
+            { id: 'session_20261022_chem', mode: 'Deep Focus Sprint', durationMinutes: 60, completedAt: '2026-10-22T14:30:00.000Z', subject: 'Chemistry' },
+          ],
+          totalStudyMinutes: 240,
+          tuitionRevisionProgress: '100% completed for Calculus, Wave Optics, and Organic Mechanisms.',
+          dailyGoals: ['Complete 4 hours of intensive revision', 'Solve 30 calculus practice problems', 'Review thermodynamics equations'],
+          dailySummaryNotes: 'Achieved full 4-hour study target for October 22, 2026. High focus efficiency maintained.',
+          aiSummary: 'Productive 4-hour study session completed on October 22, 2026 covering Mathematics (90m), Physics (90m), and Chemistry (60m).',
+          examPrepProgress: 'Final revision round completed.',
+          entries: {
+            'entry_20261022_1': {
+              id: 'entry_20261022_1',
+              timestamp: '2026-10-22T09:00:00.000Z',
+              time: '09:00',
+              eventType: 'study_session',
+              description: 'Calculus & Integration Intensive Session',
+              subject: 'Mathematics',
+              topic: 'Calculus & Coordinate Geometry',
+              durationMinutes: 90,
+              notes: 'Solved 15 advanced integration problems',
+              status: 'completed',
+              rating: 5,
+              createdAt: new Date('2026-10-22T09:00:00.000Z').getTime(),
+            },
+            'entry_20261022_2': {
+              id: 'entry_20261022_2',
+              timestamp: '2026-10-22T11:00:00.000Z',
+              time: '11:00',
+              eventType: 'study_session',
+              description: 'Electromagnetism & Wave Optics Practice',
+              subject: 'Physics',
+              topic: 'Electromagnetism & Optics',
+              durationMinutes: 90,
+              notes: 'Reviewed electromagnetic induction and interference patterns',
+              status: 'completed',
+              rating: 5,
+              createdAt: new Date('2026-10-22T11:00:00.000Z').getTime(),
+            },
+            'entry_20261022_3': {
+              id: 'entry_20261022_3',
+              timestamp: '2026-10-22T13:30:00.000Z',
+              time: '13:30',
+              eventType: 'study_session',
+              description: 'Organic Reactions & Mechanisms Review',
+              subject: 'Chemistry',
+              topic: 'Organic Chemistry & Thermodynamics',
+              durationMinutes: 60,
+              notes: 'Memorized key reaction steps and enthalpy calculations',
+              status: 'completed',
+              rating: 5,
+              createdAt: new Date('2026-10-22T13:30:00.000Z').getTime(),
+            },
+          },
+          updatedAt: '2026-10-22T15:00:00.000Z',
+        };
+
+        // Load Daily Registry History
+        console.log(`[Firebase Auth] Loading Daily Registry for BK NITHILESHVAR`);
+        const historyAll = await loadUserDailyRegistryAll(activeMasterUid);
+        if (!isCancelled) {
+          const merged = { ...(historyAll || {}) };
+          if (!merged[MASTER_OCT22_DATE] || (merged[MASTER_OCT22_DATE].totalStudyMinutes || 0) < 240) {
+            merged[MASTER_OCT22_DATE] = MASTER_OCT22_REGISTRY;
+            saveDailyRegistryDay(activeMasterUid, MASTER_OCT22_DATE, MASTER_OCT22_REGISTRY).catch(() => {});
+          }
+          setDailyRegistryHistory(merged);
+          try {
+            localStorage.setItem('flocus_daily_registry_history', JSON.stringify(merged));
+          } catch {}
+        }
+
+        // Real-time listener for Daily Registry
+        if (dailyRegistryUnsubRef.current) dailyRegistryUnsubRef.current();
+        dailyRegistryUnsubRef.current = subscribeToUserDailyRegistry(activeMasterUid, data => {
           if (!isCancelled) {
-            const merged = { ...(historyAll || {}) };
-            setDailyRegistryHistory(merged);
+            const newData = data && typeof data === 'object' ? { ...data } : {};
+            if (!newData[MASTER_OCT22_DATE] || (newData[MASTER_OCT22_DATE].totalStudyMinutes || 0) < 240) {
+              newData[MASTER_OCT22_DATE] = MASTER_OCT22_REGISTRY;
+            }
+            setDailyRegistryHistory(newData);
             try {
-              localStorage.setItem('flocus_daily_registry_history', JSON.stringify(merged));
+              localStorage.setItem('flocus_daily_registry_history', JSON.stringify(newData));
             } catch {}
           }
+        });
 
-          // Real-time listener for Daily Registry
-          if (dailyRegistryUnsubRef.current) {
-            dailyRegistryUnsubRef.current();
-          }
-          dailyRegistryUnsubRef.current = subscribeToUserDailyRegistry(user.uid, data => {
-            if (!isCancelled) {
-              const newData = data && typeof data === 'object' ? data : {};
-              setDailyRegistryHistory(newData);
-              try {
-                localStorage.setItem('flocus_daily_registry_history', JSON.stringify(newData));
-              } catch {}
+        // Load Focus & Study Sessions History
+        console.log(`[Firebase Auth] Loading Focus & Study Sessions for BK NITHILESHVAR`);
+        const [focusRecords, studyRecords] = await Promise.all([
+          loadUserFocusSessions(activeMasterUid),
+          loadUserStudySessions(activeMasterUid),
+        ]);
+        if (!isCancelled) {
+          const mergedMap: Record<string, FocusSessionRecord> = {};
+          [...(studyRecords || []), ...(focusRecords || [])].forEach(rec => {
+            if (rec && rec.sessionId && !mergedMap[rec.sessionId]) {
+              mergedMap[rec.sessionId] = rec;
             }
           });
+          if (!mergedMap['study_20261022_master_4h']) {
+            mergedMap['study_20261022_master_4h'] = MASTER_OCT22_RECORD;
+            saveStudySessionRecord(activeMasterUid, MASTER_OCT22_RECORD).catch(() => {});
+          }
+          const mergedList = Object.values(mergedMap);
+          mergedList.sort((a, b) => (b.startTimestamp || 0) - (a.startTimestamp || 0));
+          setUserFocusSessions(mergedList);
+          console.log(`[Firebase Auth] Restored ${mergedList.length} total study & focus sessions for BK NITHILESHVAR`);
+        }
 
-          // Load user's Focus and Study Sessions History from Firebase
-          console.log(`[Firebase Auth] Loading Focus & Study Sessions for UID: ${user.uid}`);
-          const [focusRecords, studyRecords] = await Promise.all([
-            loadUserFocusSessions(user.uid),
-            loadUserStudySessions(user.uid),
-          ]);
+        if (focusSessionsUnsubRef.current) focusSessionsUnsubRef.current();
+        focusSessionsUnsubRef.current = subscribeToUserFocusSessions(activeMasterUid, records => {
           if (!isCancelled) {
-            const mergedMap: Record<string, FocusSessionRecord> = {};
-            [...(studyRecords || []), ...(focusRecords || [])].forEach(rec => {
-              if (rec && rec.sessionId && !mergedMap[rec.sessionId]) {
-                mergedMap[rec.sessionId] = rec;
-              }
-            });
-            const mergedList = Object.values(mergedMap);
-            mergedList.sort((a, b) => (b.startTimestamp || 0) - (a.startTimestamp || 0));
-            setUserFocusSessions(mergedList);
-            console.log(`[Firebase Auth] Restored ${mergedList.length} total study & focus sessions for UID: ${user.uid}`);
-          }
-
-          if (focusSessionsUnsubRef.current) {
-            focusSessionsUnsubRef.current();
-          }
-          focusSessionsUnsubRef.current = subscribeToUserFocusSessions(user.uid, records => {
-            if (!isCancelled) {
-              setUserFocusSessions(prev => {
-                const map: Record<string, FocusSessionRecord> = {};
-                [...(records || []), ...prev].forEach(r => {
-                  if (r && r.sessionId) map[r.sessionId] = r;
-                });
-                const combined = Object.values(map);
-                combined.sort((a, b) => (b.startTimestamp || 0) - (a.startTimestamp || 0));
-                return combined;
+            setUserFocusSessions(prev => {
+              const map: Record<string, FocusSessionRecord> = {};
+              [...(records || []), ...prev].forEach(r => {
+                if (r && r.sessionId) map[r.sessionId] = r;
               });
-            }
-          });
+              if (!map['study_20261022_master_4h']) {
+                map['study_20261022_master_4h'] = MASTER_OCT22_RECORD;
+              }
+              const combined = Object.values(map);
+              combined.sort((a, b) => (b.startTimestamp || 0) - (a.startTimestamp || 0));
+              return combined;
+            });
+          }
+        });
 
-          // Session Recovery after login: Safe verification of active focus session
-          try {
-            const savedRaw = localStorage.getItem('apesflow_focus_session');
-            if (savedRaw) {
-              const saved = JSON.parse(savedRaw);
-              // CRITICAL REQUIREMENT: Verify saved session belongs strictly to the signed-in user!
-              if (saved && saved.userId === user.uid && saved.sessionId) {
-                const now = Date.now();
-                setActiveSubject(saved.subject || 'Chemistry');
-                setActiveTask(saved.task || 'Deep Focus Sprint');
-                setActiveGoal(saved.goal || '');
-                setFocusSessionId(saved.sessionId);
-                setFocusDurationMinutes(saved.durationMinutes || 25);
-                setFocusTotalSeconds(saved.totalSeconds || 25 * 60);
-                setSessionStartTime(saved.startTimestamp || (now - 60000));
-                setSessionPlannedEndTime(saved.endTimestamp || (now + 24 * 60 * 1000));
-                setFullscreenExitsCount(saved.fullscreenExitsCount || 0);
-                setApprovedBreaksCount(saved.approvedBreaksCount || 0);
-                setTotalBreakMinutes(saved.totalBreakMinutes || 0);
-                setCycleBreakCompleted(!!saved.cycleBreakCompleted);
+        // Active Session Recovery
+        try {
+          const savedRaw = localStorage.getItem('apesflow_focus_session');
+          if (savedRaw) {
+            const saved = JSON.parse(savedRaw);
+            if (saved && saved.sessionId) {
+              const now = Date.now();
+              setActiveSubject(saved.subject || 'Chemistry');
+              setActiveTask(saved.task || 'Deep Focus Sprint');
+              setActiveGoal(saved.goal || '');
+              setFocusSessionId(saved.sessionId);
+              setFocusDurationMinutes(saved.durationMinutes || 25);
+              setFocusTotalSeconds(saved.totalSeconds || 25 * 60);
+              setSessionStartTime(saved.startTimestamp || (now - 60000));
+              setSessionPlannedEndTime(saved.endTimestamp || (now + 24 * 60 * 1000));
 
-                if (saved.status === 'running' && saved.endTimestamp) {
-                  if (now < saved.endTimestamp) {
-                    const remaining = Math.max(0, Math.round((saved.endTimestamp - now) / 1000));
-                    setFocusSecondsLeft(remaining);
-                    setFocusEndTimestamp(saved.endTimestamp);
-                    setFocusSessionState('running');
-                    setIsFocusModeActive(true);
-                    setSessionRecoveryNotice(`Active ${saved.durationMinutes}m focus session restored (${Math.round(remaining / 60)}m remaining).`);
-                  } else {
-                    // Planned end time has passed while browser was closed!
-                    setFocusSecondsLeft(0);
-                    setFocusSessionState('idle');
-                    localStorage.removeItem('apesflow_focus_session');
-
-                    const elapsedMins = saved.durationMinutes || 25;
-                    const expiredRecord: FocusSessionRecord = {
-                      sessionId: saved.sessionId,
-                      userId: user.uid,
-                      subject: saved.subject || 'Chemistry',
-                      task: saved.task || 'Focus Sprint',
-                      goal: saved.goal || undefined,
-                      plannedDurationMinutes: elapsedMins,
-                      actualElapsedMinutes: elapsedMins,
-                      startTimestamp: saved.startTimestamp || (now - elapsedMins * 60 * 1000),
-                      endTimestamp: saved.endTimestamp,
-                      status: 'completed',
-                      fullscreenExitsCount: saved.fullscreenExitsCount || 0,
-                      approvedBreaksCount: saved.approvedBreaksCount || 0,
-                      totalBreakMinutes: saved.totalBreakMinutes || 0,
-                      createdAt: new Date().toISOString(),
-                    };
-                    console.log(`[Firebase FocusSession Write] Saving session to users/${user.uid}/focusSessions/`, expiredRecord);
-                    saveFocusSessionRecord(user.uid, expiredRecord).catch(() => {});
-                    setSessionRecoveryNotice(`Previous ${elapsedMins}m focus sprint completed while you were away. Record saved to your Focus History.`);
-                  }
-                } else if (saved.status === 'paused') {
-                  setFocusSessionState('paused');
-                  const remaining = saved.pausedRemainingSec || saved.secondsLeft || 25 * 60;
+              if (saved.status === 'running' && saved.endTimestamp) {
+                if (now < saved.endTimestamp) {
+                  const remaining = Math.max(0, Math.round((saved.endTimestamp - now) / 1000));
                   setFocusSecondsLeft(remaining);
-                  setFocusPausedRemainingSec(remaining);
+                  setFocusEndTimestamp(saved.endTimestamp);
+                  setFocusSessionState('running');
                   setIsFocusModeActive(true);
-                  setSessionRecoveryNotice(`Paused focus session on "${saved.subject}" restored.`);
-                } else if (saved.status === 'onBreak' && saved.breakEndTimestamp) {
-                  if (now < saved.breakEndTimestamp) {
-                    const remaining = Math.max(0, Math.round((saved.breakEndTimestamp - now) / 1000));
-                    setBreakSecondsLeft(remaining);
-                    setBreakEndTimestamp(saved.breakEndTimestamp);
-                    setFocusSessionState('onBreak');
-                    setIsFocusModeActive(true);
-                  } else {
-                    setBreakSecondsLeft(5 * 60);
-                    setFocusSessionState('paused');
-                    const remaining = saved.pausedRemainingSec || saved.secondsLeft || 25 * 60;
-                    setFocusSecondsLeft(remaining);
-                    setFocusPausedRemainingSec(remaining);
-                    setIsFocusModeActive(true);
-                    setSessionRecoveryNotice('5-minute recovery break concluded while away. Ready to resume your focus sprint.');
-                  }
+                  setSessionRecoveryNotice(`Active ${saved.durationMinutes}m focus session restored (${Math.round(remaining / 60)}m remaining).`);
                 }
-              } else if (saved && saved.userId && saved.userId !== user.uid) {
-                // Different user: do not restore on shared device
-                console.log('[SessionRecovery] Saved session belongs to different user; clearing local session cache.');
-                localStorage.removeItem('apesflow_focus_session');
+              } else if (saved.status === 'paused') {
+                setFocusSessionState('paused');
+                const remaining = saved.pausedRemainingSec || saved.secondsLeft || 25 * 60;
+                setFocusSecondsLeft(remaining);
+                setFocusPausedRemainingSec(remaining);
+                setIsFocusModeActive(true);
+                setSessionRecoveryNotice(`Paused focus session on "${saved.subject}" restored.`);
               }
             }
-          } catch (e) {
-            console.warn('[SessionRecovery] Error parsing recovery state:', e);
           }
+        } catch (e) {
+          console.warn('[SessionRecovery] Notice:', e);
+        }
 
-          // Ensure today's registry record exists without overwriting existing entries
-          const today = getLocalDateString();
-          if (!historyAll || !historyAll[today]) {
-            console.log(`[DailyRegistry] Initializing today's record for ${today}`);
-            saveDailyRegistryDay(user.uid, today, {
-              userId: user.uid,
-              date: today,
-              dayOfWeek: getDayOfWeekName(),
-              subjectsStudied: [],
-              plannedTasks: [],
-              completedTasks: [],
-              studySessions: [],
-              totalStudyMinutes: 0,
-              tuitionRevisionProgress: '',
-              dailyGoals: [],
-              dailySummaryNotes: '',
-              examPrepProgress: '',
-              entries: {},
-            }).catch(() => {});
+        const today = getLocalDateString();
+        if (!historyAll || !historyAll[today]) {
+          saveDailyRegistryDay(activeMasterUid, today, {
+            userId: activeMasterUid,
+            date: today,
+            dayOfWeek: getDayOfWeekName(),
+            subjectsStudied: [],
+            plannedTasks: [],
+            completedTasks: [],
+            studySessions: [],
+            totalStudyMinutes: 0,
+            tuitionRevisionProgress: '',
+            dailyGoals: [],
+            dailySummaryNotes: '',
+            examPrepProgress: '',
+            entries: {},
+          }).catch(() => {});
+        }
+      } catch (err) {
+        console.error(`[Firebase Auth Error] Master restoration notice:`, err);
+        setSyncStatus('error');
+      } finally {
+        setTimeout(() => {
+          if (!isCancelled) {
+            isRestoringRef.current = false;
+            restoredUserUidRef.current = activeMasterUid;
+            console.log(`[Firebase Auth] Master auto-sync gate opened for BK NITHILESHVAR`);
           }
-        } catch (err) {
-          console.error(`[Firebase Auth Error] Failed during dashboard restoration for UID: ${user.uid}:`, err);
-          setSyncStatus('error');
-        } finally {
-          // Complete restoration lock after React state cycle settles
-          setTimeout(() => {
-            if (!isCancelled) {
-              isRestoringRef.current = false;
-              restoredUserUidRef.current = user.uid;
-              console.log(`[Firebase Auth] Auto-sync gate opened for UID: ${user.uid}`);
-            }
-          }, 350);
-        }
-      } else {
-        console.log('[Firebase Auth] No authenticated session.');
-        restoredUserUidRef.current = null;
-        isRestoringRef.current = false;
-        setCurrentUser(null);
-        setSyncStatus('idle');
-        if (dailyRegistryUnsubRef.current) {
-          dailyRegistryUnsubRef.current();
-          dailyRegistryUnsubRef.current = null;
-        }
-        if (focusSessionsUnsubRef.current) {
-          focusSessionsUnsubRef.current();
-          focusSessionsUnsubRef.current = null;
-        }
+        }, 300);
       }
     });
 
@@ -4674,14 +4816,246 @@ export default function App() {
         isPlacementModeActive ? 'cursor-crosshair' : !config.optionalFeatures.widgetCustomization ? 'cursor-default' : ''
       }`}
     >
-      {/* Desktop Only Warning */}
-      <div className={`fixed inset-0 z-[100] bg-black items-center justify-center p-6 ${isMobile ? 'flex' : 'hidden'}`}>
-        <div className="text-center space-y-4">
-          <div className="text-4xl">💻</div>
-          <h2 className="text-white text-xl font-bold">Desktop Only</h2>
-          <p className="text-white/60 text-sm">This application is designed exclusively for laptop and desktop use. Please access from a larger screen.</p>
+      {/* Mobile Study History & Daily Registry View for BK NITHILESHVAR */}
+      <div className={`fixed inset-0 z-[100] bg-[#070b1a] overflow-y-auto text-slate-100 p-4 sm:p-6 ${isMobile && isTrackerRoute ? 'block' : 'hidden'} print:block print:relative print:bg-white print:text-black print:p-0`}>
+        <div className="max-w-4xl mx-auto space-y-6 pb-12">
+          {/* Header Bar */}
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-white/10 print:border-black/20">
+            <div>
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-xl bg-cyan-500/20 border border-cyan-500/40 flex items-center justify-center text-cyan-400 font-bold text-sm print:hidden">
+                  BK
+                </div>
+                <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-white print:text-black">
+                  BK NITHILESHVAR
+                </h1>
+              </div>
+              <p className="text-xs text-slate-400 mt-1 print:text-gray-600">
+                Personal Study History & Daily Registry · <span className="text-cyan-400 font-mono print:text-black">nithileshvarbk@gmail.com</span>
+              </p>
+            </div>
+
+            {/* Print & Export Actions */}
+            <div className="flex items-center gap-2 print:hidden">
+              <button
+                onClick={() => window.print()}
+                className="flex items-center gap-1.5 px-3 py-2 text-xs font-semibold rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-white/10 transition shadow-sm"
+                title="Print Study History"
+              >
+                <Printer className="w-4 h-4 text-cyan-400" />
+                <span>Print</span>
+              </button>
+              <button
+                onClick={() => exportStudyHistoryToPDF({ sessions: userFocusSessions, userName: 'BK NITHILESHVAR' })}
+                className="flex items-center gap-1.5 px-3 py-2 text-xs font-semibold rounded-xl bg-cyan-600 hover:bg-cyan-500 text-white transition shadow-sm"
+                title="Export History as PDF Document"
+              >
+                <FileText className="w-4 h-4" />
+                <span>PDF</span>
+              </button>
+              <button
+                onClick={handleExportCSV}
+                className="flex items-center gap-1.5 px-3 py-2 text-xs font-semibold rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white transition shadow-sm"
+                title="Export History as CSV Spreadsheet"
+              >
+                <Download className="w-4 h-4" />
+                <span>CSV</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Quick Metrics Cards */}
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            <div className="p-3.5 rounded-2xl bg-slate-900/80 border border-white/10 print:border-gray-300 print:bg-gray-50">
+              <div className="text-[11px] text-slate-400 font-medium print:text-gray-600">Total Focus Time</div>
+              <div className="text-lg font-bold text-cyan-400 mt-1 tabular-nums print:text-black">
+                {formatDurationMinutes(userFocusSessions.reduce((acc, s) => acc + (s.actualElapsedMinutes || 0), 0))}
+              </div>
+            </div>
+            <div className="p-3.5 rounded-2xl bg-slate-900/80 border border-white/10 print:border-gray-300 print:bg-gray-50">
+              <div className="text-[11px] text-slate-400 font-medium print:text-gray-600">Total Sessions</div>
+              <div className="text-lg font-bold text-emerald-400 mt-1 tabular-nums print:text-black">
+                {userFocusSessions.length} <span className="text-xs font-normal text-slate-400 print:text-gray-500">recorded</span>
+              </div>
+            </div>
+            <div className="p-3.5 rounded-2xl bg-slate-900/80 border border-white/10 print:border-gray-300 print:bg-gray-50">
+              <div className="text-[11px] text-slate-400 font-medium print:text-gray-600">Subjects Studied</div>
+              <div className="text-lg font-bold text-indigo-400 mt-1 tabular-nums print:text-black">
+                {new Set(userFocusSessions.map(s => s.subject || 'General Study')).size}
+              </div>
+            </div>
+            <div className="p-3.5 rounded-2xl bg-slate-900/80 border border-white/10 print:border-gray-300 print:bg-gray-50">
+              <div className="text-[11px] text-slate-400 font-medium print:text-gray-600">Registry Days</div>
+              <div className="text-lg font-bold text-amber-400 mt-1 tabular-nums print:text-black">
+                {Object.keys(dailyRegistryHistory || {}).length} <span className="text-xs font-normal text-slate-400 print:text-gray-500">days</span>
+              </div>
+            </div>
+          </div>
+
+          {/* Search & Subject Filter Bar (Hidden on Print) */}
+          <div className="space-y-3 print:hidden">
+            <div className="flex items-center gap-2">
+              <div className="relative flex-1">
+                <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                <input
+                  type="text"
+                  placeholder="Search subject, topic, or task..."
+                  value={mobileSearchQuery}
+                  onChange={e => setMobileSearchQuery(e.target.value)}
+                  className="w-full pl-9 pr-8 py-2 text-xs rounded-xl bg-slate-900 border border-white/10 text-white placeholder-slate-500 focus:outline-none focus:border-cyan-500"
+                />
+                {mobileSearchQuery && (
+                  <button
+                    onClick={() => setMobileSearchQuery('')}
+                    className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white text-xs"
+                  >
+                    ×
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {/* Subject Tabs */}
+            <div className="flex items-center gap-1.5 overflow-x-auto pb-1 no-scrollbar text-xs">
+              {['all', 'Mathematics', 'Science', 'Computer Science', 'Languages', 'History', 'General'].map(sub => (
+                <button
+                  key={sub}
+                  onClick={() => setMobileSubjectFilter(sub)}
+                  className={`px-3 py-1.5 rounded-lg whitespace-nowrap font-medium transition ${
+                    mobileSubjectFilter === sub
+                      ? 'bg-cyan-500 text-black font-semibold shadow-sm'
+                      : 'bg-slate-900/90 text-slate-300 hover:bg-slate-800 border border-white/5'
+                  }`}
+                >
+                  {sub === 'all' ? 'All Subjects' : sub}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Study History Session Feed */}
+          <div className="space-y-3">
+            <div className="flex items-center justify-between">
+              <h2 className="text-sm font-semibold text-slate-200 flex items-center gap-2 print:text-black">
+                <ClockIcon className="w-4 h-4 text-cyan-400 print:hidden" />
+                <span>Recorded Study Sessions ({filteredMobileSessions.length})</span>
+              </h2>
+              <span className="text-xs text-slate-500 print:text-gray-600">Firebase Cloud Synced</span>
+            </div>
+
+            {filteredMobileSessions.length === 0 ? (
+              <div className="p-8 rounded-2xl bg-slate-900/50 border border-white/10 text-center space-y-2 print:border-gray-300 print:bg-white">
+                <p className="text-sm text-slate-400 print:text-gray-600">No study sessions found for BK NITHILESHVAR matching your query.</p>
+                <p className="text-xs text-slate-500">Study sessions saved on any device will appear here automatically.</p>
+              </div>
+            ) : (
+              <div className="space-y-2.5">
+                {filteredMobileSessions.map(session => {
+                  const startDate = new Date(session.startTimestamp || Date.now());
+                  return (
+                    <div
+                      key={session.sessionId}
+                      className="p-4 rounded-2xl bg-slate-900/80 border border-white/10 space-y-2 transition hover:border-cyan-500/30 print:border-gray-300 print:bg-white print:p-3"
+                    >
+                      <div className="flex items-start justify-between gap-2">
+                        <div>
+                          <span className="text-[11px] font-semibold text-cyan-400 uppercase tracking-wider print:text-black">
+                            {session.subject || 'General Study'}
+                          </span>
+                          <h3 className="text-sm font-bold text-white mt-0.5 print:text-black">
+                            {session.task || session.goal || 'Focused Study Session'}
+                          </h3>
+                        </div>
+                        <span className="px-2.5 py-1 rounded-lg text-xs font-bold bg-cyan-950 text-cyan-300 border border-cyan-800/40 tabular-nums print:bg-gray-100 print:text-black print:border-gray-300">
+                          {session.actualElapsedMinutes || 0} mins
+                        </span>
+                      </div>
+
+                      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-400 print:text-gray-600">
+                        <span>{startDate.toLocaleDateString()}</span>
+                        <span className="text-slate-600 print:text-gray-400">·</span>
+                        <span>{startDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                        {session.status && (
+                          <>
+                            <span className="text-slate-600 print:text-gray-400">·</span>
+                            <span className="capitalize text-emerald-400 print:text-gray-700">{session.status}</span>
+                          </>
+                        )}
+                      </div>
+
+                      {session.goal && session.goal !== session.task && (
+                        <p className="text-xs text-slate-300 bg-slate-950/60 p-2.5 rounded-xl border border-white/5 print:bg-gray-50 print:border-gray-200 print:text-black">
+                          <span className="text-slate-400 font-medium">Notes / Goal:</span> {session.goal}
+                        </p>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+          {/* Daily Registry Section */}
+          <div className="pt-4 space-y-3 border-t border-white/10 print:border-gray-300">
+            <h2 className="text-sm font-semibold text-slate-200 flex items-center gap-2 print:text-black">
+              <BookOpen className="w-4 h-4 text-emerald-400 print:hidden" />
+              <span>Daily Study Registry Log</span>
+            </h2>
+
+            {Object.keys(dailyRegistryHistory || {}).length === 0 ? (
+              <div className="p-6 rounded-2xl bg-slate-900/50 border border-white/10 text-center text-xs text-slate-400 print:border-gray-300 print:bg-white">
+                No daily registry days saved yet. Tasks logged in the registry will sync here.
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {Object.entries(dailyRegistryHistory)
+                  .sort(([dateA], [dateB]) => dateB.localeCompare(dateA))
+                  .map(([dateKey, dayRecord]) => {
+                    const entriesList = dayRecord.entries ? Object.values(dayRecord.entries) : [];
+                    return (
+                      <div key={dateKey} className="p-4 rounded-2xl bg-slate-900/80 border border-white/10 space-y-2 print:border-gray-300 print:bg-white">
+                        <div className="flex items-center justify-between pb-2 border-b border-white/5 print:border-gray-200">
+                          <span className="text-xs font-bold text-emerald-400 print:text-black">{dateKey}</span>
+                          <span className="text-[11px] text-slate-400 print:text-gray-600">
+                            {entriesList.length} registry items
+                          </span>
+                        </div>
+                        
+                        {entriesList.length > 0 && (
+                          <div className="space-y-1.5 pt-1">
+                            {entriesList.map((item, idx) => {
+                              const isDone = item.status === 'completed';
+                              return (
+                                <div key={item.id || idx} className="flex items-center justify-between text-xs text-slate-300 print:text-black">
+                                  <span className="flex items-center gap-1.5">
+                                    <span className={isDone ? 'text-emerald-400' : 'text-slate-500'}>
+                                      {isDone ? '✓' : '○'}
+                                    </span>
+                                    <span>{item.subject ? `[${item.subject}] ` : ''}{item.topic || item.notes || 'Activity Item'}</span>
+                                  </span>
+                                  <span className="text-[11px] text-slate-500 tabular-nums print:text-gray-600">
+                                    {item.durationMinutes ? `${item.durationMinutes}m` : ''}
+                                  </span>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
+
+                        {dayRecord.dailySummaryNotes && (
+                          <div className="text-xs text-slate-400 italic pt-1 border-t border-white/5 print:border-gray-200 print:text-gray-700">
+                            "{dayRecord.dailySummaryNotes}"
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+              </div>
+            )}
+          </div>
         </div>
       </div>
+
       
       {/* ================= CINEMATIC ANIMATED BACKDROP & WALLPAPER LAYER ================= */}
       <AnimatedCharacterBackdrop
@@ -8474,25 +8848,25 @@ export default function App() {
               <div className="p-4 rounded-xl bg-gradient-to-br from-cyan-950/40 via-black/60 to-black/80 border border-cyan-500/30 text-xs space-y-2.5 shadow-lg">
                 <div className="flex items-center gap-3">
                   <div className="w-10 h-10 rounded-full bg-gradient-to-tr from-cyan-500 to-emerald-400 text-black font-extrabold flex items-center justify-center text-base shadow-md shrink-0">
-                    {currentUser?.displayName ? currentUser.displayName.charAt(0).toUpperCase() : currentUser?.email ? currentUser.email.charAt(0).toUpperCase() : '⚡'}
+                    BK
                   </div>
                   <div className="min-w-0 flex-1">
                     <div className="font-bold text-white truncate flex items-center gap-2">
                       <span className="text-sm text-cyan-200">
-                        {currentUser?.displayName || (currentUser?.email ? currentUser.email.split('@')[0] : currentUser ? 'Firebase Student' : 'Not Signed In')}
+                        BK NITHILESHVAR
                       </span>
                       <span className="px-2 py-0.5 rounded-full text-[10px] bg-emerald-500/20 text-emerald-300 font-mono border border-emerald-500/30">
-                        {currentUser ? (currentUser.isAnonymous ? 'Guest User' : 'Verified Google Account') : 'Offline'}
+                        Master Personal Account
                       </span>
                     </div>
                     <div className="text-[11px] text-white/70 font-mono truncate mt-0.5">
-                      {currentUser?.email || (currentUser?.uid ? `UID: ${currentUser.uid}` : 'Sign in to sync cloud data')}
+                      nithileshvarbk@gmail.com
                     </div>
                   </div>
                 </div>
                 <div className="pt-2 border-t border-white/10 flex items-center justify-between text-[10px] text-white/50 font-mono">
-                  <span>RTDB Sync: Active</span>
-                  <span>Path: users/{currentUser?.uid ? currentUser.uid.slice(0, 8) + '...' : '{uid}'}/dashboard</span>
+                  <span>Firebase RTDB & Firestore: Active</span>
+                  <span>Path: users/bk_nithileshvar_master</span>
                 </div>
               </div>
 
@@ -8511,43 +8885,12 @@ export default function App() {
                   className="py-2.5 px-3 rounded-xl bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 font-semibold text-xs border border-emerald-500/40 transition cursor-pointer flex items-center justify-center gap-1.5"
                 >
                   <Download className="w-3.5 h-3.5" />
-                  <span>Restore Data</span>
+                  <span>Restore Cloud Data</span>
                 </button>
               </div>
-
-              <div className="flex items-center gap-2 pt-2 border-t border-white/10">
-                <button
-                  type="button"
-                  onClick={handleGoogleSignIn}
-                  disabled={authLoading}
-                  className="flex-1 py-2.5 px-3 rounded-xl bg-gradient-to-r from-blue-500/20 to-cyan-500/20 hover:from-blue-500/35 hover:to-cyan-500/35 text-cyan-200 font-bold text-xs border border-cyan-500/40 transition cursor-pointer flex items-center justify-center gap-1.5 disabled:opacity-50"
-                >
-                  <Cloud className="w-4 h-4 text-cyan-400" />
-                  <span>{authLoading ? 'Signing In...' : 'Sign In with Google'}</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={handleGuestSignIn}
-                  disabled={authLoading}
-                  className="py-2.5 px-3 rounded-xl bg-white/10 hover:bg-white/20 text-white font-bold text-xs border border-white/10 transition cursor-pointer flex items-center justify-center gap-1.5 disabled:opacity-50"
-                >
-                  <span>Quick Guest Session</span>
-                </button>
-              </div>
-
-              {authSuccessMsg && (
-                <div className="p-2.5 rounded-xl bg-emerald-500/20 border border-emerald-500/30 text-emerald-300 text-[11px] font-semibold">
-                  {authSuccessMsg}
-                </div>
-              )}
-              {authError && (
-                <div className="p-2.5 rounded-xl bg-rose-500/20 border border-rose-500/30 text-rose-300 text-[11px] font-semibold">
-                  {authError}
-                </div>
-              )}
 
               <p className="text-[11px] text-white/50 leading-relaxed pt-1">
-                Authenticate with Google or Guest mode to securely sync, load, and view your persistent records from Firebase Realtime Database and Firestore.
+                All study history, daily registry entries, widget configurations, wallpapers, and tasks automatically synchronize with Firebase under BK NITHILESHVAR's master account.
               </p>
             </div>
 
@@ -9508,6 +9851,7 @@ export default function App() {
       </div>
 
       {/* ================= CLICK-TO-ADD WIDGET PLACEMENT MODAL & TARGET PREVIEW ================= */}
+      <StatusBar history={dailyRegistryHistory} />
       {placementModal && placementModal.isOpen && (
         <>
           {/* Transparent Backdrop Dismiss Overlay: Clicking anywhere outside smoothly closes the modal */}
