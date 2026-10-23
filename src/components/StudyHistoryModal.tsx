@@ -56,6 +56,7 @@ export default function StudyHistoryModal({
     return getLocalDateString(d);
   });
   const [customEndDate, setCustomEndDate] = useState<string>(() => getLocalDateString());
+  const [seedNotice, setSeedNotice] = useState<string | null>(null);
 
   if (!isOpen) return null;
 
@@ -203,13 +204,13 @@ export default function StudyHistoryModal({
     }
   }, [dateRange, customStartDate, customEndDate]);
 
-  const handleExportPDF = (isPrint: boolean = false) => {
+  const handleExportPDF = (isPrint: boolean = false, forceAll: boolean = false) => {
     const sessionsToExport =
-      dateRange === 'all' ? sessions : filteredSessions;
+      forceAll || dateRange === 'all' ? sessions : filteredSessions;
 
     exportStudyHistoryToPDF({
       sessions: sessionsToExport,
-      rangeLabel: rangeDisplayLabel,
+      rangeLabel: forceAll ? 'Complete All-History Archive' : rangeDisplayLabel,
       userName: userName || 'BK NITHILESHVAR',
       isPrint,
     });
@@ -243,7 +244,7 @@ export default function StudyHistoryModal({
           <div className="flex items-center gap-2">
             <button
               type="button"
-              onClick={() => handleExportPDF(false)}
+              onClick={() => handleExportPDF(false, false)}
               className="py-2 px-3 sm:px-4 rounded-xl bg-cyan-500 hover:bg-cyan-400 text-black font-black text-xs transition cursor-pointer flex items-center gap-1.5 shadow-[0_0_15px_rgba(6,182,212,0.35)] active:scale-95"
               title="Download PDF report for the selected date range"
             >
@@ -252,13 +253,23 @@ export default function StudyHistoryModal({
             </button>
             <button
               type="button"
+              onClick={() => handleExportPDF(false, true)}
+              className="py-2 px-3 rounded-xl bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 border border-emerald-500/30 font-bold text-xs transition cursor-pointer flex items-center gap-1.5 active:scale-95"
+              title="Download complete all-time study history PDF"
+            >
+              <Download className="w-4 h-4" />
+              <span className="hidden sm:inline">All History PDF</span>
+            </button>
+            <button
+              type="button"
               onClick={async () => {
-                await import('../utils/firebase').then(m => m.seedMissingSession(uid || 'bk_nithileshvar_master'));
-                alert('Seeded!');
+                const ok = await import('../utils/firebase').then(m => (m as any).seedFourHourStudySession(uid || 'bk_nithileshvar_master'));
+                setSeedNotice(ok ? 'Oct 22 (4h) synced to Firebase' : 'Saved locally');
+                setTimeout(() => setSeedNotice(null), 3500);
               }}
               className="py-2 px-3 sm:px-4 rounded-xl bg-purple-500 hover:bg-purple-400 text-white font-black text-xs transition cursor-pointer"
             >
-              <span>Seed</span>
+              <span>{seedNotice || 'Seed Oct 22'}</span>
             </button>
             <button
               type="button"

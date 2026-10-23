@@ -26,6 +26,7 @@ import {
   getLocalDateString,
   SINGLE_USER_MASTER_UID,
 } from '../utils/firebase';
+import MobileStudyHistoryView from './MobileStudyHistoryView';
 
 interface StudyTimeTrackerProps {
   uid: string | null;
@@ -56,6 +57,19 @@ export default function StudyTimeTracker({
   const [optionalNotes, setOptionalNotes] = useState<string>('');
   const [isSaving, setIsSaving] = useState<boolean>(false);
   const [syncNotice, setSyncNotice] = useState<string | null>(null);
+
+  // Mobile Screen Responsive Mode Detection
+  const [isMobile, setIsMobile] = useState<boolean>(() => typeof window !== 'undefined' && window.innerWidth < 768);
+  const [mobileTab, setMobileTab] = useState<'history' | 'timer'>(() => (typeof window !== 'undefined' && window.innerWidth < 768) ? 'history' : 'timer');
+
+  useEffect(() => {
+    const handleResize = () => {
+      const mobile = window.innerWidth < 768;
+      setIsMobile(mobile);
+    };
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
 
   // 3D Tilt & Holographic Lighting State
   const cardRef = useRef<HTMLDivElement | null>(null);
@@ -278,16 +292,14 @@ export default function StudyTimeTracker({
       pauseStartTimestamp: null,
       notes: '',
       updatedAt: now,
-      userId: uid || 'guest',
+      userId: activeUid,
     };
 
     try {
       localStorage.setItem(ACTIVE_STORAGE_KEY, JSON.stringify(initialPayload));
     } catch {}
 
-    if (uid) {
-      saveActiveStudySession(uid, initialPayload).catch(() => {});
-    }
+    saveActiveStudySession(activeUid, initialPayload).catch(() => {});
 
     setSessionId(newSessionId);
     setStartTimestamp(now);
@@ -301,7 +313,7 @@ export default function StudyTimeTracker({
     setTimeout(() => {
       transitionLockRef.current = false;
     }, 350);
-  }, [sessionState, uid]);
+  }, [sessionState, activeUid]);
 
   // CONTROL 2: PAUSE STUDY
   // - Freezes accumulated duration, preserves session, excludes paused time
@@ -325,23 +337,21 @@ export default function StudyTimeTracker({
       pauseStartTimestamp: now,
       notes: optionalNotes,
       updatedAt: now,
-      userId: uid || 'guest',
+      userId: activeUid,
     };
 
     try {
       localStorage.setItem(ACTIVE_STORAGE_KEY, JSON.stringify(pausedPayload));
     } catch {}
 
-    if (uid) {
-      saveActiveStudySession(uid, pausedPayload).catch(() => {});
-    }
+    saveActiveStudySession(activeUid, pausedPayload).catch(() => {});
 
     setSyncNotice('Session Paused');
     console.log(`[StudyTimer] Paused session ${sessionId} at ${Math.floor(activeMs / 1000)}s`);
     setTimeout(() => {
       transitionLockRef.current = false;
     }, 350);
-  }, [sessionState, sessionId, startTimestamp, accumulatedPausedMs, optionalNotes, uid]);
+  }, [sessionState, sessionId, startTimestamp, accumulatedPausedMs, optionalNotes, activeUid]);
 
   // CONTROL 3: RESUME STUDY
   // - Continues same session from accumulated duration, doesn't count paused time
@@ -365,23 +375,21 @@ export default function StudyTimeTracker({
       pauseStartTimestamp: null,
       notes: optionalNotes,
       updatedAt: now,
-      userId: uid || 'guest',
+      userId: activeUid,
     };
 
     try {
       localStorage.setItem(ACTIVE_STORAGE_KEY, JSON.stringify(resumedPayload));
     } catch {}
 
-    if (uid) {
-      saveActiveStudySession(uid, resumedPayload).catch(() => {});
-    }
+    saveActiveStudySession(activeUid, resumedPayload).catch(() => {});
 
     setSyncNotice('Session Resumed');
     console.log(`[StudyTimer] Resumed session ${sessionId} (added ${Math.round(pauseDurationMs / 1000)}s to paused duration)`);
     setTimeout(() => {
       transitionLockRef.current = false;
     }, 350);
-  }, [sessionState, sessionId, pauseStartTimestamp, accumulatedPausedMs, startTimestamp, optionalNotes, uid]);
+  }, [sessionState, sessionId, pauseStartTimestamp, accumulatedPausedMs, startTimestamp, optionalNotes, activeUid]);
 
   // CONTROL 4: STOP AND SAVE
   // - Finalizes session, persists actual accumulated duration, prevents duplicate writes on repeated clicks
@@ -424,10 +432,14 @@ export default function StudyTimeTracker({
 
     setSessionState('completed');
 
-    // 1. Clear local active session storage
+    // 1. Clear local active session storage and immediately update history state
     try {
       localStorage.removeItem(ACTIVE_STORAGE_KEY);
     } catch {}
+
+    if (onSessionCompleted) {
+      onSessionCompleted(record);
+    }
 
     // 2. Persist to Firebase Realtime Database and Cloud Firestore
     try {
@@ -437,15 +449,11 @@ export default function StudyTimeTracker({
         setSyncNotice('Saved to Firebase');
         console.log(`[StudyTimer] Session ${finalSessionId} permanently saved to users/${activeUid}/studySessions`);
       } else {
-        setSyncNotice('Saved locally (offline mode)');
+        setSyncNotice('Saved locally (Firebase auth/rules required)');
       }
     } catch (err) {
       console.warn('[StudyTimer] Save error, retained locally:', err);
       setSyncNotice('Saved locally (network pending)');
-    }
-
-    if (onSessionCompleted) {
-      onSessionCompleted(record);
     }
 
     // Reset timer to clean idle state
@@ -482,6 +490,46 @@ export default function StudyTimeTracker({
     const secs = Math.max(0, totalSec) % 60;
     return `${String(hrs).padStart(2, '0')}:${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
   };
+
+  if (isMobile && mobileTab === 'history') {
+    return (
+      <div className="w-full h-full flex flex-col overflow-y-auto">
+        {/* Mobile View Mode Switcher Header */}
+        <div className="sticky top-0 z-30 p-2 bg-[#060b17]/95 backdrop-blur-md border-b border-cyan-500/30 flex items-center justify-between font-mono text-xs">
+          <div className="flex items-center gap-1.5 bg-black/60 p-1 rounded-xl border border-white/10">
+            <button
+              type="button"
+              onClick={() => setMobileTab('history')}
+              className="px-3 py-1.5 rounded-lg font-bold text-xs bg-cyan-500 text-black shadow-[0_0_10px_rgba(6,182,212,0.4)] transition cursor-pointer"
+            >
+              📊 Study History
+            </button>
+            <button
+              type="button"
+              onClick={() => setMobileTab('timer')}
+              className="px-3 py-1.5 rounded-lg font-bold text-xs text-white/70 hover:text-white transition cursor-pointer"
+            >
+              ⚡ Live Arc Timer
+            </button>
+          </div>
+
+          {(sessionState === 'running' || sessionState === 'paused') && (
+            <div className="flex items-center gap-2 px-2.5 py-1 rounded-lg bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 font-bold text-[10px] animate-pulse">
+              <span>● Active: {formatHHMMSS(elapsedSeconds)}</span>
+            </div>
+          )}
+        </div>
+
+        <MobileStudyHistoryView
+          uid={activeUid}
+          sessions={existingSessions}
+          onRetry={() => {
+            if (activeUid) loadActiveStudySession(activeUid).catch(() => {});
+          }}
+        />
+      </div>
+    );
+  }
 
   return (
     <div
@@ -579,7 +627,15 @@ export default function StudyTimeTracker({
                 {syncNotice}
               </span>
             )}
-            {onOpenHistory && (
+            {isMobile ? (
+              <button
+                type="button"
+                onClick={() => setMobileTab('history')}
+                className="text-[10px] bg-cyan-500/20 hover:bg-cyan-500/40 text-cyan-300 px-2.5 py-1 rounded-lg border border-cyan-500/40 font-mono font-bold cursor-pointer transition flex items-center gap-1 active:scale-95"
+              >
+                <span>📊 History</span>
+              </button>
+            ) : onOpenHistory ? (
               <button
                 type="button"
                 onClick={onOpenHistory}
@@ -589,7 +645,7 @@ export default function StudyTimeTracker({
                 <BookOpen className="w-3 h-3" />
                 <span>History →</span>
               </button>
-            )}
+            ) : null}
           </div>
         </div>
 

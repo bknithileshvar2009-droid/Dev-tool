@@ -85,20 +85,31 @@ export default function MobileStudyHistoryView({
     }
   }, [sessions]);
 
-  // Load all sessions from Firebase when UID is available
+  // Load all sessions from Firebase and local storage when UID is available
   const reloadSessionsFromFirebase = useCallback(async () => {
-    if (!uid) return;
     setInternalLoading(true);
     setInternalError(false);
     try {
-      const [studyRecs, focusRecs] = await Promise.all([
-        loadUserStudySessions(uid),
-        loadUserFocusSessions(uid),
+      const activeUid = uid || 'bk_nithileshvar_master';
+      const [studyRecs, focusRecs, masterStudyRecs, masterFocusRecs] = await Promise.all([
+        loadUserStudySessions(activeUid),
+        loadUserFocusSessions(activeUid),
+        activeUid !== 'bk_nithileshvar_master' ? loadUserStudySessions('bk_nithileshvar_master') : Promise.resolve([]),
+        activeUid !== 'bk_nithileshvar_master' ? loadUserFocusSessions('bk_nithileshvar_master') : Promise.resolve([]),
       ]);
+
+      const localSessions = (() => {
+        try {
+          const raw = localStorage.getItem('flocus_user_focus_sessions');
+          return raw ? JSON.parse(raw) : [];
+        } catch { return []; }
+      })();
+
       const map: Record<string, FocusSessionRecord> = {};
-      [...(studyRecs || []), ...(focusRecs || []), ...sessions].forEach(r => {
+      [...(localSessions || []), ...(masterStudyRecs || []), ...(masterFocusRecs || []), ...(studyRecs || []), ...(focusRecs || []), ...(sessions || [])].forEach(r => {
         if (r && r.sessionId) map[r.sessionId] = r;
       });
+
       const combined = Object.values(map);
       combined.sort((a, b) => (b.startTimestamp || 0) - (a.startTimestamp || 0));
       setFetchedSessions(combined);
@@ -111,10 +122,8 @@ export default function MobileStudyHistoryView({
   }, [uid, sessions]);
 
   useEffect(() => {
-    if (uid) {
-      reloadSessionsFromFirebase();
-    }
-  }, [uid, reloadSessionsFromFirebase]);
+    reloadSessionsFromFirebase();
+  }, [reloadSessionsFromFirebase]);
 
   // Date Range Calculation Anchors
   const now = new Date();

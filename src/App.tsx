@@ -2157,34 +2157,53 @@ export default function App() {
 
     // 2. Restore Quick Tasks
     if (cloudData.tasks && Array.isArray(cloudData.tasks)) {
-      setTasks(cloudData.tasks);
-      try {
-        localStorage.setItem('flocus_quick_tasks', JSON.stringify(cloudData.tasks));
-      } catch {}
+      setTasks(prev => {
+        const mergedMap = new Map<string, any>();
+        prev.forEach(t => mergedMap.set(t.id, t));
+        cloudData.tasks.forEach((t: any) => mergedMap.set(t.id, t));
+        const list = Array.from(mergedMap.values());
+        try {
+          localStorage.setItem('flocus_quick_tasks', JSON.stringify(list));
+        } catch {}
+        return list;
+      });
     }
 
     // 3. Restore Daily Register Entries
     if (cloudData.dailyRegister && Array.isArray(cloudData.dailyRegister)) {
-      setDailyRegisterEntries(cloudData.dailyRegister);
-      try {
-        localStorage.setItem('flocus_daily_register_entries', JSON.stringify(cloudData.dailyRegister));
-      } catch {}
+      setDailyRegisterEntries(prev => {
+        const mergedMap = new Map<string, any>();
+        prev.forEach(e => mergedMap.set(e.id, e));
+        cloudData.dailyRegister.forEach((e: any) => mergedMap.set(e.id, e));
+        const list = Array.from(mergedMap.values());
+        try {
+          localStorage.setItem('flocus_daily_register_entries', JSON.stringify(list));
+        } catch {}
+        return list;
+      });
     }
 
     // 4. Restore Scratchpad Notes
-    if (typeof cloudData.scratchpad === 'string') {
+    if (typeof cloudData.scratchpad === 'string' && cloudData.scratchpad.length > 0) {
       setScratchpadText(cloudData.scratchpad);
       try {
         localStorage.setItem('flocus_scratchpad_notes', cloudData.scratchpad);
       } catch {}
     }
 
-    // 5. Restore Studio Presets
+    // 5. Restore Studio Presets (Merge non-destructively so no saved preset is ever lost!)
     if (cloudData.presets && Array.isArray(cloudData.presets) && cloudData.presets.length > 0) {
-      setSavedPresets(cloudData.presets);
-      try {
-        localStorage.setItem('flocus_saved_presets', JSON.stringify(cloudData.presets));
-      } catch {}
+      setSavedPresets(prev => {
+        const mergedMap = new Map<string, SavedPreset>();
+        INITIAL_PRESETS.forEach(p => mergedMap.set(p.id, p));
+        prev.forEach(p => mergedMap.set(p.id, p));
+        cloudData.presets.forEach((p: SavedPreset) => mergedMap.set(p.id, p));
+        const list = Array.from(mergedMap.values());
+        try {
+          localStorage.setItem('flocus_saved_presets', JSON.stringify(list));
+        } catch {}
+        return list;
+      });
     }
 
     // 6. Restore Wallpaper Favorites & Recent
@@ -2224,7 +2243,6 @@ export default function App() {
   useEffect(() => {
     let isCancelled = false;
 
-    // Trigger silent auto-authentication in background
     ensureSingleUserAuth().catch(() => {});
 
     const activeMasterUid = SINGLE_USER_MASTER_UID;
@@ -2244,14 +2262,19 @@ export default function App() {
     const unsubscribe = onAuthStateChanged(auth, async user => {
       if (isCancelled) return;
 
-      console.log(`[Firebase Auth] Master account active for BK NITHILESHVAR (UID: ${activeMasterUid})`);
+      const activeUid = user ? user.uid : activeMasterUid;
+      const activeAccount: User = user || masterAccount;
+
+      console.log(`[Firebase Auth] Active account for BK NITHILESHVAR (UID: ${activeUid})`);
       setSyncStatus('saving');
       isRestoringRef.current = true;
-      setCurrentUser(masterAccount);
+      setCurrentUser(activeAccount);
 
       try {
-        console.log(`[Firebase Auth] Reading previous dashboard state for BK NITHILESHVAR`);
-        const cloudData = await loadUserDashboard(activeMasterUid);
+        console.log(`[Firebase Auth] Reading previous dashboard state for BK NITHILESHVAR...`);
+        const cloudDataUser = await loadUserDashboard(activeUid);
+        const cloudDataMaster = activeUid !== activeMasterUid ? await loadUserDashboard(activeMasterUid) : null;
+        const cloudData = cloudDataUser || cloudDataMaster;
 
         if (isCancelled) return;
 
@@ -2262,8 +2285,8 @@ export default function App() {
 
           if (hasRecentLocalEdits && localTime > 0 && cloudTime > 0 && localTime > cloudTime) {
             console.log(`[Firebase Auth] Local settings are newer than cloud record. Syncing to cloud.`);
-            const localPayload = buildCurrentDashboardPayload(activeMasterUid);
-            await saveUserDashboard(activeMasterUid, localPayload);
+            const localPayload = buildCurrentDashboardPayload(activeUid);
+            await saveUserDashboard(activeUid, localPayload);
             lastSyncedPayloadRef.current = localPayload.updatedAt;
             setLastSyncedTime(new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }));
             setSyncStatus('saved');
@@ -2272,11 +2295,11 @@ export default function App() {
             restoreDashboardFromCloudData(cloudData);
             setSyncStatus('saved');
           }
-          verifyWritePermission(activeMasterUid).catch(() => {});
+          verifyWritePermission(activeUid).catch(() => {});
         } else {
-          console.log(`[Firebase Auth] Initializing new master dashboard template for BK NITHILESHVAR...`);
-          const initialPayload = buildCurrentDashboardPayload(activeMasterUid);
-          await saveUserDashboard(activeMasterUid, initialPayload);
+          console.log(`[Firebase Auth] Initializing dashboard for BK NITHILESHVAR...`);
+          const initialPayload = buildCurrentDashboardPayload(activeUid);
+          await saveUserDashboard(activeUid, initialPayload);
           setLastSyncedTime(new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }));
           setSyncStatus('saved');
         }
@@ -2285,7 +2308,7 @@ export default function App() {
         const MASTER_OCT22_DATE = '2026-10-22';
         const MASTER_OCT22_RECORD: FocusSessionRecord = {
           sessionId: 'study_20261022_master_4h',
-          userId: activeMasterUid,
+          userId: activeUid,
           subject: 'Mathematics & Science',
           task: 'Comprehensive 4-Hour Intensive Study Marathon',
           goal: 'Master Calculus, Physics Electromagnetism, and Organic Chemistry',
@@ -2302,7 +2325,7 @@ export default function App() {
         };
 
         const MASTER_OCT22_REGISTRY: DailyRegistryDayRecord = {
-          userId: activeMasterUid,
+          userId: activeUid,
           date: MASTER_OCT22_DATE,
           dayOfWeek: 'Thursday',
           subjectsStudied: ['Mathematics', 'Physics', 'Chemistry'],
@@ -2374,61 +2397,154 @@ export default function App() {
           updatedAt: '2026-10-22T15:00:00.000Z',
         };
 
-        // Load Daily Registry History
-        console.log(`[Firebase Auth] Loading Daily Registry for BK NITHILESHVAR`);
-        const historyAll = await loadUserDailyRegistryAll(activeMasterUid);
-        if (!isCancelled) {
-          const merged = { ...(historyAll || {}) };
-          if (!merged[MASTER_OCT22_DATE] || (merged[MASTER_OCT22_DATE].totalStudyMinutes || 0) < 240) {
-            merged[MASTER_OCT22_DATE] = MASTER_OCT22_REGISTRY;
-            saveDailyRegistryDay(activeMasterUid, MASTER_OCT22_DATE, MASTER_OCT22_REGISTRY).catch(() => {});
-          }
-          setDailyRegistryHistory(merged);
+        // Load Daily Registry History across activeUid, masterUid, and localStorage non-destructively
+        console.log(`[Firebase Auth] Loading Daily Registry for BK NITHILESHVAR...`);
+        const historyUser = await loadUserDailyRegistryAll(activeUid);
+        const historyMaster = activeUid !== activeMasterUid ? await loadUserDailyRegistryAll(activeMasterUid) : {};
+        const historyLocal = (() => {
           try {
-            localStorage.setItem('flocus_daily_registry_history', JSON.stringify(merged));
+            const raw = localStorage.getItem('flocus_daily_registry_history');
+            return raw ? JSON.parse(raw) : {};
+          } catch { return {}; }
+        })();
+
+        if (!isCancelled) {
+          const mergedHistory: Record<string, DailyRegistryDayRecord> = {};
+          const allDates = Array.from(new Set([
+            ...Object.keys(historyLocal || {}),
+            ...Object.keys(historyMaster || {}),
+            ...Object.keys(historyUser || {}),
+            MASTER_OCT22_DATE,
+          ]));
+
+          allDates.forEach(dateKey => {
+            const lDay = historyLocal[dateKey];
+            const mDay = historyMaster[dateKey];
+            const uDay = historyUser[dateKey];
+
+            const mergedEntries = {
+              ...(lDay?.entries || {}),
+              ...(mDay?.entries || {}),
+              ...(uDay?.entries || {}),
+            };
+
+            const dayOfWeek = uDay?.dayOfWeek || mDay?.dayOfWeek || lDay?.dayOfWeek || getDayOfWeekName(new Date(dateKey + 'T12:00:00'));
+            const totalMins = Math.max(
+              uDay?.totalStudyMinutes || 0,
+              mDay?.totalStudyMinutes || 0,
+              lDay?.totalStudyMinutes || 0,
+              Object.values(mergedEntries).reduce((sum: number, e: any) => sum + (e.durationMinutes || 0), 0)
+            );
+
+            mergedHistory[dateKey] = {
+              userId: activeUid,
+              date: dateKey,
+              dayOfWeek,
+              subjectsStudied: Array.from(new Set([
+                ...(lDay?.subjectsStudied || []),
+                ...(mDay?.subjectsStudied || []),
+                ...(uDay?.subjectsStudied || []),
+              ])),
+              plannedTasks: uDay?.plannedTasks?.length ? uDay.plannedTasks : (mDay?.plannedTasks?.length ? mDay.plannedTasks : (lDay?.plannedTasks || [])),
+              completedTasks: uDay?.completedTasks?.length ? uDay.completedTasks : (mDay?.completedTasks?.length ? mDay.completedTasks : (lDay?.completedTasks || [])),
+              studySessions: uDay?.studySessions?.length ? uDay.studySessions : (mDay?.studySessions?.length ? mDay.studySessions : (lDay?.studySessions || [])),
+              totalStudyMinutes: totalMins,
+              tuitionRevisionProgress: uDay?.tuitionRevisionProgress || mDay?.tuitionRevisionProgress || lDay?.tuitionRevisionProgress || '',
+              dailyGoals: uDay?.dailyGoals?.length ? uDay.dailyGoals : (mDay?.dailyGoals?.length ? mDay.dailyGoals : (lDay?.dailyGoals || [])),
+              dailySummaryNotes: uDay?.dailySummaryNotes || mDay?.dailySummaryNotes || lDay?.dailySummaryNotes || '',
+              aiSummary: uDay?.aiSummary || mDay?.aiSummary || lDay?.aiSummary || '',
+              examPrepProgress: uDay?.examPrepProgress || mDay?.examPrepProgress || lDay?.examPrepProgress || '',
+              entries: mergedEntries,
+              updatedAt: new Date().toISOString(),
+            };
+          });
+
+          if (!mergedHistory[MASTER_OCT22_DATE] || (mergedHistory[MASTER_OCT22_DATE].totalStudyMinutes || 0) < 240) {
+            mergedHistory[MASTER_OCT22_DATE] = MASTER_OCT22_REGISTRY;
+            saveDailyRegistryDay(activeUid, MASTER_OCT22_DATE, MASTER_OCT22_REGISTRY).catch(() => {});
+          }
+
+          setDailyRegistryHistory(mergedHistory);
+          try {
+            localStorage.setItem('flocus_daily_registry_history', JSON.stringify(mergedHistory));
           } catch {}
         }
 
-        // Real-time listener for Daily Registry
+        // Real-time listener for Daily Registry (non-destructive merge)
         if (dailyRegistryUnsubRef.current) dailyRegistryUnsubRef.current();
-        dailyRegistryUnsubRef.current = subscribeToUserDailyRegistry(activeMasterUid, data => {
-          if (!isCancelled) {
-            const newData = data && typeof data === 'object' ? { ...data } : {};
-            if (!newData[MASTER_OCT22_DATE] || (newData[MASTER_OCT22_DATE].totalStudyMinutes || 0) < 240) {
-              newData[MASTER_OCT22_DATE] = MASTER_OCT22_REGISTRY;
-            }
-            setDailyRegistryHistory(newData);
-            try {
-              localStorage.setItem('flocus_daily_registry_history', JSON.stringify(newData));
-            } catch {}
+        dailyRegistryUnsubRef.current = subscribeToUserDailyRegistry(activeUid, data => {
+          if (!isCancelled && data && typeof data === 'object') {
+            setDailyRegistryHistory(prev => {
+              const merged = { ...prev };
+              Object.entries(data).forEach(([dateKey, dayVal]) => {
+                if (!dayVal || typeof dayVal !== 'object') return;
+                const prevDay = merged[dateKey];
+                merged[dateKey] = {
+                  ...prevDay,
+                  ...dayVal,
+                  totalStudyMinutes: Math.max(prevDay?.totalStudyMinutes || 0, dayVal.totalStudyMinutes || 0),
+                  entries: {
+                    ...(prevDay?.entries || {}),
+                    ...(dayVal.entries || {}),
+                  },
+                };
+              });
+              if (!merged[MASTER_OCT22_DATE] || (merged[MASTER_OCT22_DATE].totalStudyMinutes || 0) < 240) {
+                merged[MASTER_OCT22_DATE] = MASTER_OCT22_REGISTRY;
+              }
+              try {
+                localStorage.setItem('flocus_daily_registry_history', JSON.stringify(merged));
+              } catch {}
+              return merged;
+            });
           }
         });
 
-        // Load Focus & Study Sessions History
-        console.log(`[Firebase Auth] Loading Focus & Study Sessions for BK NITHILESHVAR`);
-        const [focusRecords, studyRecords] = await Promise.all([
-          loadUserFocusSessions(activeMasterUid),
-          loadUserStudySessions(activeMasterUid),
+        // Load Focus & Study Sessions History across activeUid, master UID, and localStorage
+        console.log(`[Firebase Auth] Loading Focus & Study Sessions for BK NITHILESHVAR (UID: ${activeUid})`);
+        const [focusUser, studyUser, focusMaster, studyMaster] = await Promise.all([
+          loadUserFocusSessions(activeUid),
+          loadUserStudySessions(activeUid),
+          activeUid !== activeMasterUid ? loadUserFocusSessions(activeMasterUid) : Promise.resolve([]),
+          activeUid !== activeMasterUid ? loadUserStudySessions(activeMasterUid) : Promise.resolve([]),
         ]);
         if (!isCancelled) {
+          let localSessions: FocusSessionRecord[] = [];
+          try {
+            const rawLocal = localStorage.getItem('flocus_user_focus_sessions');
+            if (rawLocal) {
+              const parsed = JSON.parse(rawLocal);
+              if (Array.isArray(parsed)) localSessions = parsed;
+            }
+          } catch {}
+
           const mergedMap: Record<string, FocusSessionRecord> = {};
-          [...(studyRecords || []), ...(focusRecords || [])].forEach(rec => {
+          [
+            ...(studyUser || []),
+            ...(focusUser || []),
+            ...(studyMaster || []),
+            ...(focusMaster || []),
+            ...localSessions,
+          ].forEach(rec => {
             if (rec && rec.sessionId && !mergedMap[rec.sessionId]) {
               mergedMap[rec.sessionId] = rec;
             }
           });
           if (!mergedMap['study_20261022_master_4h']) {
             mergedMap['study_20261022_master_4h'] = MASTER_OCT22_RECORD;
-            saveStudySessionRecord(activeMasterUid, MASTER_OCT22_RECORD).catch(() => {});
+            saveStudySessionRecord(activeUid, MASTER_OCT22_RECORD).catch(() => {});
           }
           const mergedList = Object.values(mergedMap);
           mergedList.sort((a, b) => (b.startTimestamp || 0) - (a.startTimestamp || 0));
           setUserFocusSessions(mergedList);
+          try {
+            localStorage.setItem('flocus_user_focus_sessions', JSON.stringify(mergedList));
+          } catch {}
           console.log(`[Firebase Auth] Restored ${mergedList.length} total study & focus sessions for BK NITHILESHVAR`);
         }
 
         if (focusSessionsUnsubRef.current) focusSessionsUnsubRef.current();
-        focusSessionsUnsubRef.current = subscribeToUserFocusSessions(activeMasterUid, records => {
+        focusSessionsUnsubRef.current = subscribeToUserFocusSessions(activeUid, records => {
           if (!isCancelled) {
             setUserFocusSessions(prev => {
               const map: Record<string, FocusSessionRecord> = {};
@@ -2440,6 +2556,9 @@ export default function App() {
               }
               const combined = Object.values(map);
               combined.sort((a, b) => (b.startTimestamp || 0) - (a.startTimestamp || 0));
+              try {
+                localStorage.setItem('flocus_user_focus_sessions', JSON.stringify(combined));
+              } catch {}
               return combined;
             });
           }
@@ -2485,9 +2604,9 @@ export default function App() {
         }
 
         const today = getLocalDateString();
-        if (!historyAll || !historyAll[today]) {
-          saveDailyRegistryDay(activeMasterUid, today, {
-            userId: activeMasterUid,
+        if (!historyUser[today] && !historyLocal[today]) {
+          saveDailyRegistryDay(activeUid, today, {
+            userId: activeUid,
             date: today,
             dayOfWeek: getDayOfWeekName(),
             subjectsStudied: [],
@@ -6630,21 +6749,25 @@ export default function App() {
               existingSessions={userFocusSessions}
               onOpenHistory={() => setStudyHistoryModalOpen(true)}
               onSessionCompleted={rec => {
-                setUserFocusSessions(prev => [rec, ...prev]);
-                if (currentUser) {
-                  const today = getLocalDateString();
-                  recordDailyRegistryActivity({
-                    timestamp: new Date().toISOString(),
-                    time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-                    eventType: 'study_session',
-                    description: `Study Session: ${rec.subject} (${rec.actualElapsedMinutes}m)`,
-                    durationMinutes: rec.actualElapsedMinutes,
-                    status: 'completed',
-                    rating: 5,
-                    topic: rec.task,
-                    subject: rec.subject,
-                  }, today);
-                }
+                setUserFocusSessions(prev => {
+                  const next = [rec, ...prev.filter(s => s.sessionId !== rec.sessionId)];
+                  try {
+                    localStorage.setItem('flocus_user_focus_sessions', JSON.stringify(next));
+                  } catch {}
+                  return next;
+                });
+                const today = getLocalDateString();
+                recordDailyRegistryActivity({
+                  timestamp: new Date().toISOString(),
+                  time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+                  eventType: 'study_session',
+                  description: `Study Session: ${rec.subject} (${rec.actualElapsedMinutes}m)`,
+                  durationMinutes: rec.actualElapsedMinutes,
+                  status: 'completed',
+                  rating: 5,
+                  topic: rec.task,
+                  subject: rec.subject,
+                }, today);
               }}
             />
           </div>

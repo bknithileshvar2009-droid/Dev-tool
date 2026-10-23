@@ -28,6 +28,8 @@ import {
   query,
   orderBy,
   persistentLocalCache,
+  persistentMultipleTabManager,
+  setLogLevel,
 } from 'firebase/firestore';
 import firebaseConfig from '../../firebase-applet-config.json';
 
@@ -53,9 +55,16 @@ const customDbId = (configAny.firestoreDatabaseId &&
   ? configAny.firestoreDatabaseId
   : undefined;
 
+// Suppress Firestore SDK internal gRPC connection error logs when only RTDB is provisioned
+try {
+  setLogLevel('silent');
+} catch {}
+
 // Initialize Firestore with persistentLocalCache for offline support
 export const db = initializeFirestore(app, {
-  localCache: persistentLocalCache(),
+  localCache: persistentLocalCache({
+    tabManager: persistentMultipleTabManager(),
+  }),
 }, customDbId);
 
 // Initialize Firebase Auth
@@ -63,6 +72,30 @@ export const auth = getAuth(app);
 
 // Initialize Realtime Database
 export const rtdb = getDatabase(app, configAny.databaseURL || "https://gen-lang-client-0079533925-default-rtdb.firebaseio.com");
+
+/**
+ * Helper to prevent Firestore calls from hanging indefinitely when Firestore (default) DB is unprovisioned or offline
+ */
+function withFsTimeout<T>(promise: Promise<T>, ms = 1800): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<T>((_, reject) =>
+      setTimeout(() => reject(new Error(`Firestore operation timed out after ${ms}ms`)), ms)
+    ),
+  ]);
+}
+
+/**
+ * Helper to prevent RTDB calls from hanging indefinitely when offline
+ */
+function withRtdbTimeout<T>(promise: Promise<T>, ms = 4500): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<T>((_, reject) =>
+      setTimeout(() => reject(new Error(`RTDB operation timed out after ${ms}ms`)), ms)
+    ),
+  ]);
+}
 
 export type SyncStatus = 'idle' | 'saving' | 'saved' | 'error' | 'offline';
 
@@ -272,85 +305,119 @@ export async function ensureSingleUserAuth(): Promise<User | null> {
 export async function saveUserDashboard(uid: string, dashboardData: Partial<UserDashboardPayload> & { config?: any; tasks?: any[]; updatedAt?: string }): Promise<boolean> {
   const targetUid = uid || SINGLE_USER_MASTER_UID;
 
+  // Load existing remote data first to avoid overwriting populated remote fields with empty defaults
+  const existingRemote = await loadUserDashboard(targetUid);
+
   const payload: UserDashboardPayload = {
     userId: targetUid,
-    config: dashboardData.config || {},
-    tasks: Array.isArray(dashboardData.tasks) ? dashboardData.tasks : [],
-    dailyRegister: Array.isArray(dashboardData.dailyRegister) ? dashboardData.dailyRegister : (dashboardData.config?.dailyRegister || []),
-    scratchpad: typeof dashboardData.scratchpad === 'string' ? dashboardData.scratchpad : '',
-    presets: Array.isArray(dashboardData.presets) ? dashboardData.presets : [],
-    wallpaperFavorites: Array.isArray(dashboardData.wallpaperFavorites) ? dashboardData.wallpaperFavorites : [],
-    wallpaperRecent: Array.isArray(dashboardData.wallpaperRecent) ? dashboardData.wallpaperRecent : [],
-    favouriteQuotes: Array.isArray(dashboardData.favouriteQuotes) ? dashboardData.favouriteQuotes : [],
-    studyStreak: typeof dashboardData.studyStreak === 'number' ? dashboardData.studyStreak : (typeof dashboardData.pomoStreak === 'number' ? dashboardData.pomoStreak : 0),
+    config: dashboardData.config && Object.keys(dashboardData.config).length > 0
+      ? dashboardData.config
+      : (existingRemote?.config || {}),
+    tasks: Array.isArray(dashboardData.tasks) && dashboardData.tasks.length > 0
+      ? dashboardData.tasks
+      : (existingRemote?.tasks || []),
+    dailyRegister: Array.isArray(dashboardData.dailyRegister) && dashboardData.dailyRegister.length > 0
+      ? dashboardData.dailyRegister
+      : (existingRemote?.dailyRegister || []),
+    scratchpad: typeof dashboardData.scratchpad === 'string' && dashboardData.scratchpad.length > 0
+      ? dashboardData.scratchpad
+      : (existingRemote?.scratchpad || ''),
+    presets: Array.isArray(dashboardData.presets) && dashboardData.presets.length > 0
+      ? dashboardData.presets
+      : (existingRemote?.presets || []),
+    wallpaperFavorites: Array.isArray(dashboardData.wallpaperFavorites)
+      ? dashboardData.wallpaperFavorites
+      : (existingRemote?.wallpaperFavorites || []),
+    wallpaperRecent: Array.isArray(dashboardData.wallpaperRecent)
+      ? dashboardData.wallpaperRecent
+      : (existingRemote?.wallpaperRecent || []),
+    favouriteQuotes: Array.isArray(dashboardData.favouriteQuotes)
+      ? dashboardData.favouriteQuotes
+      : (existingRemote?.favouriteQuotes || []),
+    studyStreak: typeof dashboardData.studyStreak === 'number'
+      ? dashboardData.studyStreak
+      : (existingRemote?.studyStreak || 0),
     updatedAt: dashboardData.updatedAt || new Date().toISOString(),
   };
 
   const cleanedPayload = JSON.parse(JSON.stringify(payload));
 
+  let rtdbSuccess = false;
   let firestoreSuccess = false;
 
-  // 1. Primary Cloud Firestore write
-  const fsPath = `users/${targetUid}/dashboard/data`;
+  // 1. Primary Realtime Database write (awaited with timeout)
+  try {
+    const rtdbTargetRef = rtdbRef(rtdb, `users/${targetUid}/dashboard`);
+    await withRtdbTimeout(rtdbSet(rtdbTargetRef, cleanedPayload));
+    rtdbSuccess = true;
+    console.log(`[Firebase RTDB] Write succeeded for UID: ${targetUid}`);
+  } catch (rtdbErr) {
+    console.warn(`[Firebase RTDB Notice] Write failed for UID: ${targetUid}:`, rtdbErr);
+  }
+
+  // 2. Secondary Cloud Firestore mirror write (bounded by timeout so unprovisioned Firestore never hangs)
   try {
     const docRef = doc(db, 'users', targetUid, 'dashboard', 'data');
-    await setDoc(docRef, cleanedPayload, { merge: true });
+    await withFsTimeout(setDoc(docRef, cleanedPayload, { merge: true }));
     firestoreSuccess = true;
-    console.log(`[Firebase Firestore] Write succeeded for UID: ${targetUid} at path: ${fsPath}`);
+    console.log(`[Firebase Firestore] Write succeeded for UID: ${targetUid}`);
   } catch (fsErr) {
-    console.warn(`[Firebase Firestore Error] Write failed for UID: ${targetUid} at path ${fsPath}:`, fsErr);
+    console.warn(`[Firebase Firestore Notice] Write skipped/timed out for UID: ${targetUid}`);
   }
 
-  // 2. RTDB mirror disabled
-  let rtdbSuccess = false;
-  
-  if (firestoreSuccess || rtdbSuccess) {
-    return true;
-  }
-
-  // If both failed due to offline/timeout, return true to allow local offline persistence without breaking sync
-  console.warn(`[Firebase Save Notice] Operating in offline mode for UID: ${targetUid}. Changes saved locally.`);
-  return true;
+  return rtdbSuccess || firestoreSuccess;
 }
 
 /**
  * Load user dashboard data from Firebase
- * Queries Cloud Firestore (users/{uid}/dashboard/data) as primary.
+ * Queries Realtime Database (users/{uid}/dashboard) as primary, and merges with Cloud Firestore fallback.
  */
 export async function loadUserDashboard(uid: string): Promise<UserDashboardPayload | null> {
   const targetUid = uid || SINGLE_USER_MASTER_UID;
 
   console.log(`[Firebase] Starting dashboard restoration query for UID: ${targetUid}`);
 
-  // 1. Try Cloud Firestore (Primary path: users/{uid}/dashboard/data)
-  const fsPath = `users/${targetUid}/dashboard/data`;
-  try {
-    const docRef = doc(db, 'users', targetUid, 'dashboard', 'data');
-    const snap = await getDoc(docRef);
-    if (snap.exists()) {
-      const val = snap.data();
-      if (val && (val.config || val.tasks)) {
-        console.log(`[Firebase Firestore] Found saved dashboard for UID: ${targetUid} at path ${fsPath}`);
-        return val as UserDashboardPayload;
-      }
-    }
-  } catch (fsErr) {
-    console.warn(`[Firebase Firestore Notice] Read failed for UID: ${targetUid}:`, fsErr);
-  }
+  let rtdbData: UserDashboardPayload | null = null;
+  let fsData: UserDashboardPayload | null = null;
 
-  // 2. Optional RTDB fallback
+  // 1. Primary: Realtime Database (users/{targetUid}/dashboard)
   try {
     const rtdbTargetRef = rtdbRef(rtdb, `users/${targetUid}/dashboard`);
-    const snap = await rtdbGet(rtdbTargetRef);
+    const snap = await withRtdbTimeout(rtdbGet(rtdbTargetRef));
     if (snap.exists()) {
       const val = snap.val();
-      if (val && (val.config || val.tasks)) {
-        return val as UserDashboardPayload;
+      if (val && (val.config || val.tasks || val.presets || val.dailyRegister)) {
+        console.log(`[Firebase RTDB] Found saved dashboard for UID: ${targetUid}`);
+        rtdbData = val as UserDashboardPayload;
+      }
+    }
+  } catch (rtdbErr) {
+    console.warn(`[Firebase RTDB Notice] Read notice for UID: ${targetUid}:`, rtdbErr);
+  }
+
+  // 2. Secondary: Cloud Firestore (users/{targetUid}/dashboard/data) with fast timeout
+  try {
+    const docRef = doc(db, 'users', targetUid, 'dashboard', 'data');
+    const snap = await withFsTimeout(getDoc(docRef));
+    if (snap.exists()) {
+      const val = snap.data();
+      if (val && (val.config || val.tasks || val.presets || val.dailyRegister)) {
+        fsData = val as UserDashboardPayload;
       }
     }
   } catch {}
 
-  return null;
+  if (rtdbData && fsData) {
+    return {
+      ...fsData,
+      ...rtdbData,
+      presets: (rtdbData.presets?.length ? rtdbData.presets : fsData.presets) || [],
+      tasks: (rtdbData.tasks?.length ? rtdbData.tasks : fsData.tasks) || [],
+      dailyRegister: (rtdbData.dailyRegister?.length ? rtdbData.dailyRegister : fsData.dailyRegister) || [],
+    };
+  }
+
+  return rtdbData || fsData || null;
 }
 
 /**
@@ -364,7 +431,32 @@ export function subscribeToUserDashboard(
   onError?: (error: unknown) => void
 ): () => void {
   const targetUid = uid || SINGLE_USER_MASTER_UID;
+  const unsubs: Array<() => void> = [];
 
+  // 1. Primary RTDB listener
+  try {
+    const rtdbTargetRef = rtdbRef(rtdb, `users/${targetUid}/dashboard`);
+    const unsubRtdb = rtdbOnValue(
+      rtdbTargetRef,
+      (snap) => {
+        if (snap.exists()) {
+          const val = snap.val();
+          if (val && (val.config || val.tasks || val.presets)) {
+            onData(val as UserDashboardPayload);
+          }
+        }
+      },
+      (err) => {
+        console.warn(`[RTDB Sync Notice] UID: ${targetUid}:`, err?.message || err);
+        if (onError) onError(err);
+      }
+    );
+    unsubs.push(unsubRtdb);
+  } catch (err) {
+    console.warn(`[RTDB Sync Error] Failed to bind listener for UID: ${targetUid}:`, err);
+  }
+
+  // 2. Secondary Firestore listener
   try {
     const docRef = doc(db, 'users', targetUid, 'dashboard', 'data');
     const unsubscribeFirestore = onSnapshot(
@@ -381,16 +473,18 @@ export function subscribeToUserDashboard(
           }
         }
       },
-      (err) => {
-        console.warn(`[Firestore Sync Notice] UID: ${targetUid}:`, err?.message || err);
-        if (onError) onError(err);
-      }
+      () => {}
     );
-    return unsubscribeFirestore;
-  } catch (err) {
-    console.warn(`[Firestore Sync Error] Failed to bind listener for UID: ${targetUid}:`, err);
-    return () => {};
-  }
+    unsubs.push(unsubscribeFirestore);
+  } catch {}
+
+  return () => {
+    unsubs.forEach(fn => {
+      try {
+        fn();
+      } catch {}
+    });
+  };
 }
 
 export {
@@ -591,47 +685,66 @@ export async function saveDailyRegistryDay(
   const nowIso = new Date().toISOString();
   const dayOfWeek = record.dayOfWeek || getDayOfWeekName(new Date(date + 'T12:00:00'));
 
+  // Load existing record first to merge non-destructively
+  const existingDoc = await loadDailyRegistryDay(uid, date);
+  const existingEntries = existingDoc?.entries || {};
+  const mergedEntries = { ...existingEntries, ...(record.entries || {}) };
+
   const payload: DailyRegistryDayRecord = {
     userId: uid,
     date,
     dayOfWeek,
-    subjectsStudied: Array.isArray(record.subjectsStudied) ? record.subjectsStudied : [],
-    plannedTasks: Array.isArray(record.plannedTasks) ? record.plannedTasks : [],
-    completedTasks: Array.isArray(record.completedTasks) ? record.completedTasks : [],
-    studySessions: Array.isArray(record.studySessions) ? record.studySessions : [],
-    totalStudyMinutes: typeof record.totalStudyMinutes === 'number' ? record.totalStudyMinutes : 0,
-    tuitionRevisionProgress: record.tuitionRevisionProgress || '',
-    dailyGoals: Array.isArray(record.dailyGoals) ? record.dailyGoals : [],
-    dailySummaryNotes: record.dailySummaryNotes || '',
-    aiSummary: record.aiSummary || '',
-    examPrepProgress: record.examPrepProgress || '',
-    entries: record.entries || {},
+    subjectsStudied: Array.isArray(record.subjectsStudied) && record.subjectsStudied.length > 0
+      ? Array.from(new Set([...(existingDoc?.subjectsStudied || []), ...record.subjectsStudied]))
+      : (existingDoc?.subjectsStudied || []),
+    plannedTasks: Array.isArray(record.plannedTasks) && record.plannedTasks.length > 0
+      ? record.plannedTasks
+      : (existingDoc?.plannedTasks || []),
+    completedTasks: Array.isArray(record.completedTasks) && record.completedTasks.length > 0
+      ? record.completedTasks
+      : (existingDoc?.completedTasks || []),
+    studySessions: Array.isArray(record.studySessions) && record.studySessions.length > 0
+      ? record.studySessions
+      : (existingDoc?.studySessions || []),
+    totalStudyMinutes: typeof record.totalStudyMinutes === 'number' && record.totalStudyMinutes > 0
+      ? Math.max(record.totalStudyMinutes, existingDoc?.totalStudyMinutes || 0)
+      : (existingDoc?.totalStudyMinutes || 0),
+    tuitionRevisionProgress: record.tuitionRevisionProgress || existingDoc?.tuitionRevisionProgress || '',
+    dailyGoals: Array.isArray(record.dailyGoals) && record.dailyGoals.length > 0
+      ? record.dailyGoals
+      : (existingDoc?.dailyGoals || []),
+    dailySummaryNotes: record.dailySummaryNotes || existingDoc?.dailySummaryNotes || '',
+    aiSummary: record.aiSummary || existingDoc?.aiSummary || '',
+    examPrepProgress: record.examPrepProgress || existingDoc?.examPrepProgress || '',
+    entries: mergedEntries,
     updatedAt: record.updatedAt || nowIso,
   };
 
   const cleanedPayload = JSON.parse(JSON.stringify(payload));
   let rtdbSuccess = false;
+  let fsSuccess = false;
 
-  // 1. Primary write to Realtime Database (zero-latency, reliable) - DISABLED
-  // try {
-  //   const targetRef = rtdbRef(rtdb, `users/${uid}/dailyRegistry/${date}`);
-  //   await rtdbSet(targetRef, cleanedPayload);
-  //   rtdbSuccess = true;
-  //   console.log(`[DailyRegistry RTDB] Saved day ${date} for UID: ${uid}`);
-  // } catch (rtdbErr) {
-  //   console.warn(`[DailyRegistry RTDB Warning] Save day ${date}:`, rtdbErr);
-  // }
-  rtdbSuccess = true;
+  // 1. Primary: Write to Realtime Database and AWAIT with timeout
+  try {
+    const targetRef = rtdbRef(rtdb, `users/${uid}/dailyRegistry/${date}`);
+    await withRtdbTimeout(rtdbSet(targetRef, cleanedPayload));
+    rtdbSuccess = true;
+    console.log(`[DailyRegistry RTDB] Saved day ${date} for UID: ${uid}`);
+  } catch (rtdbErr) {
+    console.warn(`[DailyRegistry RTDB Warning] Save day ${date}:`, rtdbErr);
+  }
 
-  // 2. Mirror write to Cloud Firestore (non-blocking)
+  // 2. Secondary: Write to Cloud Firestore with timeout
   try {
     const docRef = doc(db, 'users', uid, 'dailyRegistry', date);
-    setDoc(docRef, cleanedPayload, { merge: true }).catch(err => {
-      console.warn(`[DailyRegistry Firestore Mirror Notice] ${date}:`, err?.message || err);
-    });
-  } catch {}
+    await withFsTimeout(setDoc(docRef, cleanedPayload, { merge: true }));
+    fsSuccess = true;
+    console.log(`[DailyRegistry Firestore] Saved day ${date} for UID: ${uid}`);
+  } catch (fsErr) {
+    console.warn(`[DailyRegistry Firestore Notice] Save day ${date} skipped/timed out`);
+  }
 
-  return rtdbSuccess;
+  return rtdbSuccess || fsSuccess;
 }
 
 /**
@@ -648,15 +761,14 @@ export async function saveDailyRegistryEntryItem(
 
   const nowIso = new Date().toISOString();
   let rtdbSuccess = false;
+  let fsSuccess = false;
 
-  // 1. Realtime Database primary write
-  /*
+  // 1. Primary: Realtime Database write with timeout
   try {
     const entryRef = rtdbRef(rtdb, `users/${uid}/dailyRegistry/${date}/entries/${entry.id}`);
-    await rtdbSet(entryRef, entry);
+    await withRtdbTimeout(rtdbSet(entryRef, entry));
     rtdbSuccess = true;
 
-    // Also update day-level metadata in RTDB if supplied
     if (dayMeta) {
       const metaToUpdate: Record<string, any> = {
         updatedAt: nowIso,
@@ -666,40 +778,54 @@ export async function saveDailyRegistryEntryItem(
       if (typeof dayMeta.totalStudyMinutes === 'number') {
         metaToUpdate.totalStudyMinutes = dayMeta.totalStudyMinutes;
       }
+      if (dayMeta.tuitionRevisionProgress) {
+        metaToUpdate.tuitionRevisionProgress = dayMeta.tuitionRevisionProgress;
+      }
+      if (dayMeta.dailySummaryNotes) {
+        metaToUpdate.dailySummaryNotes = dayMeta.dailySummaryNotes;
+      }
       const dayRef = rtdbRef(rtdb, `users/${uid}/dailyRegistry/${date}`);
-      rtdbUpdate(dayRef, metaToUpdate).catch(() => {});
+      await withRtdbTimeout(rtdbUpdate(dayRef, metaToUpdate));
     }
 
     console.log(`[DailyRegistry RTDB] Entry ${entry.id} saved for ${date}`);
   } catch (rtdbErr) {
-    console.warn(`[DailyRegistry RTDB Warning] Failed saving entry ${entry.id}:`, rtdbErr);
+    console.warn(`[DailyRegistry RTDB Warning] Entry ${entry.id}:`, rtdbErr);
   }
-  */
-  rtdbSuccess = true; // Pretend it succeeded
 
-  // 2. Cloud Firestore mirror write
+  // 2. Secondary: Cloud Firestore write with timeout
   try {
-    const rawPayload = {
+    const existingDay = await loadDailyRegistryDay(uid, date);
+    const existingEntries = existingDay?.entries || {};
+    const updatedEntries = { ...existingEntries, [entry.id]: entry };
+
+    const updatePayload: Record<string, any> = {
       userId: uid,
       date,
       updatedAt: nowIso,
-      entries: {
-        [entry.id]: entry,
-      },
-      ...(dayMeta || {}),
+      entries: updatedEntries,
+      totalStudyMinutes: Math.max(
+        dayMeta?.totalStudyMinutes ?? 0,
+        existingDay?.totalStudyMinutes ?? 0,
+        Object.values(updatedEntries).reduce((sum, e) => sum + (e.durationMinutes || 0), 0)
+      ),
     };
-    const cleanedPayload = JSON.parse(JSON.stringify(rawPayload));
+
+    if (dayMeta?.tuitionRevisionProgress) updatePayload.tuitionRevisionProgress = dayMeta.tuitionRevisionProgress;
+    if (dayMeta?.dailySummaryNotes) updatePayload.dailySummaryNotes = dayMeta.dailySummaryNotes;
+
+    const cleanedPayload = JSON.parse(JSON.stringify(updatePayload));
     const docRef = doc(db, 'users', uid, 'dailyRegistry', date);
-    setDoc(docRef, cleanedPayload, { merge: true }).catch(err => {
-      console.warn(`[DailyRegistry Firestore Mirror Notice] Entry ${entry.id}:`, err?.message || err);
-    });
+    await withFsTimeout(setDoc(docRef, cleanedPayload, { merge: true }));
+    fsSuccess = true;
+    console.log(`[DailyRegistry Firestore] Entry ${entry.id} saved for ${date}`);
   } catch {}
 
-  return rtdbSuccess;
+  return rtdbSuccess || fsSuccess;
 }
 
 /**
- * Update dailySummaryNotes and aiSummary in Firestore without altering other records
+ * Update dailySummaryNotes and aiSummary in Firebase without altering other records
  */
 export async function updateDailySummaryNotes(
   uid: string,
@@ -720,22 +846,25 @@ export async function updateDailySummaryNotes(
     payload.aiSummary = aiSummary;
   }
 
+  let rtdbSuccess = false;
+  let fsSuccess = false;
+
+  try {
+    const dayRef = rtdbRef(rtdb, `users/${uid}/dailyRegistry/${date}`);
+    await withRtdbTimeout(rtdbUpdate(dayRef, payload));
+    rtdbSuccess = true;
+  } catch (rtdbErr) {
+    console.warn(`[DailyRegistry RTDB Notice] Failed to update summary notes:`, rtdbErr);
+  }
+
   try {
     const docRef = doc(db, 'users', uid, 'dailyRegistry', date);
-    await setDoc(docRef, payload, { merge: true });
+    await withFsTimeout(setDoc(docRef, payload, { merge: true }));
+    fsSuccess = true;
     console.log(`[DailyRegistry Firestore] Updated summary notes and AI summary for ${date}`);
+  } catch {}
 
-    // Optional non-blocking RTDB mirror - DISABLED
-    // try {
-    //   const dayRef = rtdbRef(rtdb, `users/${uid}/dailyRegistry/${date}`);
-    //   rtdbUpdate(dayRef, payload).catch(() => {});
-    // } catch {}
-
-    return true;
-  } catch (err) {
-    console.error(`[DailyRegistry Error] Failed to update summary notes:`, err);
-    throw err;
-  }
+  return rtdbSuccess || fsSuccess;
 }
 
 /**
@@ -747,33 +876,35 @@ export async function deleteDailyRegistryEntry(
   entryId: string
 ): Promise<boolean> {
   if (!uid || !date || !entryId) return false;
+  let rtdbSuccess = false;
+  let fsSuccess = false;
+
+  try {
+    const entryRef = rtdbRef(rtdb, `users/${uid}/dailyRegistry/${date}/entries/${entryId}`);
+    await withRtdbTimeout(rtdbRemove(entryRef));
+    rtdbSuccess = true;
+  } catch {}
+
   try {
     const docRef = doc(db, 'users', uid, 'dailyRegistry', date);
-    const snap = await getDoc(docRef);
+    const snap = await withFsTimeout(getDoc(docRef));
     if (snap.exists()) {
       const data = snap.data();
       const entries = { ...(data.entries || {}) };
       delete entries[entryId];
-      await setDoc(docRef, {
+      await withFsTimeout(setDoc(docRef, {
         entries,
         updatedAt: new Date().toISOString(),
-      }, { merge: true });
+      }, { merge: true }));
     }
+    fsSuccess = true;
+  } catch {}
 
-    // try {
-    //   const entryRef = rtdbRef(rtdb, `users/${uid}/dailyRegistry/${date}/entries/${entryId}`);
-    //   rtdbRemove(entryRef).catch(() => {});
-    // } catch {}
-
-    return true;
-  } catch (err) {
-    console.warn(`[DailyRegistry Delete Notice] Entry delete notice:`, err);
-    throw err;
-  }
+  return rtdbSuccess || fsSuccess;
 }
 
 /**
- * Load a specific day's Daily Registry record from Firestore
+ * Load a specific day's Daily Registry record from RTDB and Firestore (merged)
  */
 export async function loadDailyRegistryDay(
   uid: string,
@@ -781,17 +912,43 @@ export async function loadDailyRegistryDay(
 ): Promise<DailyRegistryDayRecord | null> {
   if (!uid || !date) return null;
 
+  let rtdbRecord: DailyRegistryDayRecord | null = null;
+  let fsRecord: DailyRegistryDayRecord | null = null;
+
   try {
-    const docRef = doc(db, 'users', uid, 'dailyRegistry', date);
-    const snap = await getDoc(docRef);
+    const dayRef = rtdbRef(rtdb, `users/${uid}/dailyRegistry/${date}`);
+    const snap = await withRtdbTimeout(rtdbGet(dayRef));
     if (snap.exists()) {
-      return snap.data() as DailyRegistryDayRecord;
+      const val = snap.val();
+      if (val && typeof val === 'object') {
+        rtdbRecord = val as DailyRegistryDayRecord;
+      }
     }
-  } catch (err) {
-    console.warn(`[DailyRegistry Firestore Read Notice] Day ${date}:`, err);
+  } catch (rtdbErr) {
+    console.warn(`[DailyRegistry RTDB Read Notice] Day ${date}:`, rtdbErr);
   }
 
-  return null;
+  try {
+    const docRef = doc(db, 'users', uid, 'dailyRegistry', date);
+    const snap = await withFsTimeout(getDoc(docRef));
+    if (snap.exists()) {
+      fsRecord = snap.data() as DailyRegistryDayRecord;
+    }
+  } catch {}
+
+  if (fsRecord && rtdbRecord) {
+    return {
+      ...fsRecord,
+      ...rtdbRecord,
+      totalStudyMinutes: Math.max(fsRecord.totalStudyMinutes || 0, rtdbRecord.totalStudyMinutes || 0),
+      entries: {
+        ...(fsRecord.entries || {}),
+        ...(rtdbRecord.entries || {}),
+      },
+    };
+  }
+
+  return rtdbRecord || fsRecord || null;
 }
 
 /**
@@ -807,7 +964,7 @@ export async function loadUserDailyRegistryAll(
   // 1. Primary: Realtime Database users/{uid}/dailyRegistry
   try {
     const targetRef = rtdbRef(rtdb, `users/${uid}/dailyRegistry`);
-    const snap = await rtdbGet(targetRef);
+    const snap = await withRtdbTimeout(rtdbGet(targetRef));
     if (snap.exists()) {
       const val = snap.val();
       if (val && typeof val === 'object') {
@@ -826,9 +983,10 @@ export async function loadUserDailyRegistryAll(
   // 2. Secondary: Cloud Firestore users/{uid}/dailyRegistry
   try {
     const collRef = collection(db, 'users', uid, 'dailyRegistry');
-    const snap = await getDocs(collRef);
+    const snap = await withFsTimeout(getDocs(collRef));
     if (!snap.empty) {
       snap.forEach(docSnap => {
+        if (docSnap.id === '_probe') return;
         const docData = docSnap.data() as DailyRegistryDayRecord;
         if (!mergedResult[docSnap.id]) {
           mergedResult[docSnap.id] = docData;
@@ -836,14 +994,17 @@ export async function loadUserDailyRegistryAll(
           // Merge entries if Firestore has entries not in RTDB
           const existingEntries = mergedResult[docSnap.id].entries || {};
           const fsEntries = docData.entries || {};
-          mergedResult[docSnap.id].entries = { ...fsEntries, ...existingEntries };
+          mergedResult[docSnap.id] = {
+            ...docData,
+            ...mergedResult[docSnap.id],
+            totalStudyMinutes: Math.max(mergedResult[docSnap.id].totalStudyMinutes || 0, docData.totalStudyMinutes || 0),
+            entries: { ...fsEntries, ...existingEntries },
+          };
         }
       });
       console.log(`[DailyRegistry Firestore] Merged history, total days: ${Object.keys(mergedResult).length}`);
     }
-  } catch (err) {
-    console.warn(`[DailyRegistry Firestore Read Notice]:`, err);
-  }
+  } catch {}
 
   // 3. Fallback safeguard: if network queries failed or returned empty
   if (Object.keys(mergedResult).length === 0) {
@@ -854,7 +1015,7 @@ export async function loadUserDailyRegistryAll(
 }
 
 /**
- * Subscribe to real-time changes of the user's daily registry via Firestore
+ * Subscribe to real-time changes of the user's daily registry via RTDB and Firestore
  */
 export function subscribeToUserDailyRegistry(
   uid: string,
@@ -863,6 +1024,38 @@ export function subscribeToUserDailyRegistry(
 ): () => void {
   if (!uid) return () => {};
 
+  const unsubs: Array<() => void> = [];
+
+  // 1. Primary RTDB listener
+  try {
+    const targetRef = rtdbRef(rtdb, `users/${uid}/dailyRegistry`);
+    const unsubRtdb = rtdbOnValue(
+      targetRef,
+      (snapshot) => {
+        if (snapshot.exists()) {
+          const val = snapshot.val();
+          if (val && typeof val === 'object') {
+            const result: Record<string, DailyRegistryDayRecord> = {};
+            Object.entries(val).forEach(([dateKey, dayData]) => {
+              if (dateKey !== '_probe' && dayData && typeof dayData === 'object') {
+                result[dateKey] = dayData as DailyRegistryDayRecord;
+              }
+            });
+            if (Object.keys(result).length > 0) {
+              onUpdate(result);
+            }
+          }
+        }
+      },
+      (err) => {
+        console.warn(`[DailyRegistry RTDB Listener Notice] UID ${uid}:`, err);
+        if (onError) onError(err);
+      }
+    );
+    unsubs.push(unsubRtdb);
+  } catch {}
+
+  // 2. Secondary Firestore listener
   try {
     const collRef = collection(db, 'users', uid, 'dailyRegistry');
     const unsubscribe = onSnapshot(
@@ -871,36 +1064,47 @@ export function subscribeToUserDailyRegistry(
         if (!snapshot.empty) {
           const result: Record<string, DailyRegistryDayRecord> = {};
           snapshot.forEach(docSnap => {
-            result[docSnap.id] = docSnap.data() as DailyRegistryDayRecord;
+            if (docSnap.id !== '_probe') {
+              result[docSnap.id] = docSnap.data() as DailyRegistryDayRecord;
+            }
           });
           onUpdate(result);
         }
       },
-      (err) => {
-        console.warn(`[DailyRegistry Firestore Listener Notice] UID ${uid}:`, err);
-        if (onError) onError(err);
-      }
+      () => {}
     );
-    return unsubscribe;
-  } catch (err) {
-    console.warn(`[DailyRegistry Listener Init Error]:`, err);
-    return () => {};
-  }
+    unsubs.push(unsubscribe);
+  } catch {}
+
+  return () => {
+    unsubs.forEach(fn => {
+      try {
+        fn();
+      } catch {}
+    });
+  };
 }
 
 /**
  * Diagnostic utility: Verify if current user has write permissions to Daily Registry path
  */
 export async function verifyWritePermission(uid: string): Promise<boolean> {
+  if (!uid) return false;
+  let rtdbOk = false;
+  let fsOk = false;
   try {
-    // const probeRef = rtdbRef(rtdb, `users/${uid}/dailyRegistry/_probe`);
-    // await rtdbSet(probeRef, { probe: Date.now(), timestamp: new Date().toISOString() });
-    console.log(`[Diagnostic] Write permission VERIFIED (mocked) for users/${uid}/dailyRegistry/`);
-    return true;
+    const probeRef = rtdbRef(rtdb, `users/${uid}/dailyRegistry/_probe`);
+    await withRtdbTimeout(rtdbSet(probeRef, { probe: Date.now(), timestamp: new Date().toISOString() }));
+    rtdbOk = true;
   } catch (err) {
-    console.error(`[Diagnostic] Write permission DENIED for users/${uid}/dailyRegistry/:`, err);
-    return false;
+    console.warn(`[Diagnostic] RTDB write permission notice for users/${uid}/dailyRegistry:`, err);
   }
+  try {
+    const probeDoc = doc(db, 'users', uid, 'dailyRegistry', '_probe');
+    await withFsTimeout(setDoc(probeDoc, { probe: Date.now(), timestamp: new Date().toISOString() }, { merge: true }));
+    fsOk = true;
+  } catch {}
+  return rtdbOk || fsOk;
 }
 
 export async function saveDailyRegister(
@@ -909,29 +1113,40 @@ export async function saveDailyRegister(
   payload: any
 ): Promise<boolean> {
   if (!uid || !date) return false;
+  let rtdbOk = false;
+  let fsOk = false;
+  try {
+    const rRef = rtdbRef(rtdb, `users/${uid}/daily_registers/${date}`);
+    await withRtdbTimeout(rtdbSet(rRef, { ...payload, date, timestamp: Date.now() }));
+    rtdbOk = true;
+  } catch {}
   try {
     const docRef = doc(db, 'users', uid, 'daily_registers', date);
-    await setDoc(docRef, {
+    await withFsTimeout(setDoc(docRef, {
       ...payload,
       date,
       timestamp: serverTimestamp(),
-    });
-    return true;
-  } catch (err) {
-    console.error('[Firebase] Save Daily Register Error:', err);
-    return false;
-  }
+    }));
+    fsOk = true;
+  } catch {}
+  return rtdbOk || fsOk;
 }
 
 export async function loadDailyRegisters(uid: string): Promise<any[]> {
   if (!uid) return [];
   try {
+    const rRef = rtdbRef(rtdb, `users/${uid}/daily_registers`);
+    const snap = await withRtdbTimeout(rtdbGet(rRef));
+    if (snap.exists() && snap.val() && typeof snap.val() === 'object') {
+      return Object.values(snap.val());
+    }
+  } catch {}
+  try {
     const collRef = collection(db, 'users', uid, 'daily_registers');
     const q = query(collRef, orderBy('date', 'desc'));
-    const snap = await getDocs(q);
+    const snap = await withFsTimeout(getDocs(q));
     return snap.docs.map(d => d.data());
-  } catch (err) {
-    console.error('[Firebase] Load Daily Registers Error:', err);
+  } catch {
     return [];
   }
 }
@@ -960,8 +1175,8 @@ export interface FocusSessionRecord {
 
 /**
  * Save a complete Focus Session Record to Firebase
- * Dual-write: Cloud Firestore users/{uid}/focusSessions/{sessionId}
- * Mirror: Realtime Database users/{uid}/focusSessions/{sessionId}
+ * Primary: Realtime Database users/{uid}/focusSessions/{sessionId}
+ * Mirror: Cloud Firestore users/{uid}/focusSessions/{sessionId}
  */
 export async function saveFocusSessionRecord(
   uid: string,
@@ -969,29 +1184,30 @@ export async function saveFocusSessionRecord(
 ): Promise<boolean> {
   if (!uid || !record?.sessionId) return false;
 
-  // Clean undefined fields for Firestore
   const cleaned: Record<string, any> = {};
   for (const [k, v] of Object.entries(record)) {
     if (v !== undefined) cleaned[k] = v;
   }
 
+  let rtdbSuccess = false;
   let firestoreSuccess = false;
+
   try {
-    const docRef = doc(db, 'users', uid, 'focusSessions', record.sessionId);
-    await setDoc(docRef, cleaned, { merge: true });
-    firestoreSuccess = true;
-    console.log(`[Firebase Firestore] Saved focus session ${record.sessionId} for UID: ${uid}`);
+    const rtdbTargetRef = rtdbRef(rtdb, `users/${uid}/focusSessions/${record.sessionId}`);
+    await withRtdbTimeout(rtdbSet(rtdbTargetRef, cleaned));
+    rtdbSuccess = true;
   } catch (err) {
-    console.warn(`[Firebase Firestore] Failed to save focus session ${record.sessionId}:`, err);
+    console.warn(`[Firebase RTDB] Failed to save focus session ${record.sessionId}:`, err);
   }
 
-  // Non-blocking RTDB mirror - DISABLED
-  // try {
-  //   const rtdbTargetRef = rtdbRef(rtdb, `users/${uid}/focusSessions/${record.sessionId}`);
-  //   rtdbSet(rtdbTargetRef, cleaned).catch(() => {});
-  // } catch {}
+  try {
+    const docRef = doc(db, 'users', uid, 'focusSessions', record.sessionId);
+    await withFsTimeout(setDoc(docRef, cleaned, { merge: true }));
+    firestoreSuccess = true;
+    console.log(`[Firebase Firestore] Saved focus session ${record.sessionId} for UID: ${uid}`);
+  } catch {}
 
-  return firestoreSuccess;
+  return rtdbSuccess || firestoreSuccess;
 }
 
 /**
@@ -1054,36 +1270,37 @@ export async function saveStudySessionRecord(
     if (v !== undefined) cleaned[k] = v;
   }
 
-  let rtdbSuccess = true; // DISABLED RTDB, pretend success
+  let rtdbSuccess = false;
+  let firestoreSuccess = false;
 
-  // 1. Primary write to Realtime Database - DISABLED
-  // try {
-  //   const rtdbTargetRef = rtdbRef(rtdb, `users/${uid}/studySessions/${record.sessionId}`);
-  //   await rtdbSet(rtdbTargetRef, cleaned);
-  //   rtdbSuccess = true;
-  //   console.log(`[Firebase RTDB] Saved study session ${record.sessionId} at users/${uid}/studySessions`);
-  // } catch (err) {
-  //   console.warn(`[Firebase RTDB Warning] Failed to save study session ${record.sessionId}:`, err);
-  // }
+  // 1. Primary write to Realtime Database (bounded by timeout)
+  try {
+    const rtdbTargetRef = rtdbRef(rtdb, `users/${uid}/studySessions/${record.sessionId}`);
+    await withRtdbTimeout(rtdbSet(rtdbTargetRef, cleaned));
+    rtdbSuccess = true;
+    console.log(`[Firebase RTDB] Saved study session ${record.sessionId} at users/${uid}/studySessions`);
+  } catch (err) {
+    console.warn(`[Firebase RTDB Warning] Failed to save study session ${record.sessionId}:`, err);
+  }
 
-  // 2. Non-blocking Cloud Firestore mirror
+  // 2. Cloud Firestore mirror (bounded by fast timeout so it never hangs)
   try {
     const docRef = doc(db, 'users', uid, 'studySessions', record.sessionId);
-    setDoc(docRef, cleaned, { merge: true }).catch(err => {
-      console.warn(`[Firebase Firestore Mirror Notice] studySessions ${record.sessionId}:`, err?.message || err);
-    });
+    await withFsTimeout(setDoc(docRef, cleaned, { merge: true }));
+    firestoreSuccess = true;
+    console.log(`[Firebase Firestore] Saved study session ${record.sessionId} at users/${uid}/studySessions`);
   } catch {}
 
-  // 3. Clear active session in RTDB once session is completed/stopped - DISABLED
-  // try {
-  //   const activeRef = rtdbRef(rtdb, `users/${uid}/activeStudySession`);
-  //   rtdbRemove(activeRef).catch(() => {});
-  // } catch {}
+  // 3. Clear active session in RTDB once session is completed/stopped
+  try {
+    const activeRef = rtdbRef(rtdb, `users/${uid}/activeStudySession`);
+    await withRtdbTimeout(rtdbRemove(activeRef), 2000);
+  } catch {}
 
-  // Also maintain focusSessions record for backwards compatibility
-  // saveFocusSessionRecord(uid, record).catch(() => {});
+  // Maintain focusSessions record for backwards compatibility
+  saveFocusSessionRecord(uid, record).catch(() => {});
 
-  return rtdbSuccess;
+  return rtdbSuccess || firestoreSuccess;
 }
 
 export async function seedMissingSession(uid: string): Promise<boolean> {
@@ -1115,19 +1332,18 @@ export async function saveActiveStudySession(
   sessionData: any
 ): Promise<boolean> {
   if (!uid) return false;
-  // try {
-  //   const activeRef = rtdbRef(rtdb, `users/${uid}/activeStudySession`);
-  //   if (sessionData === null) {
-  //     await rtdbRemove(activeRef);
-  //   } else {
-  //     await rtdbSet(activeRef, sessionData);
-  //   }
-  //   return true;
-  // } catch (err) {
-  //   console.warn('[Firebase RTDB] saveActiveStudySession notice:', err);
-  //   return false;
-  // }
-  return true; // DISABLED RTDB, pretend success
+  try {
+    const activeRef = rtdbRef(rtdb, `users/${uid}/activeStudySession`);
+    if (sessionData === null) {
+      await withRtdbTimeout(rtdbRemove(activeRef), 3000);
+    } else {
+      await withRtdbTimeout(rtdbSet(activeRef, sessionData), 3000);
+    }
+    return true;
+  } catch (err) {
+    console.warn('[Firebase RTDB] saveActiveStudySession notice:', err);
+    return false;
+  }
 }
 
 /**
@@ -1137,7 +1353,7 @@ export async function loadActiveStudySession(uid: string): Promise<any | null> {
   if (!uid) return null;
   try {
     const activeRef = rtdbRef(rtdb, `users/${uid}/activeStudySession`);
-    const snap = await rtdbGet(activeRef);
+    const snap = await withRtdbTimeout(rtdbGet(activeRef), 3000);
     if (snap.exists()) {
       return snap.val();
     }
@@ -1148,7 +1364,7 @@ export async function loadActiveStudySession(uid: string): Promise<any | null> {
 }
 
 /**
- * Load all user study session records from users/{uid}/studySessions
+ * Load all user study session records from users/{uid}/studySessions and focusSessions
  * Merges RTDB and Firestore, deduplicates by sessionId, sorts by startTimestamp descending
  */
 export async function loadUserStudySessions(uid: string): Promise<FocusSessionRecord[]> {
@@ -1159,7 +1375,7 @@ export async function loadUserStudySessions(uid: string): Promise<FocusSessionRe
   // 1. Primary: Realtime Database users/{uid}/studySessions
   try {
     const rtdbTargetRef = rtdbRef(rtdb, `users/${uid}/studySessions`);
-    const snap = await rtdbGet(rtdbTargetRef);
+    const snap = await withRtdbTimeout(rtdbGet(rtdbTargetRef));
     if (snap.exists()) {
       const val = snap.val();
       if (val && typeof val === 'object') {
@@ -1175,11 +1391,11 @@ export async function loadUserStudySessions(uid: string): Promise<FocusSessionRe
     console.warn(`[Firebase RTDB Read Warning] studySessions UID: ${uid}:`, rtdbErr);
   }
 
-  // 2. Secondary: Cloud Firestore users/{uid}/studySessions (merge missing records)
+  // 2. Secondary: Cloud Firestore users/{uid}/studySessions (merge missing records with fast timeout)
   try {
     const collRef = collection(db, 'users', uid, 'studySessions');
     const q = query(collRef, orderBy('startTimestamp', 'desc'));
-    const snap = await getDocs(q);
+    const snap = await withFsTimeout(getDocs(q));
     if (!snap.empty) {
       snap.docs.forEach(d => {
         const rec = d.data() as FocusSessionRecord;
@@ -1189,17 +1405,17 @@ export async function loadUserStudySessions(uid: string): Promise<FocusSessionRe
       });
       console.log(`[Firebase Firestore] Merged study sessions, total count: ${Object.keys(sessionsMap).length}`);
     }
-  } catch (fsErr) {
-    console.warn(`[Firebase Firestore Read Notice] studySessions UID: ${uid}:`, fsErr);
-  }
+  } catch {}
 
-  // 3. Fallback to focusSessions if studySessions collection has no records
-  if (Object.keys(sessionsMap).length === 0) {
+  // 3. Also merge any records from focusSessions collection (RTDB + Firestore)
+  try {
     const focusRecs = await loadUserFocusSessions(uid);
     focusRecs.forEach(rec => {
-      if (rec?.sessionId) sessionsMap[rec.sessionId] = rec;
+      if (rec?.sessionId && !sessionsMap[rec.sessionId]) {
+        sessionsMap[rec.sessionId] = rec;
+      }
     });
-  }
+  } catch {}
 
   const result = Object.values(sessionsMap);
   result.sort((a, b) => (b.startTimestamp || 0) - (a.startTimestamp || 0));
@@ -1215,15 +1431,17 @@ export async function saveUserProfile(
 ): Promise<boolean> {
   if (!uid) return false;
   try {
-    // const rtdbProfileRef = rtdbRef(rtdb, `users/${uid}/profile/info`);
-    // await rtdbSet(rtdbProfileRef, profile);
+    try {
+      const rtdbProfileRef = rtdbRef(rtdb, `users/${uid}/profile/info`);
+      await withRtdbTimeout(rtdbSet(rtdbProfileRef, profile));
+    } catch {}
     try {
       const docRef = doc(db, 'users', uid, 'profile', 'info');
-      setDoc(docRef, profile, { merge: true }).catch(() => {});
+      await withFsTimeout(setDoc(docRef, profile, { merge: true }));
     } catch {}
     return true;
   } catch (err) {
-    console.warn('[Firebase RTDB] Failed to save user profile:', err);
+    console.warn('[Firebase] Failed to save user profile:', err);
     return false;
   }
 }
@@ -1237,7 +1455,7 @@ export async function getUserProfile(uid: string): Promise<{ displayName?: strin
   // 1. Try Realtime Database users/{uid}/profile/info
   try {
     const rtdbProfileRef = rtdbRef(rtdb, `users/${uid}/profile/info`);
-    const snap = await rtdbGet(rtdbProfileRef);
+    const snap = await withRtdbTimeout(rtdbGet(rtdbProfileRef));
     if (snap.exists()) {
       const val = snap.val();
       if (val && typeof val === 'object') {
@@ -1260,7 +1478,7 @@ export async function getUserProfile(uid: string): Promise<{ displayName?: strin
   // 3. Try Cloud Firestore users/{uid}/profile/info
   try {
     const docRef = doc(db, 'users', uid, 'profile', 'info');
-    const snap = await getDoc(docRef);
+    const snap = await withFsTimeout(getDoc(docRef));
     if (snap.exists()) {
       const data = snap.data() as any;
       return {
@@ -1274,44 +1492,53 @@ export async function getUserProfile(uid: string): Promise<{ displayName?: strin
 }
 
 /**
- * Load all user focus session records from Firebase (Firestore primary, RTDB fallback)
+ * Load all user focus session records from Firebase (merges RTDB primary and Firestore)
  */
 export async function loadUserFocusSessions(uid: string): Promise<FocusSessionRecord[]> {
   if (!uid) return [];
 
-  // 1. Try Cloud Firestore
-  try {
-    const collRef = collection(db, 'users', uid, 'focusSessions');
-    const q = query(collRef, orderBy('startTimestamp', 'desc'));
-    const snap = await getDocs(q);
-    if (!snap.empty) {
-      return snap.docs.map(d => d.data() as FocusSessionRecord);
-    }
-  } catch (fsErr) {
-    console.warn(`[Firebase Firestore] Query failed for focusSessions UID: ${uid}:`, fsErr);
-  }
+  const sessionsMap: Record<string, FocusSessionRecord> = {};
 
-  // 2. Fallback to RTDB
+  // 1. Primary: Realtime Database focusSessions
   try {
     const rtdbTargetRef = rtdbRef(rtdb, `users/${uid}/focusSessions`);
-    const snap = await rtdbGet(rtdbTargetRef);
+    const snap = await withRtdbTimeout(rtdbGet(rtdbTargetRef));
     if (snap.exists()) {
       const val = snap.val();
       if (val && typeof val === 'object') {
-        const records = Object.values(val) as FocusSessionRecord[];
-        records.sort((a, b) => (b.startTimestamp || 0) - (a.startTimestamp || 0));
-        return records;
+        Object.values(val).forEach((rec: any) => {
+          if (rec && rec.sessionId && !sessionsMap[rec.sessionId]) {
+            sessionsMap[rec.sessionId] = rec as FocusSessionRecord;
+          }
+        });
       }
     }
   } catch (rtdbErr) {
     console.warn(`[Firebase RTDB] Query failed for focusSessions UID: ${uid}:`, rtdbErr);
   }
 
-  return [];
+  // 2. Secondary: Cloud Firestore focusSessions (bounded by timeout)
+  try {
+    const collRef = collection(db, 'users', uid, 'focusSessions');
+    const q = query(collRef, orderBy('startTimestamp', 'desc'));
+    const snap = await withFsTimeout(getDocs(q));
+    if (!snap.empty) {
+      snap.docs.forEach(d => {
+        const rec = d.data() as FocusSessionRecord;
+        if (rec && rec.sessionId && !sessionsMap[rec.sessionId]) {
+          sessionsMap[rec.sessionId] = rec;
+        }
+      });
+    }
+  } catch {}
+
+  const records = Object.values(sessionsMap);
+  records.sort((a, b) => (b.startTimestamp || 0) - (a.startTimestamp || 0));
+  return records;
 }
 
 /**
- * Real-time listener for user focus sessions
+ * Real-time listener for user focus & study sessions across Firestore and RTDB
  */
 export function subscribeToUserFocusSessions(
   uid: string,
@@ -1319,31 +1546,131 @@ export function subscribeToUserFocusSessions(
 ): () => void {
   if (!uid) return () => {};
 
-  try {
-    const rtdbTargetRef = rtdbRef(rtdb, `users/${uid}/focusSessions`);
-    const unsubscribe = rtdbOnValue(rtdbTargetRef, snapshot => {
-      if (snapshot.exists()) {
-        const val = snapshot.val();
-        if (val && typeof val === 'object') {
-          const records = Object.values(val) as FocusSessionRecord[];
-          records.sort((a, b) => (b.startTimestamp || 0) - (a.startTimestamp || 0));
-          onData(records);
-          return;
-        }
-      }
-      onData([]);
-    }, err => {
-      console.warn('[Firebase RTDB] subscribeToUserFocusSessions error:', err);
-    });
+  const combinedMap: Record<string, FocusSessionRecord> = {};
+  const emitMerged = () => {
+    const list = Object.values(combinedMap);
+    if (list.length > 0) {
+      list.sort((a, b) => (b.startTimestamp || 0) - (a.startTimestamp || 0));
+      onData(list);
+    }
+  };
 
-    return () => {
+  const unsubs: Array<() => void> = [];
+
+  // 1. Firestore studySessions listener
+  try {
+    const studyColl = collection(db, 'users', uid, 'studySessions');
+    const unsubFsStudy = onSnapshot(
+      studyColl,
+      snap => {
+        if (!snap.empty) {
+          snap.docs.forEach(d => {
+            const rec = d.data() as FocusSessionRecord;
+            if (rec && rec.sessionId) combinedMap[rec.sessionId] = rec;
+          });
+          emitMerged();
+        }
+      },
+      err => {
+        console.warn('[Firebase Firestore] subscribeToUserFocusSessions (studySessions) notice:', err);
+      }
+    );
+    unsubs.push(unsubFsStudy);
+  } catch {}
+
+  // 2. Firestore focusSessions listener
+  try {
+    const focusColl = collection(db, 'users', uid, 'focusSessions');
+    const unsubFsFocus = onSnapshot(
+      focusColl,
+      snap => {
+        if (!snap.empty) {
+          snap.docs.forEach(d => {
+            const rec = d.data() as FocusSessionRecord;
+            if (rec && rec.sessionId) combinedMap[rec.sessionId] = rec;
+          });
+          emitMerged();
+        }
+      },
+      err => {
+        console.warn('[Firebase Firestore] subscribeToUserFocusSessions (focusSessions) notice:', err);
+      }
+    );
+    unsubs.push(unsubFsFocus);
+  } catch {}
+
+  // 3. RTDB studySessions & focusSessions listeners
+  try {
+    const rtdbStudyRef = rtdbRef(rtdb, `users/${uid}/studySessions`);
+    const unsubRtdbStudy = rtdbOnValue(
+      rtdbStudyRef,
+      snapshot => {
+        if (snapshot.exists()) {
+          const val = snapshot.val();
+          if (val && typeof val === 'object') {
+            Object.values(val).forEach((rec: any) => {
+              if (rec && rec.sessionId) combinedMap[rec.sessionId] = rec as FocusSessionRecord;
+            });
+            emitMerged();
+          }
+        }
+      },
+      () => {}
+    );
+    unsubs.push(unsubRtdbStudy);
+  } catch {}
+
+  try {
+    const rtdbFocusRef = rtdbRef(rtdb, `users/${uid}/focusSessions`);
+    const unsubRtdbFocus = rtdbOnValue(
+      rtdbFocusRef,
+      snapshot => {
+        if (snapshot.exists()) {
+          const val = snapshot.val();
+          if (val && typeof val === 'object') {
+            Object.values(val).forEach((rec: any) => {
+              if (rec && rec.sessionId) combinedMap[rec.sessionId] = rec as FocusSessionRecord;
+            });
+            emitMerged();
+          }
+        }
+      },
+      () => {}
+    );
+    unsubs.push(unsubRtdbFocus);
+  } catch {}
+
+  return () => {
+    unsubs.forEach(fn => {
       try {
-        unsubscribe();
+        fn();
       } catch {}
-    };
-  } catch {
-    return () => {};
-  }
+    });
+  };
 }
 
 
+
+export async function seedFourHourStudySession(uid: string): Promise<boolean> {
+  const sessionId = `seed_study_4h_${Date.now()}`;
+  // 4 hours in minutes
+  const durationMinutes = 240;
+  
+  const record: FocusSessionRecord = {
+    sessionId,
+    userId: uid,
+    subject: 'General Study',
+    task: 'Manual Seeding - Oct 22 Session',
+    plannedDurationMinutes: durationMinutes,
+    actualElapsedMinutes: durationMinutes,
+    startTimestamp: new Date('2026-10-22T08:00:00.000Z').getTime(),
+    endTimestamp: new Date('2026-10-22T12:00:00.000Z').getTime(),
+    status: 'completed',
+    fullscreenExitsCount: 0,
+    approvedBreaksCount: 0,
+    totalBreakMinutes: 0,
+    createdAt: new Date().toISOString(),
+  };
+
+  return saveStudySessionRecord(uid, record);
+}
