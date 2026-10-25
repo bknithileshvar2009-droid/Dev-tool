@@ -66,6 +66,8 @@ import {
   VolumeX,
   Shuffle,
   ExternalLink,
+  Laptop,
+  Timer,
 } from 'lucide-react';
 import {
   wallpaperProvider,
@@ -140,6 +142,8 @@ const ALL_WIDGET_KEYS: { id: DashboardWidgetKey; label: string; icon: any }[] = 
   { id: 'pomodoro', label: 'Pomodoro Focus Timer', icon: Zap },
   { id: 'scratchpad', label: 'Daily Register & Notes', icon: StickyNote },
   { id: 'breakStats', label: 'Break Statistics & Wellness', icon: Coffee },
+  { id: 'studyCommandCenter', label: 'Study Command Center', icon: Timer },
+  { id: 'studyTracker', label: 'Study Time Tracker (Nothing App)', icon: Laptop },
 ];
 
 export default function VisualCustomizationStudio({

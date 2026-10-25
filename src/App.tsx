@@ -141,6 +141,7 @@ import BreakStatisticsWidget from './components/BreakStatisticsWidget';
 import StudyHistoryModal from './components/StudyHistoryModal';
 import StudyCommandCenterModal from './components/studyCommandCenter/StudyCommandCenterModal';
 import StudyCommandCenterWidget from './components/studyCommandCenter/StudyCommandCenterWidget';
+import { StudyTrackerWidget } from './components/StudyTrackerWidget';
 import {
   STUDIO_LAYOUT_ARRANGEMENTS,
   computePresetWidgetCoordinates,
@@ -726,12 +727,12 @@ const DEFAULT_CONFIG: DashboardConfig = {
     height: 240,
   },
   studyTracker: {
-    visible: false,
+    visible: true,
     glassBg: true,
     x: null,
     y: null,
-    width: 380,
-    height: 260,
+    width: 640,
+    height: 480,
   },
   studyCommandCenter: {
     visible: true,
@@ -1321,6 +1322,7 @@ export default function App() {
   const scratchpadRef = useRef<HTMLDivElement | null>(null);
   const breakStatsRef = useRef<HTMLDivElement | null>(null);
   const studyCommandCenterRef = useRef<HTMLDivElement | null>(null);
+  const studyTrackerRef = useRef<HTMLDivElement | null>(null);
   const dashboardRef = useRef<HTMLDivElement | null>(null);
   const [placementModal, setPlacementModal] = useState<{
     isOpen: boolean;
@@ -1670,6 +1672,7 @@ export default function App() {
       nameWidget: { ...p.nameWidget, glassBg: !transparent },
       scratchpad: { ...p.scratchpad, glassBg: !transparent },
       studyCommandCenter: p.studyCommandCenter ? { ...p.studyCommandCenter, glassBg: !transparent } : undefined,
+      studyTracker: p.studyTracker ? { ...p.studyTracker, glassBg: !transparent } : undefined,
     }));
   }, [updateConfig]);
 
@@ -1684,7 +1687,8 @@ export default function App() {
       !config.nameWidget.glassBg &&
       !config.pomodoro?.glassBg &&
       !config.scratchpad?.glassBg &&
-      !config.studyCommandCenter?.glassBg
+      !config.studyCommandCenter?.glassBg &&
+      !config.studyTracker?.glassBg
     );
   }, [config]);
 
@@ -1707,6 +1711,7 @@ export default function App() {
     { id: 'pomodoro', label: 'Deep Focus Study Station & Brevo Break', defaultW: 380, defaultH: 260, icon: Flame, category: 'Focus' },
     { id: 'scratchpad', label: 'Daily Register (Study Notes & Summary)', defaultW: 400, defaultH: 340, icon: FileText, category: 'Register' },
     { id: 'studyCommandCenter', label: 'Study Command Center (Chronos Dual-Sync)', defaultW: 380, defaultH: 260, icon: Sparkles, category: 'Study' },
+    { id: 'studyTracker', label: 'Study Time Tracker (Nothing App)', defaultW: 640, defaultH: 480, icon: Laptop, category: 'App' },
   ], []);
 
   const hexToRgba = useCallback((hex: string, alpha: number): string => {
@@ -2133,7 +2138,11 @@ export default function App() {
       const mergedConfig: DashboardConfig = {
         ...DEFAULT_CONFIG,
         ...cloudData.config,
-        studyTracker: { ...DEFAULT_CONFIG.studyTracker, visible: false },
+        studyTracker: {
+          ...DEFAULT_CONFIG.studyTracker,
+          ...(cloudData.config.studyTracker || {}),
+          visible: cloudData.config.studyTracker?.visible ?? true,
+        },
         optionalFeatures: { ...DEFAULT_OPTIONAL_FEATURES, ...(cloudData.config.optionalFeatures || {}) },
         personalization: { ...DEFAULT_PERSONALIZATION, ...(cloudData.config.personalization || {}) },
         typography: {
@@ -4477,6 +4486,8 @@ export default function App() {
         return breakStatsRef.current;
       case 'studyCommandCenter':
         return studyCommandCenterRef.current;
+      case 'studyTracker':
+        return studyTrackerRef.current;
     }
   };
 
@@ -6591,6 +6602,60 @@ export default function App() {
               activeTask={activeTask}
               onOpenCommandCenter={() => setStudyCommandCenterOpen(true)}
               glassBg={config.studyCommandCenter?.glassBg ?? true}
+            />
+          </div>
+
+          {showHandles && (
+            <>
+              <div className="resize-handle resize-se text-cyan-400" data-handle="se" />
+              <div className="resize-handle resize-sw text-cyan-400" data-handle="sw" />
+              <div className="resize-handle resize-ne text-cyan-400" data-handle="ne" />
+              <div className="resize-handle resize-nw text-cyan-400" data-handle="nw" />
+            </>
+          )}
+        </div>
+      )}
+
+      {/* ================= WIDGET: STUDY TIME TRACKER (NOTHING APP) ================= */}
+      {config.studyTracker?.visible !== false && !isFocusModeActive && (
+        <div
+          ref={studyTrackerRef}
+          id="studyTracker-widget"
+          data-widget-id="studyTracker"
+          onPointerDown={e => handlePointerDown(e, 'studyTracker')}
+          onWheel={e => handleWheelZoom(e, 'studyTracker')}
+          className={`dashboard-widget z-20 px-3.5 py-3 flex flex-col justify-between ${
+            config.optionalFeatures.widgetCustomization ? 'cursor-grab active:cursor-grabbing' : 'cursor-default'
+          } ${getWidgetMaterialClass(config.studyTracker?.glassBg ?? true)} ${focusedWidget === 'studyTracker' ? 'widget-focused' : ''} ${radiusClass}`}
+          style={{
+            width: config.studyTracker?.width || 640,
+            height: config.studyTracker?.height || 480,
+            left: config.studyTracker?.x ?? Math.max(20, Math.round((window.innerWidth - 640) / 2)),
+            top: config.studyTracker?.y ?? 240,
+            ...getWidgetComputedStyle('studyTracker'),
+          }}
+        >
+          {showHandles && (
+            <>
+              <div className="drag-pill absolute top-2 left-1/2 -translate-x-1/2 w-8 h-1 rounded-full bg-cyan-400/40 pointer-events-none" />
+              <button
+                type="button"
+                onClick={e => {
+                  e.stopPropagation();
+                  toggleWidgetTransparency('studyTracker');
+                }}
+                title={config.studyTracker?.glassBg ? 'Switch Study Tracker to Transparent' : 'Switch to Glass Card'}
+                className="no-drag absolute top-2 right-2 px-2 py-0.5 rounded-md bg-black/60 hover:bg-black/90 text-[9px] font-mono text-white/80 hover:text-white border border-white/20 transition cursor-pointer z-30 flex items-center gap-1 shadow-sm"
+              >
+                <span className={`w-1.5 h-1.5 rounded-full ${config.studyTracker?.glassBg ? 'bg-cyan-400' : 'bg-amber-400'}`} />
+                <span>{config.studyTracker?.glassBg ? 'Glass' : 'Transp.'}</span>
+              </button>
+            </>
+          )}
+
+          <div className="flex-1 overflow-hidden flex flex-col">
+            <StudyTrackerWidget
+              glassBg={config.studyTracker?.glassBg ?? true}
             />
           </div>
 
@@ -9758,6 +9823,50 @@ export default function App() {
                 </div>
               </div>
 
+              {/* Study Time Tracker Widget */}
+              <div className="flex items-center justify-between text-xs text-white/80 py-1.5 border-b border-white/5">
+                <div className="flex flex-col">
+                  <div className="flex items-center gap-1.5">
+                    <span className="font-medium text-white">Study Time Tracker</span>
+                    <span className="text-[9px] px-1 rounded bg-amber-500/20 text-amber-300 font-mono">Nothing App</span>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => updateConfig(p => ({
+                      ...p,
+                      studyTracker: {
+                        x: p.studyTracker?.x ?? null,
+                        y: p.studyTracker?.y ?? null,
+                        width: p.studyTracker?.width ?? 640,
+                        height: p.studyTracker?.height ?? 480,
+                        visible: p.studyTracker?.visible ?? true,
+                        glassBg: !(p.studyTracker?.glassBg ?? true),
+                      },
+                    }))}
+                    className="text-[10px] text-white/50 hover:text-white underline cursor-pointer"
+                  >
+                    {config.studyTracker?.glassBg ? 'Glass' : 'Transparent'}
+                  </button>
+                  <input
+                    type="checkbox"
+                    checked={config.studyTracker?.visible !== false}
+                    onChange={e => updateConfig(p => ({
+                      ...p,
+                      studyTracker: {
+                        x: p.studyTracker?.x ?? null,
+                        y: p.studyTracker?.y ?? null,
+                        width: p.studyTracker?.width ?? 640,
+                        height: p.studyTracker?.height ?? 480,
+                        glassBg: p.studyTracker?.glassBg ?? true,
+                        visible: e.target.checked,
+                      },
+                    }))}
+                    className="w-4 h-4 rounded text-cyan-500"
+                  />
+                </div>
+              </div>
+
             </div>
 
             <div className="p-4 rounded-2xl bg-white/[0.03] border border-white/10 space-y-3">
@@ -10106,6 +10215,8 @@ export default function App() {
               { id: 'motivation', label: 'Daily Motivation', visible: config.motivation.visible, glass: config.motivation.glassBg },
               { id: 'nameWidget', label: 'Centum Badge', visible: config.nameWidget.visible, glass: config.nameWidget.glassBg },
               { id: 'pomodoro', label: 'Deep Focus Timer', visible: config.pomodoro?.visible ?? true, glass: config.pomodoro?.glassBg ?? true },
+              { id: 'studyTracker', label: 'Study Time Tracker', visible: config.studyTracker?.visible !== false, glass: config.studyTracker?.glassBg ?? true },
+              { id: 'studyCommandCenter', label: 'Study Command Center', visible: config.studyCommandCenter?.visible !== false, glass: config.studyCommandCenter?.glassBg ?? true },
             ].map(item => (
               <div key={item.id} className="flex items-center justify-between p-1.5 rounded-lg bg-white/[0.02] hover:bg-white/[0.05] text-[11px]">
                 <label className="flex items-center gap-2 cursor-pointer flex-1">
@@ -10259,6 +10370,7 @@ export default function App() {
           activeTask={activeTask}
         />
       )}
+
 
       {/* Offline Status Banner */}
       {isOffline && (
