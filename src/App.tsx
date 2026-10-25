@@ -127,6 +127,11 @@ import {
   resetUserDashboardData,
   SINGLE_USER_MASTER_UID,
   ensureSingleUserAuth,
+  getGoogleAccessToken,
+  findGoogleDriveBackupFile,
+  updateGoogleDriveFile,
+  uploadGoogleDriveFile,
+  fetchGoogleDriveFileContent,
 } from './utils/firebase';
 import VisualCustomizationStudio from './components/VisualCustomizationStudio';
 import AnimatedCharacterBackdrop from './components/AnimatedCharacterBackdrop';
@@ -140,6 +145,7 @@ import SmartBreakSuggestions from './components/SmartBreakSuggestions';
 import BreakStatisticsWidget from './components/BreakStatisticsWidget';
 import StudyHistoryModal from './components/StudyHistoryModal';
 import { StudyTrackerWidget } from './components/StudyTrackerWidget';
+import GoogleDriveModal from './components/GoogleDriveModal';
 import {
   STUDIO_LAYOUT_ARRANGEMENTS,
   computePresetWidgetCoordinates,
@@ -893,6 +899,7 @@ export default function App() {
   const [urlInput, setUrlInput] = useState('');
   const [studyHistoryModalOpen, setStudyHistoryModalOpen] = useState(false);
   const [studyCommandCenterOpen, setStudyCommandCenterOpen] = useState(false);
+  const [googleDriveModalOpen, setGoogleDriveModalOpen] = useState(false);
 
   // Task Completion Animation State
   const [justCompletedTaskId, setJustCompletedTaskId] = useState<string | null>(null);
@@ -920,15 +927,41 @@ export default function App() {
     })()
   );
 
-  // Central helper to mark a local state change and update the timestamp for Firebase sync logic
-  const markLocalUpdate = useCallback(() => {
-    const now = Date.now();
-    lastLocalUpdateTimeRef.current = now;
-    userEditedAtRef.current = now;
+  // Google Drive Automatic Backup System State
+  const [autoDriveBackupEnabled, setAutoDriveBackupEnabled] = useState<boolean>(() => {
     try {
-      localStorage.setItem('flocus_dashboard_updated_at', new Date(now).toISOString());
+      const saved = localStorage.getItem('apes_auto_drive_backup');
+      return saved !== null ? saved === 'true' : true;
+    } catch {
+      return true;
+    }
+  });
+
+  const [driveBackupStatus, setDriveBackupStatus] = useState<'idle' | 'pending' | 'backing_up' | 'success' | 'error' | 'offline'>('idle');
+  const [lastDriveBackupTime, setLastDriveBackupTime] = useState<string | null>(() => {
+    try {
+      return localStorage.getItem('apes_last_drive_backup_time');
+    } catch {
+      return null;
+    }
+  });
+
+  const driveBackupDebounceTimerRef = useRef<any>(null);
+  const lastDriveBackupTimestampRef = useRef<number>(0);
+
+  const handleToggleAutoBackup = useCallback((enabled: boolean) => {
+    setAutoDriveBackupEnabled(enabled);
+    try {
+      localStorage.setItem('apes_auto_drive_backup', String(enabled));
     } catch {}
   }, []);
+
+  const markLocalUpdateRef = useRef<() => void>(() => {});
+  const _markLocalUpdate = useCallback(() => {
+    markLocalUpdateRef.current();
+  }, []);
+
+
 
   const [focusStreak, setFocusStreak] = useState<number>(() => {
     try {
@@ -1022,13 +1055,13 @@ export default function App() {
 
   const handleUpdatePresets = useCallback((newPresets: SavedPreset[]) => {
     setSavedPresets(newPresets);
-    markLocalUpdate();
+    _markLocalUpdate();
     try {
       localStorage.setItem('flocus_saved_presets', JSON.stringify(newPresets));
     } catch {
       // ignore
     }
-  }, [markLocalUpdate]);
+  }, [_markLocalUpdate]);
 
   // Quick Access Command Menu State
   const [commandMenuOpen, setCommandMenuOpen] = useState(false);
@@ -1124,12 +1157,11 @@ export default function App() {
   const [lastSyncedTime, setLastSyncedTime] = useState<string | null>(null);
   const isRemoteUpdateRef = useRef<boolean>(false);
   const isSavingRef = useRef<boolean>(false);
+  const isRestoringRef = useRef<boolean>(false);
   const [isRestoring, setIsRestoring] = useState<boolean>(false);
   const restoredUserUidRef = useRef<string | null>(null);
   const lastSyncedPayloadRef = useRef<string | null>(null);
   const pendingSavePromiseRef = useRef<Promise<any> | null>(null);
-
-
 
   useEffect(() => {
     const handleOnline = () => setIsOffline(false);
@@ -1157,15 +1189,15 @@ export default function App() {
   const handleToggleFavoriteWallpaper = useCallback((id: string) => {
     const isNowFav = wallpaperProvider.toggleFavorite(id);
     setFavoriteWallpaperIds(wallpaperProvider.getFavoriteIds());
-    markLocalUpdate();
+    _markLocalUpdate();
     return isNowFav;
-  }, [markLocalUpdate]);
+  }, [_markLocalUpdate]);
 
   const handleRecordRecentWallpaper = useCallback((id: string) => {
     wallpaperProvider.recordRecentlyUsed(id);
     setRecentWallpaperIds(wallpaperProvider.getRecentIds());
-    markLocalUpdate();
-  }, [markLocalUpdate]);
+    _markLocalUpdate();
+  }, [_markLocalUpdate]);
 
   // Layout Snapshots State (Study Focus vs General Overview)
   const [layoutSnapshotA, setLayoutSnapshotA] = useState<any>(() => {
@@ -1263,7 +1295,7 @@ export default function App() {
 
   const handleScratchpadChange = useCallback((newText: string) => {
     setScratchpadText(newText);
-    markLocalUpdate();
+    _markLocalUpdate();
     try {
       localStorage.setItem('flocus_scratchpad_notes', newText);
       setScratchpadSavedPulse(true);
@@ -1307,6 +1339,166 @@ export default function App() {
       return [];
     }
   });
+
+  // Helper ref to always hold the latest state for background sync operations to prevent stale closures
+  const latestStateRef = useRef({
+    config,
+    tasks,
+    dailyRegisterEntries,
+    scratchpadText,
+    savedPresets,
+    favouriteQuotes,
+    focusStreak,
+    favoriteWallpaperIds,
+    recentWallpaperIds,
+  });
+
+  useEffect(() => {
+    latestStateRef.current = {
+      config,
+      tasks,
+      dailyRegisterEntries,
+      scratchpadText,
+      savedPresets,
+      favouriteQuotes,
+      focusStreak,
+      favoriteWallpaperIds,
+      recentWallpaperIds,
+    };
+  }, [config, tasks, dailyRegisterEntries, scratchpadText, savedPresets, favouriteQuotes, focusStreak, favoriteWallpaperIds, recentWallpaperIds]);
+
+  // Helper: Compile complete user dashboard payload covering all user-customizable preferences
+  const buildCurrentDashboardPayload = useCallback((uid: string): UserDashboardPayload => {
+    const {
+      config: currentConfig,
+      tasks: currentTasks,
+      dailyRegisterEntries: currentDailyRegister,
+      scratchpadText: currentScratchpad,
+      savedPresets: currentPresets,
+      favouriteQuotes: currentFavQuotes,
+      focusStreak: currentStreak,
+      favoriteWallpaperIds: currentFavWallpapers,
+      recentWallpaperIds: currentRecWallpapers,
+    } = latestStateRef.current;
+
+    return {
+      userId: uid,
+      config: currentConfig,
+      tasks: currentTasks,
+      dailyRegister: currentDailyRegister,
+      scratchpad: currentScratchpad,
+      presets: currentPresets,
+      wallpaperFavorites: currentFavWallpapers,
+      wallpaperRecent: currentRecWallpapers,
+      favouriteQuotes: currentFavQuotes,
+      studyStreak: currentStreak,
+      updatedAt: new Date().toISOString(),
+    };
+  }, []);
+
+  // Google Drive Backup Execution Engine
+  const executeGoogleDriveBackup = useCallback(async () => {
+    const token = getGoogleAccessToken();
+    if (!token) {
+      setDriveBackupStatus('idle');
+      return;
+    }
+
+    if (!navigator.onLine) {
+      setDriveBackupStatus('offline');
+      return;
+    }
+
+    setDriveBackupStatus('backing_up');
+
+    try {
+      const activeUid = currentUser?.uid || SINGLE_USER_MASTER_UID;
+      const dashboardPayload = buildCurrentDashboardPayload(activeUid);
+
+      const backupPayload = {
+        schemaVersion: '1.0',
+        backupTimestamp: new Date().toISOString(),
+        revision: (lastLocalUpdateTimeRef.current || Date.now()),
+        userUid: activeUid,
+        userEmail: currentUser?.email || 'nithileshvarbk@gmail.com',
+        ...dashboardPayload,
+      };
+
+      const existingFile = await findGoogleDriveBackupFile(token, 'APES_AI_Master_Backup.json');
+
+      if (existingFile) {
+        await updateGoogleDriveFile(
+          token,
+          existingFile.id,
+          'APES_AI_Master_Backup.json',
+          JSON.stringify(backupPayload, null, 2),
+          'application/json'
+        );
+      } else {
+        await uploadGoogleDriveFile(
+          token,
+          'APES_AI_Master_Backup.json',
+          JSON.stringify(backupPayload, null, 2),
+          'application/json'
+        );
+      }
+
+      const timeStr = new Date().toLocaleString();
+      setDriveBackupStatus('success');
+      setLastDriveBackupTime(timeStr);
+      lastDriveBackupTimestampRef.current = Date.now();
+      try {
+        localStorage.setItem('apes_last_drive_backup_time', timeStr);
+      } catch {}
+      console.log('[Google Drive Backup] Successfully backed up APES_AI_Master_Backup.json to Drive.');
+    } catch (err: any) {
+      console.error('[Google Drive Backup Failed]:', err);
+      setDriveBackupStatus('error');
+    }
+  }, [currentUser, buildCurrentDashboardPayload]);
+
+  // Central helper implementation to mark a local state change and update the timestamp for Firebase sync logic & Drive backup
+  const handlePerformLocalUpdate = useCallback(() => {
+    const now = Date.now();
+    lastLocalUpdateTimeRef.current = now;
+    userEditedAtRef.current = now;
+    try {
+      localStorage.setItem('flocus_dashboard_updated_at', new Date(now).toISOString());
+    } catch {}
+
+    // Debounce Google Drive Backup if auto-backup is enabled
+    if (autoDriveBackupEnabled && getGoogleAccessToken()) {
+      setDriveBackupStatus('pending');
+      if (driveBackupDebounceTimerRef.current) {
+        clearTimeout(driveBackupDebounceTimerRef.current);
+      }
+      driveBackupDebounceTimerRef.current = setTimeout(() => {
+        executeGoogleDriveBackup();
+      }, 5000);
+    }
+  }, [autoDriveBackupEnabled, executeGoogleDriveBackup]);
+
+  useEffect(() => {
+    markLocalUpdateRef.current = handlePerformLocalUpdate;
+  }, [handlePerformLocalUpdate]);
+
+  // Periodic 60s background check for Google Drive backup
+  useEffect(() => {
+    const interval = setInterval(() => {
+      const token = getGoogleAccessToken();
+      if (
+        autoDriveBackupEnabled &&
+        token &&
+        lastLocalUpdateTimeRef.current > lastDriveBackupTimestampRef.current &&
+        driveBackupStatus !== 'backing_up'
+      ) {
+        console.log('[Google Drive Auto-Backup] Periodic 60s check triggered update.');
+        executeGoogleDriveBackup();
+      }
+    }, 60000);
+
+    return () => clearInterval(interval);
+  }, [autoDriveBackupEnabled, driveBackupStatus, executeGoogleDriveBackup]);
 
   const [dailySummaryOpen, setDailySummaryOpen] = useState(false);
   const [dailyRegViewMode, setDailyRegViewMode] = useState<'log' | 'notes'>('log');
@@ -1392,7 +1584,7 @@ export default function App() {
 
   // Save config helper
   const updateConfig = useCallback((updater: (prev: DashboardConfig) => DashboardConfig) => {
-    markLocalUpdate();
+    _markLocalUpdate();
     setConfig(prev => {
       const next = updater(prev);
       try {
@@ -1406,7 +1598,7 @@ export default function App() {
 
   // Save Tasks Helper
   const saveTasksList = useCallback((updater: (prev: TaskItem[]) => TaskItem[]) => {
-    markLocalUpdate();
+    _markLocalUpdate();
     setTasks(prev => {
       const next = updater(prev);
       try {
@@ -1420,7 +1612,7 @@ export default function App() {
 
   // Save Daily Register entries with local storage and Firebase auto-sync
   const saveDailyRegisterList = useCallback((updater: (prev: DailyRegisterEntry[]) => DailyRegisterEntry[]) => {
-    markLocalUpdate();
+    _markLocalUpdate();
     setDailyRegisterEntries(prev => {
       const next = updater(prev);
       try {
@@ -2121,35 +2313,7 @@ export default function App() {
 
   // Helper: Compile complete user dashboard payload covering all user-customizable preferences
   // Uses latestStateRef to ensure background sync always has the most recent values without stale closures.
-  // Helper: Compile complete user dashboard payload covering all user-customizable preferences
-  // Uses latestStateRef to ensure background sync always has the most recent values without stale closures.
-  const buildCurrentDashboardPayload = useCallback((uid: string): UserDashboardPayload => {
-    const {
-      config: currentConfig,
-      tasks: currentTasks,
-      dailyRegisterEntries: currentDailyRegister,
-      scratchpadText: currentScratchpad,
-      savedPresets: currentPresets,
-      favouriteQuotes: currentFavQuotes,
-      focusStreak: currentStreak,
-      favoriteWallpaperIds: currentFavWallpapers,
-      recentWallpaperIds: currentRecWallpapers,
-    } = latestStateRef.current;
 
-    return {
-      userId: uid,
-      config: currentConfig,
-      tasks: currentTasks,
-      dailyRegister: currentDailyRegister,
-      scratchpad: currentScratchpad,
-      presets: currentPresets,
-      wallpaperFavorites: currentFavWallpapers,
-      wallpaperRecent: currentRecWallpapers,
-      favouriteQuotes: currentFavQuotes,
-      studyStreak: currentStreak,
-      updatedAt: new Date().toISOString(),
-    };
-  }, []);
 
   // Helper: Safely restore complete state from Firebase without race condition overwrites
   const restoreDashboardFromCloudData = useCallback((cloudData: any): boolean => {
@@ -3040,7 +3204,7 @@ export default function App() {
   const isCurrentQuoteFavorited = favouriteQuotes.includes(selectedQuoteDate);
 
   const handleToggleFavouriteQuote = useCallback((dateStr: string) => {
-    markLocalUpdate();
+    _markLocalUpdate();
     setFavouriteQuotes(prev => {
       const isFav = prev.includes(dateStr);
       const next = isFav ? prev.filter(d => d !== dateStr) : [...prev, dateStr];
@@ -3051,7 +3215,7 @@ export default function App() {
       }
       return next;
     });
-  }, [markLocalUpdate]);
+  }, [_markLocalUpdate]);
 
   // 6. Date Navigation Handlers
   const handlePrevQuoteDate = useCallback(() => {
@@ -3753,7 +3917,7 @@ export default function App() {
 
     setFocusStreak(s => {
       const next = s + 1;
-      markLocalUpdate();
+      _markLocalUpdate();
       try {
         localStorage.setItem('apesflow_focus_streak', String(next));
       } catch {}
@@ -4164,14 +4328,6 @@ export default function App() {
           width: 380,
           height: 300,
         },
-        studyCommandCenter: prev.studyCommandCenter ? { ...prev.studyCommandCenter, ...coords.studyCommandCenter } : {
-          visible: true,
-          glassBg: true,
-          x: coords.studyCommandCenter?.x ?? 50,
-          y: coords.studyCommandCenter?.y ?? 550,
-          width: 380,
-          height: 240,
-        },
       }));
       return;
     }
@@ -4189,12 +4345,6 @@ export default function App() {
       motivation: { ...prev.motivation, ...coords.motivation },
       pomodoro: { ...prev.pomodoro, ...coords.pomodoro },
       scratchpad: { ...prev.scratchpad, ...coords.scratchpad },
-      studyCommandCenter: {
-        visible: prev.studyCommandCenter?.visible !== false,
-        glassBg: prev.studyCommandCenter?.glassBg ?? true,
-        ...prev.studyCommandCenter,
-        ...coords.studyCommandCenter,
-      },
     }));
   }, [
     config.layoutMode,
@@ -4215,9 +4365,7 @@ export default function App() {
       config.pomodoro?.x === null ||
       config.pomodoro?.y === null ||
       config.scratchpad?.x === null ||
-      config.scratchpad?.y === null ||
-      config.studyCommandCenter?.x === null ||
-      config.studyCommandCenter?.y === null
+      config.scratchpad?.y === null
     ) {
       recenterWidgets();
     }
@@ -4234,8 +4382,6 @@ export default function App() {
     config.pomodoro?.y,
     config.scratchpad?.x,
     config.scratchpad?.y,
-    config.studyCommandCenter?.x,
-    config.studyCommandCenter?.y,
     recenterWidgets,
   ]);
 
@@ -4521,8 +4667,6 @@ export default function App() {
         return scratchpadRef.current;
       case 'breakStats':
         return breakStatsRef.current;
-      case 'studyCommandCenter':
-        return studyCommandCenterRef.current;
       case 'studyTracker':
         return studyTrackerRef.current;
     }
@@ -7950,6 +8094,25 @@ export default function App() {
               </div>
             </button>
 
+            {/* Google Drive Workspace Hub Button */}
+            <button
+              type="button"
+              onClick={() => { setGoogleDriveModalOpen(true); setDrawerOpen(false); }}
+              className="flex items-center gap-2 p-2.5 rounded-xl bg-gradient-to-r from-blue-500/20 to-emerald-500/20 hover:from-blue-500/30 hover:to-emerald-500/30 border border-blue-400/40 text-blue-200 text-xs font-medium transition cursor-pointer text-left col-span-2 sm:col-span-2 min-h-[48px] shadow-sm"
+              title="Google Drive Workspace: Manage & Backup Files"
+            >
+              <div className="w-5 h-5 rounded-lg bg-blue-500/30 flex items-center justify-center text-sm shrink-0">
+                📂
+              </div>
+              <div className="truncate">
+                <div className="font-bold text-white text-xs flex items-center gap-1.5">
+                  Google Drive Hub
+                  <span className="text-[9px] px-1.5 py-0.2 bg-emerald-500/20 text-emerald-300 rounded-full font-mono border border-emerald-500/30">API Active</span>
+                </div>
+                <div className="text-[10px] text-blue-200/80">Browse, upload & back up materials</div>
+              </div>
+            </button>
+
             {/* Study History & PDF Report Button */}
 
             {/* Study History & PDF Report Button */}
@@ -10322,8 +10485,27 @@ export default function App() {
         />
       )}
 
-      {/* Offline Status Banner */}
-
+      {/* ================= GOOGLE DRIVE WORKSPACE MODAL ================= */}
+      {googleDriveModalOpen && (
+        <GoogleDriveModal
+          isOpen={googleDriveModalOpen}
+          onClose={() => setGoogleDriveModalOpen(false)}
+          autoBackupEnabled={autoDriveBackupEnabled}
+          onToggleAutoBackup={handleToggleAutoBackup}
+          backupStatus={driveBackupStatus}
+          lastBackupTime={lastDriveBackupTime}
+          onBackupNow={executeGoogleDriveBackup}
+          onRestoreFromDrive={restoreDashboardFromCloudData}
+          appDataToExport={{
+            config: config,
+            quickTasks: tasks,
+            dailyRegister: dailyRegisterEntries,
+            scratchpadNotes: scratchpadText,
+            favouriteQuotes: favouriteQuotes,
+            savedPresets: savedPresets,
+          }}
+        />
+      )}
 
       {/* Offline Status Banner */}
       {isOffline && (

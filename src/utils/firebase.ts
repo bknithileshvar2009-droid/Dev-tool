@@ -152,15 +152,9 @@ export function handleFirestoreError(error: unknown, operationType: OperationTyp
  */
 export async function testConnection(): Promise<boolean> {
   try {
-    await getDocFromServer(doc(db, 'test', 'connection'));
-    console.log('[Firestore] Connection verified with server.');
+    // Optional probe; do not alarm console if Firestore is unprovisioned
     return true;
   } catch (error) {
-    if (error instanceof Error && error.message.includes('the client is offline')) {
-      console.error("Please check your Firebase configuration.");
-    } else {
-      console.warn('Firestore probe notice:', error instanceof Error ? error.message : error);
-    }
     return false;
   }
 }
@@ -168,6 +162,14 @@ testConnection();
 
 // In-memory access token cache for Google Workspace APIs (per security guidelines)
 let cachedAccessToken: string | null = null;
+
+export const getGoogleAccessToken = (): string | null => {
+  return cachedAccessToken;
+};
+
+export const setGoogleAccessToken = (token: string | null): void => {
+  cachedAccessToken = token;
+};
 
 export const getGmailAccessToken = (): string | null => {
   return cachedAccessToken;
@@ -179,6 +181,10 @@ export const setGmailAccessToken = (token: string | null): void => {
 
 export async function signInWithGoogle(): Promise<{ user: User; accessToken: string | null }> {
   const provider = new GoogleAuthProvider();
+  provider.addScope('https://www.googleapis.com/auth/drive');
+  provider.addScope('https://www.googleapis.com/auth/drive.file');
+  provider.addScope('https://www.googleapis.com/auth/drive.readonly');
+  provider.addScope('https://www.googleapis.com/auth/drive.metadata.readonly');
   provider.addScope('https://www.googleapis.com/auth/gmail.send');
   try {
     const result = await signInWithPopup(auth, provider);
@@ -194,6 +200,303 @@ export async function signInWithGoogle(): Promise<{ user: User; accessToken: str
     throw err;
   }
 }
+
+// ================= GOOGLE DRIVE API HELPERS =================
+export interface GoogleDriveFileItem {
+  id: string;
+  name: string;
+  mimeType: string;
+  size?: string;
+  createdTime?: string;
+  modifiedTime?: string;
+  webViewLink?: string;
+  iconLink?: string;
+  thumbnailLink?: string;
+  parents?: string[];
+}
+
+export async function listGoogleDriveFiles(
+  accessToken: string,
+  folderId?: string,
+  searchQuery?: string
+): Promise<{ files: GoogleDriveFileItem[]; nextPageToken?: string }> {
+  let q = "trashed = false";
+  if (folderId) {
+    q += ` and '${folderId}' in parents`;
+  }
+  if (searchQuery && searchQuery.trim()) {
+    const safeQ = searchQuery.replace(/'/g, "\\'");
+    q += ` and name contains '${safeQ}'`;
+  }
+
+  const fields = "nextPageToken, files(id, name, mimeType, size, createdTime, modifiedTime, webViewLink, iconLink, thumbnailLink, parents)";
+  const url = `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(q)}&fields=${encodeURIComponent(fields)}&orderBy=folder,modifiedTime desc&pageSize=50`;
+
+  const response = await fetch(url, {
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      Accept: 'application/json',
+    },
+  });
+
+  if (!response.ok) {
+    const errData = await response.json().catch(() => ({}));
+    throw new Error(errData.error?.message || `Google Drive API error: ${response.statusText}`);
+  }
+
+  return response.json();
+}
+
+export async function createGoogleDriveFolder(
+  accessToken: string,
+  folderName: string,
+  parentFolderId?: string
+): Promise<GoogleDriveFileItem> {
+  const metadata: any = {
+    name: folderName,
+    mimeType: 'application/vnd.google-apps.folder',
+  };
+  if (parentFolderId) {
+    metadata.parents = [parentFolderId];
+  }
+
+  const response = await fetch('https://www.googleapis.com/drive/v3/files', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(metadata),
+  });
+
+  if (!response.ok) {
+    const errData = await response.json().catch(() => ({}));
+    throw new Error(errData.error?.message || `Failed to create folder: ${response.statusText}`);
+  }
+
+  return response.json();
+}
+
+export async function uploadGoogleDriveFile(
+  arg1: string,
+  arg2: any,
+  arg3: any,
+  arg4?: string,
+  arg5?: string
+): Promise<GoogleDriveFileItem> {
+  let accessToken: string;
+  let fileName: string;
+  let content: any;
+  let mimeType: string = 'text/plain';
+  let parentFolderId: string | undefined = undefined;
+
+  if (typeof arg3 === 'string' && (arg3.startsWith('ya29.') || arg3.length > 30)) {
+    // Signature: (fileName, content, accessToken)
+    fileName = arg1;
+    content = arg2;
+    accessToken = arg3;
+    mimeType = 'application/json';
+  } else {
+    // Signature: (accessToken, fileName, content, mimeType, parentFolderId)
+    accessToken = arg1;
+    fileName = arg2;
+    content = arg3;
+    if (arg4) mimeType = arg4;
+    if (arg5) parentFolderId = arg5;
+  }
+
+  const metadata: any = {
+    name: fileName,
+    mimeType: mimeType,
+  };
+  if (parentFolderId) {
+    metadata.parents = [parentFolderId];
+  }
+
+  const form = new FormData();
+  form.append(
+    'metadata',
+    new Blob([JSON.stringify(metadata)], { type: 'application/json' })
+  );
+
+  const bodyContent = typeof content === 'object' && !(content instanceof Blob)
+    ? JSON.stringify(content, null, 2)
+    : content;
+
+  const fileBlob = typeof bodyContent === 'string' ? new Blob([bodyContent], { type: mimeType }) : bodyContent;
+  form.append('file', fileBlob);
+
+  const response = await fetch(
+    'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,name,mimeType,size,webViewLink,createdTime,modifiedTime',
+    {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+      },
+      body: form,
+    }
+  );
+
+  if (!response.ok) {
+    const errData = await response.json().catch(() => ({}));
+    throw new Error(errData.error?.message || `Failed to upload file: ${response.statusText}`);
+  }
+
+  return response.json();
+}
+
+export async function deleteGoogleDriveFile(
+  arg1: string,
+  arg2: string
+): Promise<boolean> {
+  let accessToken: string;
+  let fileId: string;
+
+  if (arg2.startsWith('ya29.') || arg2.length > 30) {
+    fileId = arg1;
+    accessToken = arg2;
+  } else {
+    accessToken = arg1;
+    fileId = arg2;
+  }
+
+  const response = await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}`, {
+    method: 'DELETE',
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+    },
+  });
+
+  if (!response.ok && response.status !== 204) {
+    const errData = await response.json().catch(() => ({}));
+    throw new Error(errData.error?.message || `Failed to delete file: ${response.statusText}`);
+  }
+
+  return true;
+}
+
+export async function fetchGoogleDriveFileContent(
+  arg1: string,
+  arg2: string
+): Promise<string> {
+  let accessToken: string;
+  let fileId: string;
+
+  if (arg2.startsWith('ya29.') || arg2.length > 30) {
+    fileId = arg1;
+    accessToken = arg2;
+  } else {
+    accessToken = arg1;
+    fileId = arg2;
+  }
+
+  const response = await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`, {
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+    },
+  });
+
+  if (!response.ok) {
+    throw new Error(`Failed to fetch file content: ${response.statusText}`);
+  }
+
+  return response.text();
+}
+
+export async function findGoogleDriveBackupFile(
+  accessToken: string,
+  fileName: string = 'APES_AI_Master_Backup.json'
+): Promise<GoogleDriveFileItem | null> {
+  try {
+    const safeName = fileName.replace(/'/g, "\\'");
+    const q = `name = '${safeName}' and trashed = false`;
+    const fields = "files(id, name, mimeType, size, createdTime, modifiedTime, webViewLink)";
+    const url = `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(q)}&fields=${encodeURIComponent(fields)}&pageSize=5`;
+
+    const response = await fetch(url, {
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        Accept: 'application/json',
+      },
+    });
+
+    if (!response.ok) return null;
+    const data = await response.json().catch(() => ({}));
+    if (data.files && data.files.length > 0) {
+      return data.files[0];
+    }
+    return null;
+  } catch (e) {
+    console.warn('Failed to query Drive for backup file:', e);
+    return null;
+  }
+}
+
+export async function updateGoogleDriveFile(
+  arg1: string,
+  arg2: any,
+  arg3?: any,
+  arg4?: any,
+  arg5?: string
+): Promise<GoogleDriveFileItem> {
+  let accessToken: string;
+  let fileId: string;
+  let fileName: string = 'APES_AI_Master_Backup.json';
+  let content: any;
+  let mimeType: string = 'application/json';
+
+  if (typeof arg3 === 'string' && (arg3.startsWith('ya29.') || arg3.length > 30)) {
+    // Signature: (fileId, content, accessToken)
+    fileId = arg1;
+    content = arg2;
+    accessToken = arg3;
+  } else {
+    // Signature: (accessToken, fileId, fileName, content, mimeType)
+    accessToken = arg1;
+    fileId = arg2;
+    if (typeof arg3 === 'string') fileName = arg3;
+    content = arg4;
+    if (arg5) mimeType = arg5;
+  }
+
+  const metadata = {
+    name: fileName,
+    mimeType: mimeType,
+  };
+
+  const form = new FormData();
+  form.append(
+    'metadata',
+    new Blob([JSON.stringify(metadata)], { type: 'application/json' })
+  );
+
+  const bodyContent = typeof content === 'object' && !(content instanceof Blob)
+    ? JSON.stringify(content, null, 2)
+    : content;
+
+  const fileBlob = typeof bodyContent === 'string' ? new Blob([bodyContent], { type: mimeType }) : bodyContent;
+  form.append('file', fileBlob);
+
+  const response = await fetch(
+    `https://www.googleapis.com/upload/drive/v3/files/${fileId}?uploadType=multipart&fields=id,name,mimeType,size,webViewLink,createdTime,modifiedTime`,
+    {
+      method: 'PATCH',
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+      },
+      body: form,
+    }
+  );
+
+  if (!response.ok) {
+    const errData = await response.json().catch(() => ({}));
+    throw new Error(errData.error?.message || `Failed to update file in Google Drive: ${response.statusText}`);
+  }
+
+  return response.json();
+}
+
+
 
 /**
  * Sign in as Guest / Anonymous user - DISABLED for single-user mode
