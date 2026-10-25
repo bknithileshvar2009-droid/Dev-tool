@@ -139,8 +139,6 @@ import FocusStreakBadgeModal from './components/FocusStreakBadgeModal';
 import SmartBreakSuggestions from './components/SmartBreakSuggestions';
 import BreakStatisticsWidget from './components/BreakStatisticsWidget';
 import StudyHistoryModal from './components/StudyHistoryModal';
-import StudyCommandCenterModal from './components/studyCommandCenter/StudyCommandCenterModal';
-import StudyCommandCenterWidget from './components/studyCommandCenter/StudyCommandCenterWidget';
 import { StudyTrackerWidget } from './components/StudyTrackerWidget';
 import {
   STUDIO_LAYOUT_ARRANGEMENTS,
@@ -542,14 +540,6 @@ interface DashboardConfig {
     width: number;
     height: number;
   };
-  studyCommandCenter?: {
-    visible: boolean;
-    glassBg: boolean;
-    x: number | null;
-    y: number | null;
-    width: number;
-    height: number;
-  };
   activeThemeId?: string;
   bgSaturation?: number;
   bgBrightness?: number;
@@ -734,14 +724,6 @@ const DEFAULT_CONFIG: DashboardConfig = {
     width: 640,
     height: 480,
   },
-  studyCommandCenter: {
-    visible: true,
-    glassBg: true,
-    x: null,
-    y: null,
-    width: 380,
-    height: 240,
-  },
 };
 
 export interface SmartBreakExerciseItem {
@@ -880,7 +862,6 @@ export default function App() {
           calendar: { ...DEFAULT_CONFIG.calendar, ...(parsed.calendar || {}) },
           pomodoro: { ...DEFAULT_CONFIG.pomodoro, ...(parsed.pomodoro || {}) },
           breakStats: { ...DEFAULT_CONFIG.breakStats, ...(parsed.breakStats || {}) },
-          studyCommandCenter: parsed.studyCommandCenter ? { ...DEFAULT_CONFIG.studyCommandCenter, ...parsed.studyCommandCenter } : DEFAULT_CONFIG.studyCommandCenter,
         };
       }
     } catch {
@@ -1030,12 +1011,13 @@ export default function App() {
 
   const handleUpdatePresets = useCallback((newPresets: SavedPreset[]) => {
     setSavedPresets(newPresets);
+    markLocalUpdate();
     try {
       localStorage.setItem('flocus_saved_presets', JSON.stringify(newPresets));
     } catch {
       // ignore
     }
-  }, []);
+  }, [markLocalUpdate]);
 
   // Quick Access Command Menu State
   const [commandMenuOpen, setCommandMenuOpen] = useState(false);
@@ -1131,7 +1113,7 @@ export default function App() {
   const [lastSyncedTime, setLastSyncedTime] = useState<string | null>(null);
   const isRemoteUpdateRef = useRef<boolean>(false);
   const isSavingRef = useRef<boolean>(false);
-  const isRestoringRef = useRef<boolean>(false);
+  const [isRestoring, setIsRestoring] = useState<boolean>(false);
   const restoredUserUidRef = useRef<string | null>(null);
   const lastSyncedPayloadRef = useRef<string | null>(null);
   const pendingSavePromiseRef = useRef<Promise<any> | null>(null);
@@ -1145,6 +1127,58 @@ export default function App() {
       return Date.now();
     })()
   );
+
+  // Helper ref to always hold the latest state for background sync operations to prevent stale closures
+  const latestStateRef = useRef({
+    config,
+    tasks,
+    dailyRegisterEntries,
+    scratchpadText,
+    savedPresets,
+    favouriteQuotes,
+    focusStreak,
+    favoriteWallpaperIds,
+    recentWallpaperIds,
+  });
+
+  useEffect(() => {
+    latestStateRef.current = {
+      config,
+      tasks,
+      dailyRegisterEntries,
+      scratchpadText,
+      savedPresets,
+      favouriteQuotes,
+      focusStreak,
+      favoriteWallpaperIds,
+      recentWallpaperIds,
+    };
+  }, [config, tasks, dailyRegisterEntries, scratchpadText, savedPresets, favouriteQuotes, focusStreak, favoriteWallpaperIds, recentWallpaperIds]);
+
+  const [recentWallpaperIds, setRecentWallpaperIds] = useState<string[]>(() => {
+    try {
+      return wallpaperProvider.getRecentIds();
+    } catch { return []; }
+  });
+
+  const [favoriteWallpaperIds, setFavoriteWallpaperIds] = useState<string[]>(() => {
+    try {
+      return wallpaperProvider.getFavoriteIds();
+    } catch { return []; }
+  });
+
+  const handleToggleFavoriteWallpaper = useCallback((id: string) => {
+    const isNowFav = wallpaperProvider.toggleFavorite(id);
+    setFavoriteWallpaperIds(wallpaperProvider.getFavoriteIds());
+    markLocalUpdate();
+    return isNowFav;
+  }, [markLocalUpdate]);
+
+  const handleRecordRecentWallpaper = useCallback((id: string) => {
+    wallpaperProvider.recordRecentlyUsed(id);
+    setRecentWallpaperIds(wallpaperProvider.getRecentIds());
+    markLocalUpdate();
+  }, [markLocalUpdate]);
 
   // Layout Snapshots State (Study Focus vs General Overview)
   const [layoutSnapshotA, setLayoutSnapshotA] = useState<any>(() => {
@@ -1242,6 +1276,7 @@ export default function App() {
 
   const handleScratchpadChange = useCallback((newText: string) => {
     setScratchpadText(newText);
+    markLocalUpdate();
     try {
       localStorage.setItem('flocus_scratchpad_notes', newText);
       setScratchpadSavedPulse(true);
@@ -1321,7 +1356,6 @@ export default function App() {
   const pomodoroRef = useRef<HTMLDivElement | null>(null);
   const scratchpadRef = useRef<HTMLDivElement | null>(null);
   const breakStatsRef = useRef<HTMLDivElement | null>(null);
-  const studyCommandCenterRef = useRef<HTMLDivElement | null>(null);
   const studyTrackerRef = useRef<HTMLDivElement | null>(null);
   const dashboardRef = useRef<HTMLDivElement | null>(null);
   const [placementModal, setPlacementModal] = useState<{
@@ -1347,6 +1381,16 @@ export default function App() {
     clickY: 0,
   });
 
+  // Central helper to mark a local state change and update the timestamp for Firebase sync logic
+  const markLocalUpdate = useCallback(() => {
+    const now = Date.now();
+    lastLocalUpdateTimeRef.current = now;
+    userEditedAtRef.current = now;
+    try {
+      localStorage.setItem('flocus_dashboard_updated_at', new Date(now).toISOString());
+    } catch {}
+  }, []);
+
   // Interaction tracking (drag/resize)
   const dragResizeState = useRef<{
     type: 'drag' | 'resize' | null;
@@ -1371,12 +1415,7 @@ export default function App() {
 
   // Save config helper
   const updateConfig = useCallback((updater: (prev: DashboardConfig) => DashboardConfig) => {
-    const now = Date.now();
-    lastLocalUpdateTimeRef.current = now;
-    userEditedAtRef.current = now;
-    try {
-      localStorage.setItem('flocus_dashboard_updated_at', new Date(now).toISOString());
-    } catch {}
+    markLocalUpdate();
     setConfig(prev => {
       const next = updater(prev);
       try {
@@ -1390,6 +1429,7 @@ export default function App() {
 
   // Save Tasks Helper
   const saveTasksList = useCallback((updater: (prev: TaskItem[]) => TaskItem[]) => {
+    markLocalUpdate();
     setTasks(prev => {
       const next = updater(prev);
       try {
@@ -1403,6 +1443,7 @@ export default function App() {
 
   // Save Daily Register entries with local storage and Firebase auto-sync
   const saveDailyRegisterList = useCallback((updater: (prev: DailyRegisterEntry[]) => DailyRegisterEntry[]) => {
+    markLocalUpdate();
     setDailyRegisterEntries(prev => {
       const next = updater(prev);
       try {
@@ -1671,7 +1712,6 @@ export default function App() {
       pomodoro: { ...p.pomodoro, glassBg: !transparent },
       nameWidget: { ...p.nameWidget, glassBg: !transparent },
       scratchpad: { ...p.scratchpad, glassBg: !transparent },
-      studyCommandCenter: p.studyCommandCenter ? { ...p.studyCommandCenter, glassBg: !transparent } : undefined,
       studyTracker: p.studyTracker ? { ...p.studyTracker, glassBg: !transparent } : undefined,
     }));
   }, [updateConfig]);
@@ -1687,7 +1727,6 @@ export default function App() {
       !config.nameWidget.glassBg &&
       !config.pomodoro?.glassBg &&
       !config.scratchpad?.glassBg &&
-      !config.studyCommandCenter?.glassBg &&
       !config.studyTracker?.glassBg
     );
   }, [config]);
@@ -1710,7 +1749,6 @@ export default function App() {
     { id: 'motivation', label: 'Daily Intention & Motivation', defaultW: 440, defaultH: 140, icon: Sparkles, category: 'Mindset' },
     { id: 'pomodoro', label: 'Deep Focus Study Station & Brevo Break', defaultW: 380, defaultH: 260, icon: Flame, category: 'Focus' },
     { id: 'scratchpad', label: 'Daily Register (Study Notes & Summary)', defaultW: 400, defaultH: 340, icon: FileText, category: 'Register' },
-    { id: 'studyCommandCenter', label: 'Study Command Center (Chronos Dual-Sync)', defaultW: 380, defaultH: 260, icon: Sparkles, category: 'Study' },
     { id: 'studyTracker', label: 'Study Time Tracker (Nothing App)', defaultW: 640, defaultH: 480, icon: Laptop, category: 'App' },
   ], []);
 
@@ -2105,21 +2143,36 @@ export default function App() {
   // ================= 5. FIREBASE AUTH & REALTIME DATABASE AUTO-SYNC =================
 
   // Helper: Compile complete user dashboard payload covering all user-customizable preferences
+  // Uses latestStateRef to ensure background sync always has the most recent values without stale closures.
+  // Helper: Compile complete user dashboard payload covering all user-customizable preferences
+  // Uses latestStateRef to ensure background sync always has the most recent values without stale closures.
   const buildCurrentDashboardPayload = useCallback((uid: string): UserDashboardPayload => {
+    const {
+      config: currentConfig,
+      tasks: currentTasks,
+      dailyRegisterEntries: currentDailyRegister,
+      scratchpadText: currentScratchpad,
+      savedPresets: currentPresets,
+      favouriteQuotes: currentFavQuotes,
+      focusStreak: currentStreak,
+      favoriteWallpaperIds: currentFavWallpapers,
+      recentWallpaperIds: currentRecWallpapers,
+    } = latestStateRef.current;
+
     return {
       userId: uid,
-      config,
-      tasks,
-      dailyRegister: dailyRegisterEntries,
-      scratchpad: scratchpadText,
-      presets: savedPresets,
-      wallpaperFavorites: wallpaperProvider.getFavoriteIds(),
-      wallpaperRecent: wallpaperProvider.getRecentIds(),
-      favouriteQuotes,
-      studyStreak: pomoStreak,
+      config: currentConfig,
+      tasks: currentTasks,
+      dailyRegister: currentDailyRegister,
+      scratchpad: currentScratchpad,
+      presets: currentPresets,
+      wallpaperFavorites: currentFavWallpapers,
+      wallpaperRecent: currentRecWallpapers,
+      favouriteQuotes: currentFavQuotes,
+      studyStreak: currentStreak,
       updatedAt: new Date().toISOString(),
     };
-  }, [config, tasks, dailyRegisterEntries, scratchpadText, savedPresets, favouriteQuotes, pomoStreak]);
+  }, []);
 
   // Helper: Safely restore complete state from Firebase without race condition overwrites
   const restoreDashboardFromCloudData = useCallback((cloudData: any): boolean => {
@@ -2224,9 +2277,11 @@ export default function App() {
     // 6. Restore Wallpaper Favorites & Recent
     if (cloudData.wallpaperFavorites && Array.isArray(cloudData.wallpaperFavorites)) {
       wallpaperProvider.setFavoriteIds(cloudData.wallpaperFavorites);
+      setFavoriteWallpaperIds(cloudData.wallpaperFavorites);
     }
     if (cloudData.wallpaperRecent && Array.isArray(cloudData.wallpaperRecent)) {
       wallpaperProvider.setRecentIds(cloudData.wallpaperRecent);
+      setRecentWallpaperIds(cloudData.wallpaperRecent);
     }
 
     // 7. Restore Favourite Quotes
@@ -2288,6 +2343,7 @@ export default function App() {
       try {
         console.log(`[Firebase Auth] Reading previous dashboard state for BK NITHILESHVAR...`);
         const userDashRes = await loadUserDashboardWithStatus(activeUid);
+        console.log('[Firebase Auth] Dashboard load result:', userDashRes);
         let cloudData = userDashRes.data;
         let confirmedRemote = userDashRes.confirmedRemote;
 
@@ -2658,7 +2714,7 @@ export default function App() {
         setIsHistoryLoading(false);
         setTimeout(() => {
           if (!isCancelled) {
-            isRestoringRef.current = false;
+            setIsRestoring(false);
             restoredUserUidRef.current = activeUid;
             console.log(`[Firebase Auth] Auto-sync gate opened for UID: ${activeUid}`);
           }
@@ -2682,8 +2738,8 @@ export default function App() {
 
   // Real-time bi-directional auto-sync listener (Active only after initial restoration is safely completed)
   useEffect(() => {
-    if (!currentUser?.uid || !autoSyncEnabled) return;
-    if (isRestoringRef.current || restoredUserUidRef.current !== currentUser.uid) return;
+    if (!currentUser?.uid || !autoSyncEnabled || isRestoring) return;
+    if (restoredUserUidRef.current !== currentUser.uid) return;
 
     console.log(`[Firebase Sync] Binding real-time change listener for UID: ${currentUser.uid}`);
     const unsubscribe = subscribeToUserDashboard(
@@ -2727,7 +2783,7 @@ export default function App() {
     if (!currentUser || !autoSyncEnabled) return;
 
     // Critical guard: do not save while initial restoration is in progress or if user hasn't finished initial restore
-    if (isRestoringRef.current || restoredUserUidRef.current !== currentUser.uid) {
+    if (isRestoring || restoredUserUidRef.current !== currentUser.uid) {
       return;
     }
 
@@ -2755,6 +2811,7 @@ export default function App() {
         setSyncStatus('saving');
         
         const success = await saveUserDashboard(currentUser.uid, payload);
+        console.log(`[Firebase Auto-Sync] Save result:`, success);
         
         if (success) {
           setSyncStatus('saved');
@@ -2762,6 +2819,7 @@ export default function App() {
           console.log(`[Firebase Auto-Sync] Changes successfully saved to Firebase for UID: ${currentUser.uid} (updatedAt: ${payload.updatedAt})`);
         } else {
           // Firebase failed but persisted locally in saveUserDashboard
+          console.warn(`[Firebase Auto-Sync] Save failed for UID: ${currentUser.uid}`);
           setSyncStatus('idle'); // Or 'offline'
         }
       } catch (err) {
@@ -2792,7 +2850,7 @@ export default function App() {
   // Flush auto-sync immediately on page reload or navigation
   useEffect(() => {
     const handleBeforeUnload = () => {
-      if (currentUser?.uid && autoSyncEnabled && !isRestoringRef.current) {
+      if (currentUser?.uid && autoSyncEnabled && !isRestoring) {
         if (syncTimeoutRef.current) {
           window.clearTimeout(syncTimeoutRef.current);
           syncTimeoutRef.current = null;
@@ -2817,7 +2875,7 @@ export default function App() {
   // Online network reconnect auto-sync trigger
   useEffect(() => {
     const handleOnline = () => {
-      if (currentUser && autoSyncEnabled && !isRestoringRef.current) {
+      if (currentUser && autoSyncEnabled && !isRestoring) {
         handleManualSyncNow();
       }
     };
@@ -3005,6 +3063,7 @@ export default function App() {
   const isCurrentQuoteFavorited = favouriteQuotes.includes(selectedQuoteDate);
 
   const handleToggleFavouriteQuote = useCallback((dateStr: string) => {
+    markLocalUpdate();
     setFavouriteQuotes(prev => {
       const isFav = prev.includes(dateStr);
       const next = isFav ? prev.filter(d => d !== dateStr) : [...prev, dateStr];
@@ -3015,7 +3074,7 @@ export default function App() {
       }
       return next;
     });
-  }, []);
+  }, [markLocalUpdate]);
 
   // 6. Date Navigation Handlers
   const handlePrevQuoteDate = useCallback(() => {
@@ -3717,6 +3776,7 @@ export default function App() {
 
     setFocusStreak(s => {
       const next = s + 1;
+      markLocalUpdate();
       try {
         localStorage.setItem('apesflow_focus_streak', String(next));
       } catch {}
@@ -6558,64 +6618,6 @@ export default function App() {
         </div>
       )}
 
-      {/* ================= WIDGET: STUDY COMMAND CENTER (CHRONOS DUAL-SYNC) ================= */}
-      {config.studyCommandCenter?.visible !== false && (
-        <div
-          ref={studyCommandCenterRef}
-          id="studyCommandCenter-widget"
-          data-widget-id="studyCommandCenter"
-          onPointerDown={e => handlePointerDown(e, 'studyCommandCenter')}
-          onWheel={e => handleWheelZoom(e, 'studyCommandCenter')}
-          className={`dashboard-widget z-20 px-3.5 py-3 flex flex-col justify-between ${
-            config.optionalFeatures.widgetCustomization ? 'cursor-grab active:cursor-grabbing' : 'cursor-default'
-          } ${getWidgetMaterialClass(config.studyCommandCenter?.glassBg ?? true)} ${focusedWidget === 'studyCommandCenter' ? 'widget-focused' : ''} ${radiusClass}`}
-          style={{
-            width: config.studyCommandCenter?.width || 380,
-            height: config.studyCommandCenter?.height || 260,
-            left: config.studyCommandCenter?.x ?? 50,
-            top: config.studyCommandCenter?.y ?? 550,
-            ...getWidgetComputedStyle('studyCommandCenter'),
-          }}
-        >
-          {showHandles && (
-            <>
-              <div className="drag-pill absolute top-2 left-1/2 -translate-x-1/2 w-8 h-1 rounded-full bg-cyan-400/40 pointer-events-none" />
-              <button
-                type="button"
-                onClick={e => {
-                  e.stopPropagation();
-                  toggleWidgetTransparency('studyCommandCenter');
-                }}
-                title={config.studyCommandCenter?.glassBg ? 'Switch Study Command Center to Transparent' : 'Switch to Glass Card'}
-                className="no-drag absolute top-2 right-2 px-2 py-0.5 rounded-md bg-black/60 hover:bg-black/90 text-[9px] font-mono text-white/80 hover:text-white border border-white/20 transition cursor-pointer z-30 flex items-center gap-1 shadow-sm"
-              >
-                <span className={`w-1.5 h-1.5 rounded-full ${config.studyCommandCenter?.glassBg ? 'bg-cyan-400' : 'bg-amber-400'}`} />
-                <span>{config.studyCommandCenter?.glassBg ? 'Glass' : 'Transp.'}</span>
-              </button>
-            </>
-          )}
-
-          <div className="flex-1 overflow-hidden flex flex-col">
-            <StudyCommandCenterWidget
-              uid={currentUser?.uid || null}
-              activeSubject={activeSubject}
-              activeTask={activeTask}
-              onOpenCommandCenter={() => setStudyCommandCenterOpen(true)}
-              glassBg={config.studyCommandCenter?.glassBg ?? true}
-            />
-          </div>
-
-          {showHandles && (
-            <>
-              <div className="resize-handle resize-se text-cyan-400" data-handle="se" />
-              <div className="resize-handle resize-sw text-cyan-400" data-handle="sw" />
-              <div className="resize-handle resize-ne text-cyan-400" data-handle="ne" />
-              <div className="resize-handle resize-nw text-cyan-400" data-handle="nw" />
-            </>
-          )}
-        </div>
-      )}
-
       {/* ================= WIDGET: STUDY TIME TRACKER (NOTHING APP) ================= */}
       {config.studyTracker?.visible !== false && !isFocusModeActive && (
         <div
@@ -7971,27 +7973,7 @@ export default function App() {
               </div>
             </button>
 
-            {/* Study Command Center Full Suite Button */}
-            <button
-              type="button"
-              onClick={() => { setStudyCommandCenterOpen(true); setDrawerOpen(false); }}
-              className="flex items-center gap-2 p-2.5 rounded-xl bg-gradient-to-r from-cyan-500/20 to-amber-500/20 hover:from-cyan-500/35 hover:to-amber-500/35 border border-cyan-400/40 text-cyan-200 text-xs font-medium transition cursor-pointer text-left col-span-2 sm:col-span-3 min-h-[48px] shadow-[0_0_15px_rgba(6,182,212,0.2)]"
-              title="Study Command Center (Chronos Dual-Sync & 18 Widgets) [Press S]"
-            >
-              <div className="w-8 h-8 rounded-lg bg-cyan-500/25 border border-cyan-400/40 flex items-center justify-center text-cyan-300 shrink-0">
-                <Timer className="w-4 h-4 animate-pulse" />
-              </div>
-              <div className="flex-1 flex items-center justify-between">
-                <div>
-                  <span className="font-bold text-white text-xs flex items-center gap-1.5">
-                    <span>Study Command Center</span>
-                    <span className="px-1.5 py-0.2 rounded bg-amber-400/20 text-amber-300 text-[9px] font-mono border border-amber-400/30">18 WIDGETS</span>
-                  </span>
-                  <span className="text-[10px] text-cyan-300/80 block">Chronos Study Dual-Sync • Timers • Analytics • PDF</span>
-                </div>
-                <kbd className="px-1.5 py-0.5 rounded bg-white/10 text-[10px] font-mono text-white/70">S</kbd>
-              </div>
-            </button>
+            {/* Study History & PDF Report Button */}
 
             {/* Study History & PDF Report Button */}
             <button
@@ -10216,7 +10198,6 @@ export default function App() {
               { id: 'nameWidget', label: 'Centum Badge', visible: config.nameWidget.visible, glass: config.nameWidget.glassBg },
               { id: 'pomodoro', label: 'Deep Focus Timer', visible: config.pomodoro?.visible ?? true, glass: config.pomodoro?.glassBg ?? true },
               { id: 'studyTracker', label: 'Study Time Tracker', visible: config.studyTracker?.visible !== false, glass: config.studyTracker?.glassBg ?? true },
-              { id: 'studyCommandCenter', label: 'Study Command Center', visible: config.studyCommandCenter?.visible !== false, glass: config.studyCommandCenter?.glassBg ?? true },
             ].map(item => (
               <div key={item.id} className="flex items-center justify-between p-1.5 rounded-lg bg-white/[0.02] hover:bg-white/[0.05] text-[11px]">
                 <label className="flex items-center gap-2 cursor-pointer flex-1">
@@ -10317,6 +10298,10 @@ export default function App() {
           }}
           savedPresets={savedPresets}
           onUpdatePresets={handleUpdatePresets}
+          favoriteWallpaperIds={favoriteWallpaperIds}
+          onToggleFavoriteWallpaper={handleToggleFavoriteWallpaper}
+          recentWallpaperIds={recentWallpaperIds}
+          onRecordRecentWallpaper={handleRecordRecentWallpaper}
         />
       )}
 
@@ -10360,16 +10345,7 @@ export default function App() {
         />
       )}
 
-      {/* ================= STUDY COMMAND CENTER FULL SUITE MODAL (18 WIDGETS) ================= */}
-      {studyCommandCenterOpen && (
-        <StudyCommandCenterModal
-          isOpen={studyCommandCenterOpen}
-          onClose={() => setStudyCommandCenterOpen(false)}
-          uid={currentUser?.uid || null}
-          activeSubject={activeSubject}
-          activeTask={activeTask}
-        />
-      )}
+      {/* Offline Status Banner */}
 
 
       {/* Offline Status Banner */}

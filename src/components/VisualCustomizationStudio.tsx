@@ -120,6 +120,10 @@ interface VisualCustomizationStudioProps {
   onUpdatePresets: (presets: SavedPreset[]) => void;
   customNotes?: CustomTextItem[];
   onUpdateCustomNotes?: (notes: CustomTextItem[]) => void;
+  favoriteWallpaperIds: string[];
+  onToggleFavoriteWallpaper: (id: string) => void;
+  recentWallpaperIds: string[];
+  onRecordRecentWallpaper: (id: string) => void;
 }
 
 // 6 Organized Primary Studio Sections
@@ -142,7 +146,6 @@ const ALL_WIDGET_KEYS: { id: DashboardWidgetKey; label: string; icon: any }[] = 
   { id: 'pomodoro', label: 'Pomodoro Focus Timer', icon: Zap },
   { id: 'scratchpad', label: 'Daily Register & Notes', icon: StickyNote },
   { id: 'breakStats', label: 'Break Statistics & Wellness', icon: Coffee },
-  { id: 'studyCommandCenter', label: 'Study Command Center', icon: Timer },
   { id: 'studyTracker', label: 'Study Time Tracker (Nothing App)', icon: Laptop },
 ];
 
@@ -155,6 +158,10 @@ export default function VisualCustomizationStudio({
   onUpdatePresets,
   customNotes = [],
   onUpdateCustomNotes,
+  favoriteWallpaperIds,
+  onToggleFavoriteWallpaper,
+  recentWallpaperIds,
+  onRecordRecentWallpaper,
 }: VisualCustomizationStudioProps) {
   // Primary Reorganized Tab Navigation
   const [activeTab, setActiveTab] = useState<StudioSection>('appearance');
@@ -191,14 +198,6 @@ export default function VisualCustomizationStudio({
   const [previewModalWallpaper, setPreviewModalWallpaper] = useState<WallpaperItem | null>(null);
   const [copiedUrl, setCopiedUrl] = useState<boolean>(false);
   const [wallpaperToast, setWallpaperToast] = useState<string | null>(null);
-  const [favoriteWallpaperIds, setFavoriteWallpaperIds] = useState<string[]>(() => {
-    try {
-      const saved = localStorage.getItem('flocus_favorite_wallpapers_v3') || localStorage.getItem('flocus_favorite_wallpapers');
-      return saved ? JSON.parse(saved) : ['local-jp-tokyo-cyberpunk', 'local-art-anime-cherry-blossom', 'local-kr-seoul-night', 'local-cn-misty-mountains'];
-    } catch {
-      return ['local-jp-tokyo-cyberpunk', 'local-art-anime-cherry-blossom', 'local-kr-seoul-night', 'local-cn-misty-mountains'];
-    }
-  });
   const [uploadedWallpapers, setUploadedWallpapers] = useState<WallpaperCategoryItem[]>(() => {
     return wallpaperProvider.getUserUploads();
   });
@@ -447,7 +446,7 @@ export default function VisualCustomizationStudio({
   const handleApplyWallpaperImmediate = (item: { fullUrl: string; id: string; title: string }) => {
     setStagedWallpaperUrl(item.fullUrl);
     setStagedVideoUrl('');
-    wallpaperProvider.recordRecentlyUsed(item.id);
+    onRecordRecentWallpaper(item.id);
     // Immediately apply to parent dashboard and persist!
     onApply({
       wallpaperUrl: item.fullUrl,
@@ -459,9 +458,8 @@ export default function VisualCustomizationStudio({
 
   const handleToggleFavoriteWallpaper = (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
-    const isNowFav = wallpaperProvider.toggleFavorite(id);
-    setFavoriteWallpaperIds(wallpaperProvider.getFavoriteIds());
-    showToast(isNowFav ? 'Added to favorites ★' : 'Removed from favorites');
+    onToggleFavoriteWallpaper(id);
+    showToast('Favorites updated');
   };
 
   const handleShuffleWallpaper = () => {

@@ -14,7 +14,6 @@ export type DashboardWidgetKey =
   | 'pomodoro'
   | 'scratchpad'
   | 'breakStats'
-  | 'studyCommandCenter'
   | 'studyTracker';
 
 export interface GridCellSlot {
@@ -987,7 +986,7 @@ export function computePresetWidgetCoordinates(
   });
 
   // Guarantee coordinates exist for any unmapped widgets by docking in a safe bottom row
-  const allKeys: DashboardWidgetKey[] = ['clock', 'countdown', 'nameWidget', 'tasks', 'notification', 'calendar', 'motivation', 'pomodoro', 'scratchpad', 'breakStats', 'studyCommandCenter', 'studyTracker'];
+  const allKeys: DashboardWidgetKey[] = ['clock', 'countdown', 'nameWidget', 'tasks', 'notification', 'calendar', 'motivation', 'pomodoro', 'scratchpad', 'breakStats', 'studyTracker'];
   let unmappedOffset = 0;
   allKeys.forEach(key => {
     if (!coords[key]) {
@@ -1081,7 +1080,6 @@ export function computeLaptopFitCoordinates(
     notification: { x: Math.round(notifX), y: Math.round(notifY), width: Math.round(notifW), height: Math.round(notifH) },
     calendar: { x: Math.round(calX), y: Math.round(calY), width: Math.round(calW), height: Math.round(calH) },
     breakStats: { x: Math.round(taskX), y: Math.round(taskY + taskH + 12), width: Math.round(taskW), height: 180 },
-    studyCommandCenter: { x: Math.round(regX), y: Math.round(regY + regH + 16), width: Math.round(regW), height: 240 },
     studyTracker: { x: Math.round(sw * 0.2), y: Math.round(sh * 0.25), width: Math.min(680, Math.round(sw * 0.6)), height: Math.min(500, Math.round(sh * 0.55)) },
   };
 }
