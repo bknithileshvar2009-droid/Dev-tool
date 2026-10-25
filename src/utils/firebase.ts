@@ -20,6 +20,7 @@ import {
   getFirestore,
   doc,
   getDoc,
+  getDocFromServer,
   setDoc,
   onSnapshot,
   collection,
@@ -147,25 +148,23 @@ export function handleFirestoreError(error: unknown, operationType: OperationTyp
 }
 
 /**
- * Validate Connection to Firestore on demand
+ * Validate Connection to Firestore on demand & on boot
  */
 export async function testConnection(): Promise<boolean> {
   try {
-    const probePromise = getDoc(doc(db, 'test', 'connection'));
-    const timeoutPromise = new Promise<never>((_, reject) =>
-      setTimeout(() => reject(new Error('the client is offline or timed out')), 3500)
-    );
-    await Promise.race([probePromise, timeoutPromise]);
+    await getDocFromServer(doc(db, 'test', 'connection'));
+    console.log('[Firestore] Connection verified with server.');
     return true;
   } catch (error) {
-    if (error instanceof Error && (error.message.includes('the client is offline') || error.message.includes('timed out'))) {
-      console.warn('Firestore operating in offline mode or awaiting initial server response.');
+    if (error instanceof Error && error.message.includes('the client is offline')) {
+      console.error("Please check your Firebase configuration.");
     } else {
       console.warn('Firestore probe notice:', error instanceof Error ? error.message : error);
     }
     return false;
   }
 }
+testConnection();
 
 // In-memory access token cache for Google Workspace APIs (per security guidelines)
 let cachedAccessToken: string | null = null;
@@ -297,46 +296,58 @@ export async function ensureSingleUserAuth(): Promise<User | null> {
   }
 }
 
+export interface DashboardSaveResult {
+  success: boolean;
+  rtdb: boolean;
+  firestore: boolean;
+  error?: string;
+}
+
+export interface DashboardLoadResult {
+  data: UserDashboardPayload | null;
+  confirmedRemote: boolean;
+  error?: string;
+}
+
+export let lastSaveDashboardError: string | null = null;
+export function getLastSaveDashboardError(): string | null {
+  return lastSaveDashboardError;
+}
+
 /**
  * Save user dashboard data to Firebase
  * Primary: Realtime Database under users/{uid}/dashboard
  * Redundancy: Firestore under users/{uid}/dashboard/data
+ * 
+ * Directly awaits the write promise and captures exact errors without performing
+ * an expensive, blocking pre-save read that could re-inject deleted items or swallow failures.
  */
-export async function saveUserDashboard(uid: string, dashboardData: Partial<UserDashboardPayload> & { config?: any; tasks?: any[]; updatedAt?: string }): Promise<boolean> {
-  const targetUid = uid || SINGLE_USER_MASTER_UID;
+export async function saveUserDashboard(
+  uid: string,
+  dashboardData: Partial<UserDashboardPayload> & { config?: any; tasks?: any[]; updatedAt?: string }
+): Promise<boolean> {
+  const res = await saveUserDashboardDetailed(uid, dashboardData);
+  return res.success;
+}
 
-  // Load existing remote data first to avoid overwriting populated remote fields with empty defaults
-  const existingRemote = await loadUserDashboard(targetUid);
+export async function saveUserDashboardDetailed(
+  uid: string,
+  dashboardData: Partial<UserDashboardPayload> & { config?: any; tasks?: any[]; updatedAt?: string }
+): Promise<DashboardSaveResult> {
+  const targetUid = uid || SINGLE_USER_MASTER_UID;
+  lastSaveDashboardError = null;
 
   const payload: UserDashboardPayload = {
     userId: targetUid,
-    config: dashboardData.config && Object.keys(dashboardData.config).length > 0
-      ? dashboardData.config
-      : (existingRemote?.config || {}),
-    tasks: Array.isArray(dashboardData.tasks) && dashboardData.tasks.length > 0
-      ? dashboardData.tasks
-      : (existingRemote?.tasks || []),
-    dailyRegister: Array.isArray(dashboardData.dailyRegister) && dashboardData.dailyRegister.length > 0
-      ? dashboardData.dailyRegister
-      : (existingRemote?.dailyRegister || []),
-    scratchpad: typeof dashboardData.scratchpad === 'string' && dashboardData.scratchpad.length > 0
-      ? dashboardData.scratchpad
-      : (existingRemote?.scratchpad || ''),
-    presets: Array.isArray(dashboardData.presets) && dashboardData.presets.length > 0
-      ? dashboardData.presets
-      : (existingRemote?.presets || []),
-    wallpaperFavorites: Array.isArray(dashboardData.wallpaperFavorites)
-      ? dashboardData.wallpaperFavorites
-      : (existingRemote?.wallpaperFavorites || []),
-    wallpaperRecent: Array.isArray(dashboardData.wallpaperRecent)
-      ? dashboardData.wallpaperRecent
-      : (existingRemote?.wallpaperRecent || []),
-    favouriteQuotes: Array.isArray(dashboardData.favouriteQuotes)
-      ? dashboardData.favouriteQuotes
-      : (existingRemote?.favouriteQuotes || []),
-    studyStreak: typeof dashboardData.studyStreak === 'number'
-      ? dashboardData.studyStreak
-      : (existingRemote?.studyStreak || 0),
+    config: dashboardData.config || {},
+    tasks: Array.isArray(dashboardData.tasks) ? dashboardData.tasks : [],
+    dailyRegister: Array.isArray(dashboardData.dailyRegister) ? dashboardData.dailyRegister : [],
+    scratchpad: typeof dashboardData.scratchpad === 'string' ? dashboardData.scratchpad : '',
+    presets: Array.isArray(dashboardData.presets) ? dashboardData.presets : [],
+    wallpaperFavorites: Array.isArray(dashboardData.wallpaperFavorites) ? dashboardData.wallpaperFavorites : [],
+    wallpaperRecent: Array.isArray(dashboardData.wallpaperRecent) ? dashboardData.wallpaperRecent : [],
+    favouriteQuotes: Array.isArray(dashboardData.favouriteQuotes) ? dashboardData.favouriteQuotes : [],
+    studyStreak: typeof dashboardData.studyStreak === 'number' ? dashboardData.studyStreak : 0,
     updatedAt: dashboardData.updatedAt || new Date().toISOString(),
   };
 
@@ -344,6 +355,7 @@ export async function saveUserDashboard(uid: string, dashboardData: Partial<User
 
   let rtdbSuccess = false;
   let firestoreSuccess = false;
+  let errorMsg: string | undefined;
 
   // 1. Primary Realtime Database write (awaited with timeout)
   try {
@@ -351,8 +363,10 @@ export async function saveUserDashboard(uid: string, dashboardData: Partial<User
     await withRtdbTimeout(rtdbSet(rtdbTargetRef, cleanedPayload));
     rtdbSuccess = true;
     console.log(`[Firebase RTDB] Write succeeded for UID: ${targetUid}`);
-  } catch (rtdbErr) {
-    console.warn(`[Firebase RTDB Notice] Write failed for UID: ${targetUid}:`, rtdbErr);
+  } catch (rtdbErr: any) {
+    errorMsg = rtdbErr instanceof Error ? rtdbErr.message : String(rtdbErr);
+    lastSaveDashboardError = errorMsg;
+    console.error(`[Firebase RTDB Error] Write failed for UID: ${targetUid}:`, rtdbErr);
   }
 
   // 2. Secondary Cloud Firestore mirror write (bounded by timeout so unprovisioned Firestore never hangs)
@@ -362,37 +376,48 @@ export async function saveUserDashboard(uid: string, dashboardData: Partial<User
     firestoreSuccess = true;
     console.log(`[Firebase Firestore] Write succeeded for UID: ${targetUid}`);
   } catch (fsErr) {
+    // If RTDB also failed, log or preserve the error
     console.warn(`[Firebase Firestore Notice] Write skipped/timed out for UID: ${targetUid}`);
   }
 
-  return rtdbSuccess || firestoreSuccess;
+  const success = rtdbSuccess || firestoreSuccess;
+  return {
+    success,
+    rtdb: rtdbSuccess,
+    firestore: firestoreSuccess,
+    error: success ? undefined : errorMsg,
+  };
 }
 
 /**
- * Load user dashboard data from Firebase
- * Queries Realtime Database (users/{uid}/dashboard) as primary, and merges with Cloud Firestore fallback.
+ * Load user dashboard data from Firebase with detailed remote confirmation status
  */
-export async function loadUserDashboard(uid: string): Promise<UserDashboardPayload | null> {
+export async function loadUserDashboardWithStatus(uid: string): Promise<DashboardLoadResult> {
   const targetUid = uid || SINGLE_USER_MASTER_UID;
-
   console.log(`[Firebase] Starting dashboard restoration query for UID: ${targetUid}`);
 
   let rtdbData: UserDashboardPayload | null = null;
   let fsData: UserDashboardPayload | null = null;
+  let rtdbConfirmed = false;
+  let rtdbError: string | undefined;
 
   // 1. Primary: Realtime Database (users/{targetUid}/dashboard)
   try {
     const rtdbTargetRef = rtdbRef(rtdb, `users/${targetUid}/dashboard`);
     const snap = await withRtdbTimeout(rtdbGet(rtdbTargetRef));
+    rtdbConfirmed = true; // Network call succeeded and remote answered!
     if (snap.exists()) {
       const val = snap.val();
       if (val && (val.config || val.tasks || val.presets || val.dailyRegister)) {
         console.log(`[Firebase RTDB] Found saved dashboard for UID: ${targetUid}`);
         rtdbData = val as UserDashboardPayload;
       }
+    } else {
+      console.log(`[Firebase RTDB] Confirmed no remote dashboard record exists for UID: ${targetUid}`);
     }
-  } catch (rtdbErr) {
-    console.warn(`[Firebase RTDB Notice] Read notice for UID: ${targetUid}:`, rtdbErr);
+  } catch (err: any) {
+    rtdbError = err instanceof Error ? err.message : String(err);
+    console.warn(`[Firebase RTDB Notice] Read failed for UID: ${targetUid}:`, rtdbError);
   }
 
   // 2. Secondary: Cloud Firestore (users/{targetUid}/dashboard/data) with fast timeout
@@ -407,17 +432,32 @@ export async function loadUserDashboard(uid: string): Promise<UserDashboardPaylo
     }
   } catch {}
 
+  let merged: UserDashboardPayload | null = null;
   if (rtdbData && fsData) {
-    return {
+    merged = {
       ...fsData,
       ...rtdbData,
       presets: (rtdbData.presets?.length ? rtdbData.presets : fsData.presets) || [],
       tasks: (rtdbData.tasks?.length ? rtdbData.tasks : fsData.tasks) || [],
       dailyRegister: (rtdbData.dailyRegister?.length ? rtdbData.dailyRegister : fsData.dailyRegister) || [],
     };
+  } else {
+    merged = rtdbData || fsData || null;
   }
 
-  return rtdbData || fsData || null;
+  return {
+    data: merged,
+    confirmedRemote: rtdbConfirmed,
+    error: rtdbError,
+  };
+}
+
+/**
+ * Load user dashboard data from Firebase (backwards-compatible wrapper)
+ */
+export async function loadUserDashboard(uid: string): Promise<UserDashboardPayload | null> {
+  const result = await loadUserDashboardWithStatus(uid);
+  return result.data;
 }
 
 /**
@@ -1259,12 +1299,46 @@ export function splitSessionByLocalCalendarDays(
  * Primary: Realtime Database users/{uid}/studySessions/{sessionId} (zero-latency, reliable)
  * Mirror: Cloud Firestore users/{uid}/studySessions/{sessionId}
  */
+export interface StudySessionSaveResult {
+  success: boolean;
+  rtdb: boolean;
+  firestore: boolean;
+  error?: string;
+}
+
+export interface StudySessionLoadResult {
+  sessions: FocusSessionRecord[];
+  confirmedRemote: boolean;
+  error?: string;
+}
+
+export let lastSaveStudySessionError: string | null = null;
+export function getLastSaveStudySessionError(): string | null {
+  return lastSaveStudySessionError;
+}
+
+/**
+ * Save a Study Session Record to Firebase at users/{uid}/studySessions/{sessionId}
+ * Primary: Realtime Database users/{uid}/studySessions/{sessionId} (zero-latency, reliable)
+ * Mirror: Cloud Firestore users/{uid}/studySessions/{sessionId}
+ */
 export async function saveStudySessionRecord(
   uid: string,
   record: FocusSessionRecord
 ): Promise<boolean> {
-  if (!uid || !record?.sessionId) return false;
+  const res = await saveStudySessionRecordDetailed(uid, record);
+  return res.success;
+}
 
+export async function saveStudySessionRecordDetailed(
+  uid: string,
+  record: FocusSessionRecord
+): Promise<StudySessionSaveResult> {
+  if (!uid || !record?.sessionId) {
+    return { success: false, rtdb: false, firestore: false, error: 'Missing UID or Session ID' };
+  }
+
+  lastSaveStudySessionError = null;
   const cleaned: Record<string, any> = {};
   for (const [k, v] of Object.entries(record)) {
     if (v !== undefined) cleaned[k] = v;
@@ -1272,6 +1346,7 @@ export async function saveStudySessionRecord(
 
   let rtdbSuccess = false;
   let firestoreSuccess = false;
+  let rtdbError: string | undefined;
 
   // 1. Primary write to Realtime Database (bounded by timeout)
   try {
@@ -1279,8 +1354,10 @@ export async function saveStudySessionRecord(
     await withRtdbTimeout(rtdbSet(rtdbTargetRef, cleaned));
     rtdbSuccess = true;
     console.log(`[Firebase RTDB] Saved study session ${record.sessionId} at users/${uid}/studySessions`);
-  } catch (err) {
-    console.warn(`[Firebase RTDB Warning] Failed to save study session ${record.sessionId}:`, err);
+  } catch (err: any) {
+    rtdbError = err instanceof Error ? err.message : String(err);
+    lastSaveStudySessionError = rtdbError;
+    console.error(`[Firebase RTDB Error] Failed to save study session ${record.sessionId}:`, err);
   }
 
   // 2. Cloud Firestore mirror (bounded by fast timeout so it never hangs)
@@ -1300,7 +1377,13 @@ export async function saveStudySessionRecord(
   // Maintain focusSessions record for backwards compatibility
   saveFocusSessionRecord(uid, record).catch(() => {});
 
-  return rtdbSuccess || firestoreSuccess;
+  const success = rtdbSuccess || firestoreSuccess;
+  return {
+    success,
+    rtdb: rtdbSuccess,
+    firestore: firestoreSuccess,
+    error: success ? undefined : rtdbError,
+  };
 }
 
 export async function seedMissingSession(uid: string): Promise<boolean> {
@@ -1364,18 +1447,20 @@ export async function loadActiveStudySession(uid: string): Promise<any | null> {
 }
 
 /**
- * Load all user study session records from users/{uid}/studySessions and focusSessions
- * Merges RTDB and Firestore, deduplicates by sessionId, sorts by startTimestamp descending
+ * Load all user study session records from users/{uid}/studySessions and focusSessions with remote confirmation
  */
-export async function loadUserStudySessions(uid: string): Promise<FocusSessionRecord[]> {
-  if (!uid) return [];
+export async function loadUserStudySessionsWithStatus(uid: string): Promise<StudySessionLoadResult> {
+  if (!uid) return { sessions: [], confirmedRemote: false, error: 'No UID provided' };
 
   const sessionsMap: Record<string, FocusSessionRecord> = {};
+  let rtdbConfirmed = false;
+  let rtdbError: string | undefined;
 
   // 1. Primary: Realtime Database users/{uid}/studySessions
   try {
     const rtdbTargetRef = rtdbRef(rtdb, `users/${uid}/studySessions`);
     const snap = await withRtdbTimeout(rtdbGet(rtdbTargetRef));
+    rtdbConfirmed = true;
     if (snap.exists()) {
       const val = snap.val();
       if (val && typeof val === 'object') {
@@ -1384,10 +1469,13 @@ export async function loadUserStudySessions(uid: string): Promise<FocusSessionRe
             sessionsMap[rec.sessionId] = rec as FocusSessionRecord;
           }
         });
-        console.log(`[Firebase RTDB] Loaded ${Object.keys(sessionsMap).length} study sessions`);
+        console.log(`[Firebase RTDB] Loaded ${Object.keys(sessionsMap).length} study sessions for UID: ${uid}`);
       }
+    } else {
+      console.log(`[Firebase RTDB] Confirmed no study sessions for UID: ${uid}`);
     }
-  } catch (rtdbErr) {
+  } catch (rtdbErr: any) {
+    rtdbError = rtdbErr instanceof Error ? rtdbErr.message : String(rtdbErr);
     console.warn(`[Firebase RTDB Read Warning] studySessions UID: ${uid}:`, rtdbErr);
   }
 
@@ -1419,7 +1507,19 @@ export async function loadUserStudySessions(uid: string): Promise<FocusSessionRe
 
   const result = Object.values(sessionsMap);
   result.sort((a, b) => (b.startTimestamp || 0) - (a.startTimestamp || 0));
-  return result;
+  return {
+    sessions: result,
+    confirmedRemote: rtdbConfirmed,
+    error: rtdbError,
+  };
+}
+
+/**
+ * Backwards-compatible loadUserStudySessions wrapper
+ */
+export async function loadUserStudySessions(uid: string): Promise<FocusSessionRecord[]> {
+  const res = await loadUserStudySessionsWithStatus(uid);
+  return res.sessions;
 }
 
 /**

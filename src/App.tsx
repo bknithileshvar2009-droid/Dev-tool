@@ -91,7 +91,9 @@ import {
 import {
   auth,
   saveUserDashboard,
+  saveUserDashboardDetailed,
   loadUserDashboard,
+  loadUserDashboardWithStatus,
   subscribeToUserDashboard,
   signInWithGoogle,
   signInAsGuest,
@@ -116,15 +118,16 @@ import {
   getDayOfWeekName,
   saveFocusSessionRecord,
   saveStudySessionRecord,
+  saveStudySessionRecordDetailed,
   loadUserFocusSessions,
   loadUserStudySessions,
+  loadUserStudySessionsWithStatus,
   subscribeToUserFocusSessions,
   FocusSessionRecord,
   resetUserDashboardData,
   SINGLE_USER_MASTER_UID,
   ensureSingleUserAuth,
 } from './utils/firebase';
-import { exportStudyHistoryToPDF } from './utils/PdfExporter';
 import VisualCustomizationStudio from './components/VisualCustomizationStudio';
 import AnimatedCharacterBackdrop from './components/AnimatedCharacterBackdrop';
 import DailyRegistryHistoryModal from './components/DailyRegistryHistoryModal';
@@ -136,7 +139,8 @@ import FocusStreakBadgeModal from './components/FocusStreakBadgeModal';
 import SmartBreakSuggestions from './components/SmartBreakSuggestions';
 import BreakStatisticsWidget from './components/BreakStatisticsWidget';
 import StudyHistoryModal from './components/StudyHistoryModal';
-import StudyTimeTracker from './components/StudyTimeTracker';
+import StudyCommandCenterModal from './components/studyCommandCenter/StudyCommandCenterModal';
+import StudyCommandCenterWidget from './components/studyCommandCenter/StudyCommandCenterWidget';
 import {
   STUDIO_LAYOUT_ARRANGEMENTS,
   computePresetWidgetCoordinates,
@@ -308,23 +312,6 @@ export interface ExamScheduleItem {
 }
 
 
-const StatusBar = ({ history }: { history: Record<string, DailyRegistryDayRecord> }) => {
-  const [time, setTime] = useState(new Date());
-  useEffect(() => {
-    const timer = setInterval(() => setTime(new Date()), 1000);
-    return () => clearInterval(timer);
-  }, []);
-
-  const totalMinutes = Object.values(history).reduce((sum, day) => sum + (day.totalStudyMinutes || 0), 0);
-  const totalHours = Math.floor(totalMinutes / 60);
-
-  return (
-    <div className="fixed top-4 right-4 z-50 bg-black/60 backdrop-blur-md p-3 rounded-lg text-white text-xs border border-white/10 shadow-lg">
-      <div className="font-mono">{time.toLocaleTimeString()}</div>
-      <div className="text-cyan-400 mt-1">Focus: {totalHours}h {totalMinutes % 60}m</div>
-    </div>
-  );
-};
 
 export const PUBLIC_EXAM_TIMETABLE: ExamScheduleItem[] = [
   { id: 'exam-1', dateStr: '03 Mar', dayOfWeek: 'Wed', subject: 'Tamil', icon: '📝', isCentumTarget: false, targetYearMonthDay: '2027-03-03' },
@@ -546,7 +533,15 @@ interface DashboardConfig {
     width: number;
     height: number;
   };
-  studyTracker: {
+  studyTracker?: {
+    visible: boolean;
+    glassBg: boolean;
+    x: number | null;
+    y: number | null;
+    width: number;
+    height: number;
+  };
+  studyCommandCenter?: {
     visible: boolean;
     glassBg: boolean;
     x: number | null;
@@ -731,12 +726,20 @@ const DEFAULT_CONFIG: DashboardConfig = {
     height: 240,
   },
   studyTracker: {
-    visible: true,
+    visible: false,
     glassBg: true,
     x: null,
     y: null,
     width: 380,
     height: 260,
+  },
+  studyCommandCenter: {
+    visible: true,
+    glassBg: true,
+    x: null,
+    y: null,
+    width: 380,
+    height: 240,
   },
 };
 
@@ -876,6 +879,7 @@ export default function App() {
           calendar: { ...DEFAULT_CONFIG.calendar, ...(parsed.calendar || {}) },
           pomodoro: { ...DEFAULT_CONFIG.pomodoro, ...(parsed.pomodoro || {}) },
           breakStats: { ...DEFAULT_CONFIG.breakStats, ...(parsed.breakStats || {}) },
+          studyCommandCenter: parsed.studyCommandCenter ? { ...DEFAULT_CONFIG.studyCommandCenter, ...parsed.studyCommandCenter } : DEFAULT_CONFIG.studyCommandCenter,
         };
       }
     } catch {
@@ -906,6 +910,7 @@ export default function App() {
   const [focusedWidget, setFocusedWidget] = useState<DashboardWidgetKey | null>(null);
   const [urlInput, setUrlInput] = useState('');
   const [studyHistoryModalOpen, setStudyHistoryModalOpen] = useState(false);
+  const [studyCommandCenterOpen, setStudyCommandCenterOpen] = useState(false);
 
   // Task Completion Animation State
   const [justCompletedTaskId, setJustCompletedTaskId] = useState<string | null>(null);
@@ -964,31 +969,6 @@ export default function App() {
     return () => window.removeEventListener('resize', checkMobile);
   }, []);
 
-  // Route & View detection for Study Time Tracker on mobile devices
-  const [isTrackerRoute, setIsTrackerRoute] = useState(() => {
-    if (typeof window === 'undefined') return true;
-    const path = (window.location.pathname + window.location.hash + window.location.search).toLowerCase();
-    return path.includes('tracker') || path.includes('study') || path.includes('history') || path === '/' || path === '';
-  });
-
-  useEffect(() => {
-    const handleLocationChange = () => {
-      const path = (window.location.pathname + window.location.hash + window.location.search).toLowerCase();
-      setIsTrackerRoute(path.includes('tracker') || path.includes('study') || path.includes('history') || path === '/' || path === '');
-    };
-    window.addEventListener('popstate', handleLocationChange);
-    window.addEventListener('hashchange', handleLocationChange);
-    return () => {
-      window.removeEventListener('popstate', handleLocationChange);
-      window.removeEventListener('hashchange', handleLocationChange);
-    };
-  }, []);
-
-  useEffect(() => {
-    if (isMobile && isTrackerRoute) {
-      setActiveTab('registry');
-    }
-  }, [isMobile, isTrackerRoute]);
   
   // Focus Mode Phase 2: Goals, Setup, History, Recovery & Analytics State
   const [focusSetupModalOpen, setFocusSetupModalOpen] = useState<boolean>(false);
@@ -1020,6 +1000,8 @@ export default function App() {
   const [cycleBreakCompleted, setCycleBreakCompleted] = useState<boolean>(false);
   const [smartBreakCompletedList, setSmartBreakCompletedList] = useState<string[]>([]);
   const [userFocusSessions, setUserFocusSessions] = useState<FocusSessionRecord[]>([]);
+  const [isHistoryLoading, setIsHistoryLoading] = useState<boolean>(false);
+  const [historyError, setHistoryError] = useState<string | null>(null);
   const [fullscreenErrorNotice, setFullscreenErrorNotice] = useState<string | null>(null);
 
   // Backwards-compatible aliases for pomodoro references
@@ -1067,48 +1049,70 @@ export default function App() {
   } as User), []);
 
   const [currentUser, setCurrentUser] = useState<User | null>(masterUser);
-  const [mobileSearchQuery, setMobileSearchQuery] = useState('');
-  const [mobileSubjectFilter, setMobileSubjectFilter] = useState('all');
 
-  const filteredMobileSessions = useMemo(() => {
-    return userFocusSessions.filter(s => {
-      const matchesSubject = mobileSubjectFilter === 'all' || (s.subject && s.subject.toLowerCase() === mobileSubjectFilter.toLowerCase());
-      const query = mobileSearchQuery.toLowerCase().trim();
-      const matchesQuery = !query || 
-        (s.subject && s.subject.toLowerCase().includes(query)) ||
-        (s.task && s.task.toLowerCase().includes(query)) ||
-        (s.goal && s.goal.toLowerCase().includes(query));
-      return matchesSubject && matchesQuery;
-    });
-  }, [userFocusSessions, mobileSubjectFilter, mobileSearchQuery]);
+  // Cross-tab real-time sync for study sessions
+  useEffect(() => {
+    let channel: BroadcastChannel | null = null;
+    try {
+      channel = new BroadcastChannel('apes_study_sync');
+      channel.onmessage = (event) => {
+        if (event.data?.type === 'study_session_saved' && event.data?.record) {
+          const rec = event.data.record as FocusSessionRecord;
+          console.log('[BroadcastChannel] Merging incoming study session across tabs:', rec.sessionId);
+          setUserFocusSessions(prev => {
+            if (prev.some(s => s.sessionId === rec.sessionId)) return prev;
+            const updated = [rec, ...prev];
+            updated.sort((a, b) => (b.startTimestamp || 0) - (a.startTimestamp || 0));
+            try {
+              localStorage.setItem('flocus_user_focus_sessions', JSON.stringify(updated));
+            } catch {}
+            return updated;
+          });
+        }
+      };
+    } catch (e) {
+      console.warn('[BroadcastChannel] Notice:', e);
+    }
+    return () => {
+      if (channel) channel.close();
+    };
+  }, []);
 
-  const handleExportCSV = useCallback(() => {
-    const headers = ['Session ID', 'Date', 'Start Time', 'End Time', 'Subject', 'Topic/Task', 'Duration (mins)', 'Status', 'Notes'];
-    const rows = userFocusSessions.map(s => {
-      const startDate = new Date(s.startTimestamp || 0).toLocaleDateString();
-      const startTime = new Date(s.startTimestamp || 0).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-      const endTime = s.endTimestamp ? new Date(s.endTimestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
-      return [
-        s.sessionId,
-        startDate,
-        startTime,
-        endTime,
-        s.subject || 'General Study',
-        `"${(s.task || '').replace(/"/g, '""')}"`,
-        s.actualElapsedMinutes || 0,
-        s.status || 'completed',
-        `"${(s.goal || '').replace(/"/g, '""')}"`
-      ].join(',');
-    });
-    const csvContent = 'data:text/csv;charset=utf-8,' + [headers.join(','), ...rows].join('\n');
-    const encodedUri = encodeURI(csvContent);
-    const link = document.createElement('a');
-    link.setAttribute('href', encodedUri);
-    link.setAttribute('download', `BK_NITHILESHVAR_Study_History_${getLocalDateString()}.csv`);
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-  }, [userFocusSessions]);
+  // On-demand refresh for study sessions from Firebase
+  const refreshStudyHistory = useCallback(async () => {
+    const activeUid = currentUser?.uid || SINGLE_USER_MASTER_UID;
+    setIsHistoryLoading(true);
+    setHistoryError(null);
+    try {
+      const [studyRes, focusRecs] = await Promise.all([
+        loadUserStudySessionsWithStatus(activeUid),
+        loadUserFocusSessions(activeUid),
+      ]);
+      const sessionMap: Record<string, FocusSessionRecord> = {};
+      [...studyRes.sessions, ...focusRecs].forEach(s => {
+        if (s && s.sessionId) sessionMap[s.sessionId] = s;
+      });
+      setUserFocusSessions(prev => {
+        prev.forEach(s => {
+          if (s && s.sessionId && !sessionMap[s.sessionId]) {
+            sessionMap[s.sessionId] = s;
+          }
+        });
+        const list = Object.values(sessionMap);
+        list.sort((a, b) => (b.startTimestamp || 0) - (a.startTimestamp || 0));
+        try {
+          localStorage.setItem('flocus_user_focus_sessions', JSON.stringify(list));
+        } catch {}
+        return list;
+      });
+    } catch (err: any) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setHistoryError(msg);
+    } finally {
+      setIsHistoryLoading(false);
+    }
+  }, [currentUser]);
+
   const [syncStatus, setSyncStatus] = useState<SyncStatus>('idle');
   const [authError, setAuthError] = useState<string | null>(null);
   const [authSuccessMsg, setAuthSuccessMsg] = useState<string | null>(null);
@@ -1316,7 +1320,7 @@ export default function App() {
   const pomodoroRef = useRef<HTMLDivElement | null>(null);
   const scratchpadRef = useRef<HTMLDivElement | null>(null);
   const breakStatsRef = useRef<HTMLDivElement | null>(null);
-  const studyTrackerRef = useRef<HTMLDivElement | null>(null);
+  const studyCommandCenterRef = useRef<HTMLDivElement | null>(null);
   const dashboardRef = useRef<HTMLDivElement | null>(null);
   const [placementModal, setPlacementModal] = useState<{
     isOpen: boolean;
@@ -1606,7 +1610,7 @@ export default function App() {
             y: coords[k].y,
             width: coords[k].width,
             height: coords[k].height,
-            visible: true,
+            visible: (next as any)[k]?.visible !== false,
           };
         }
       });
@@ -1665,7 +1669,7 @@ export default function App() {
       pomodoro: { ...p.pomodoro, glassBg: !transparent },
       nameWidget: { ...p.nameWidget, glassBg: !transparent },
       scratchpad: { ...p.scratchpad, glassBg: !transparent },
-      studyTracker: { ...DEFAULT_CONFIG.studyTracker, ...(p.studyTracker || {}), glassBg: !transparent },
+      studyCommandCenter: p.studyCommandCenter ? { ...p.studyCommandCenter, glassBg: !transparent } : undefined,
     }));
   }, [updateConfig]);
 
@@ -1680,7 +1684,7 @@ export default function App() {
       !config.nameWidget.glassBg &&
       !config.pomodoro?.glassBg &&
       !config.scratchpad?.glassBg &&
-      !config.studyTracker?.glassBg
+      !config.studyCommandCenter?.glassBg
     );
   }, [config]);
 
@@ -1702,7 +1706,7 @@ export default function App() {
     { id: 'motivation', label: 'Daily Intention & Motivation', defaultW: 440, defaultH: 140, icon: Sparkles, category: 'Mindset' },
     { id: 'pomodoro', label: 'Deep Focus Study Station & Brevo Break', defaultW: 380, defaultH: 260, icon: Flame, category: 'Focus' },
     { id: 'scratchpad', label: 'Daily Register (Study Notes & Summary)', defaultW: 400, defaultH: 340, icon: FileText, category: 'Register' },
-    { id: 'studyTracker', label: 'Study Time Tracker & Timer', defaultW: 380, defaultH: 260, icon: Timer, category: 'Study' },
+    { id: 'studyCommandCenter', label: 'Study Command Center (Chronos Dual-Sync)', defaultW: 380, defaultH: 260, icon: Sparkles, category: 'Study' },
   ], []);
 
   const hexToRgba = useCallback((hex: string, alpha: number): string => {
@@ -2126,9 +2130,10 @@ export default function App() {
 
     // 1. Restore Config (Widgets, positions, sizes, titles, layouts, wallpapers, themes, typography, etc.)
     if (cloudData.config && typeof cloudData.config === 'object') {
-      setConfig(prev => ({
+      const mergedConfig: DashboardConfig = {
         ...DEFAULT_CONFIG,
         ...cloudData.config,
+        studyTracker: { ...DEFAULT_CONFIG.studyTracker, visible: false },
         optionalFeatures: { ...DEFAULT_OPTIONAL_FEATURES, ...(cloudData.config.optionalFeatures || {}) },
         personalization: { ...DEFAULT_PERSONALIZATION, ...(cloudData.config.personalization || {}) },
         typography: {
@@ -2149,9 +2154,10 @@ export default function App() {
             ...(cloudData.config.widgetStyles?.overrides || {}),
           },
         },
-      }));
+      };
+      setConfig(mergedConfig);
       try {
-        localStorage.setItem('flocus_dashboard_config', JSON.stringify(cloudData.config));
+        localStorage.setItem('flocus_dashboard_config', JSON.stringify(mergedConfig));
       } catch {}
     }
 
@@ -2272,19 +2278,25 @@ export default function App() {
 
       try {
         console.log(`[Firebase Auth] Reading previous dashboard state for BK NITHILESHVAR...`);
-        const cloudDataUser = await loadUserDashboard(activeUid);
-        const cloudDataMaster = activeUid !== activeMasterUid ? await loadUserDashboard(activeMasterUid) : null;
-        const cloudData = cloudDataUser || cloudDataMaster;
+        const userDashRes = await loadUserDashboardWithStatus(activeUid);
+        let cloudData = userDashRes.data;
+        let confirmedRemote = userDashRes.confirmedRemote;
+
+        if (!cloudData && activeUid !== activeMasterUid) {
+          const masterDashRes = await loadUserDashboardWithStatus(activeMasterUid);
+          if (masterDashRes.data) {
+            cloudData = masterDashRes.data;
+            confirmedRemote = true;
+          }
+        }
 
         if (isCancelled) return;
 
         if (cloudData && (cloudData.config || cloudData.tasks)) {
           const cloudTime = cloudData.updatedAt ? new Date(cloudData.updatedAt).getTime() : 0;
           const localTime = lastLocalUpdateTimeRef.current;
-          const hasRecentLocalEdits = userEditedAtRef.current > 0;
-
-          if (hasRecentLocalEdits && localTime > 0 && cloudTime > 0 && localTime > cloudTime) {
-            console.log(`[Firebase Auth] Local settings are newer than cloud record. Syncing to cloud.`);
+          if (localTime > 0 && cloudTime > 0 && localTime > cloudTime) {
+            console.log(`[Firebase Auth] Local settings (${new Date(localTime).toISOString()}) are newer than cloud record (${cloudData.updatedAt}). Syncing to cloud.`);
             const localPayload = buildCurrentDashboardPayload(activeUid);
             await saveUserDashboard(activeUid, localPayload);
             lastSyncedPayloadRef.current = localPayload.updatedAt;
@@ -2296,12 +2308,17 @@ export default function App() {
             setSyncStatus('saved');
           }
           verifyWritePermission(activeUid).catch(() => {});
-        } else {
-          console.log(`[Firebase Auth] Initializing dashboard for BK NITHILESHVAR...`);
+        } else if (confirmedRemote) {
+          // Genuinely verified empty remote database; safe to initialize with defaults
+          console.log(`[Firebase Auth] Confirmed empty cloud dashboard for UID: ${activeUid}. Initializing...`);
           const initialPayload = buildCurrentDashboardPayload(activeUid);
           await saveUserDashboard(activeUid, initialPayload);
           setLastSyncedTime(new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }));
           setSyncStatus('saved');
+        } else {
+          // Read could not be confirmed (timeout / network error); DO NOT overwrite existing user data with empty defaults!
+          console.warn(`[Firebase Auth Warning] Remote dashboard state could not be confirmed for UID: ${activeUid}. Preserving existing state.`);
+          setSyncStatus('idle');
         }
 
         // Master 4-Hour Study Record Definitions for October 22, 2026
@@ -2502,12 +2519,16 @@ export default function App() {
 
         // Load Focus & Study Sessions History across activeUid, master UID, and localStorage
         console.log(`[Firebase Auth] Loading Focus & Study Sessions for BK NITHILESHVAR (UID: ${activeUid})`);
-        const [focusUser, studyUser, focusMaster, studyMaster] = await Promise.all([
+        setIsHistoryLoading(true);
+        setHistoryError(null);
+        const [focusUser, studyUserRes, focusMaster, studyMasterRes] = await Promise.all([
           loadUserFocusSessions(activeUid),
-          loadUserStudySessions(activeUid),
+          loadUserStudySessionsWithStatus(activeUid),
           activeUid !== activeMasterUid ? loadUserFocusSessions(activeMasterUid) : Promise.resolve([]),
-          activeUid !== activeMasterUid ? loadUserStudySessions(activeMasterUid) : Promise.resolve([]),
+          activeUid !== activeMasterUid ? loadUserStudySessionsWithStatus(activeMasterUid) : Promise.resolve({ sessions: [], confirmedRemote: true }),
         ]);
+        const studyUser = studyUserRes.sessions;
+        const studyMaster = studyMasterRes.sessions;
         if (!isCancelled) {
           let localSessions: FocusSessionRecord[] = [];
           try {
@@ -2625,11 +2646,12 @@ export default function App() {
         console.error(`[Firebase Auth Error] Master restoration notice:`, err);
         setSyncStatus('error');
       } finally {
+        setIsHistoryLoading(false);
         setTimeout(() => {
           if (!isCancelled) {
             isRestoringRef.current = false;
-            restoredUserUidRef.current = activeMasterUid;
-            console.log(`[Firebase Auth] Master auto-sync gate opened for BK NITHILESHVAR`);
+            restoredUserUidRef.current = activeUid;
+            console.log(`[Firebase Auth] Auto-sync gate opened for UID: ${activeUid}`);
           }
         }, 300);
       }
@@ -2757,6 +2779,31 @@ export default function App() {
     autoSyncEnabled,
     buildCurrentDashboardPayload,
   ]);
+
+  // Flush auto-sync immediately on page reload or navigation
+  useEffect(() => {
+    const handleBeforeUnload = () => {
+      if (currentUser?.uid && autoSyncEnabled && !isRestoringRef.current) {
+        if (syncTimeoutRef.current) {
+          window.clearTimeout(syncTimeoutRef.current);
+          syncTimeoutRef.current = null;
+        }
+        const payload = buildCurrentDashboardPayload(currentUser.uid);
+        try {
+          localStorage.setItem('flocus_dashboard_config', JSON.stringify(payload.config));
+          localStorage.setItem('flocus_dashboard_updated_at', payload.updatedAt);
+        } catch {}
+        saveUserDashboard(currentUser.uid, payload).catch(() => {});
+      }
+    };
+
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    window.addEventListener('pagehide', handleBeforeUnload);
+    return () => {
+      window.removeEventListener('beforeunload', handleBeforeUnload);
+      window.removeEventListener('pagehide', handleBeforeUnload);
+    };
+  }, [currentUser, autoSyncEnabled, buildCurrentDashboardPayload]);
 
   // Online network reconnect auto-sync trigger
   useEffect(() => {
@@ -4071,6 +4118,14 @@ export default function App() {
           width: 380,
           height: 300,
         },
+        studyCommandCenter: prev.studyCommandCenter ? { ...prev.studyCommandCenter, ...coords.studyCommandCenter } : {
+          visible: true,
+          glassBg: true,
+          x: coords.studyCommandCenter?.x ?? 50,
+          y: coords.studyCommandCenter?.y ?? 550,
+          width: 380,
+          height: 240,
+        },
       }));
       return;
     }
@@ -4087,8 +4142,13 @@ export default function App() {
       calendar: { ...prev.calendar, ...coords.calendar },
       motivation: { ...prev.motivation, ...coords.motivation },
       pomodoro: { ...prev.pomodoro, ...coords.pomodoro },
-      studyTracker: { ...prev.studyTracker, ...coords.studyTracker },
       scratchpad: { ...prev.scratchpad, ...coords.scratchpad },
+      studyCommandCenter: {
+        visible: prev.studyCommandCenter?.visible !== false,
+        glassBg: prev.studyCommandCenter?.glassBg ?? true,
+        ...prev.studyCommandCenter,
+        ...coords.studyCommandCenter,
+      },
     }));
   }, [
     config.layoutMode,
@@ -4109,7 +4169,9 @@ export default function App() {
       config.pomodoro?.x === null ||
       config.pomodoro?.y === null ||
       config.scratchpad?.x === null ||
-      config.scratchpad?.y === null
+      config.scratchpad?.y === null ||
+      config.studyCommandCenter?.x === null ||
+      config.studyCommandCenter?.y === null
     ) {
       recenterWidgets();
     }
@@ -4126,6 +4188,8 @@ export default function App() {
     config.pomodoro?.y,
     config.scratchpad?.x,
     config.scratchpad?.y,
+    config.studyCommandCenter?.x,
+    config.studyCommandCenter?.y,
     recenterWidgets,
   ]);
 
@@ -4210,6 +4274,9 @@ export default function App() {
       } else if (key === 'd') {
         e.preventDefault();
         setHistoryModalOpen(prev => !prev);
+      } else if (key === 's') {
+        e.preventDefault();
+        setStudyCommandCenterOpen(prev => !prev);
       } else if (key === 'c') {
         e.preventDefault();
         recenterWidgets();
@@ -4224,6 +4291,7 @@ export default function App() {
         setCommandMenuOpen(false);
         setDrawerOpen(false);
         setHistoryModalOpen(false);
+        setStudyCommandCenterOpen(false);
         setZenMode(false);
         setPlacementModal(null);
         setContextMenu(null);
@@ -4407,8 +4475,8 @@ export default function App() {
         return scratchpadRef.current;
       case 'breakStats':
         return breakStatsRef.current;
-      case 'studyTracker':
-        return studyTrackerRef.current;
+      case 'studyCommandCenter':
+        return studyCommandCenterRef.current;
     }
   };
 
@@ -4760,6 +4828,14 @@ export default function App() {
         available: true,
       },
       {
+        id: 'study-command-center',
+        label: 'Open Study Command Center (Chronos Dual-Sync & 18 Widgets)',
+        category: 'Study',
+        shortcut: 'S',
+        action: () => { setStudyCommandCenterOpen(true); setCommandMenuOpen(false); },
+        available: true,
+      },
+      {
         id: 'daily-registry',
         label: 'Open Daily Registry & Personal History',
         category: 'Study',
@@ -4935,247 +5011,6 @@ export default function App() {
         isPlacementModeActive ? 'cursor-crosshair' : !config.optionalFeatures.widgetCustomization ? 'cursor-default' : ''
       }`}
     >
-      {/* Mobile Study History & Daily Registry View for BK NITHILESHVAR */}
-      <div className={`fixed inset-0 z-[100] bg-[#070b1a] overflow-y-auto text-slate-100 p-4 sm:p-6 ${isMobile && isTrackerRoute ? 'block' : 'hidden'} print:block print:relative print:bg-white print:text-black print:p-0`}>
-        <div className="max-w-4xl mx-auto space-y-6 pb-12">
-          {/* Header Bar */}
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-white/10 print:border-black/20">
-            <div>
-              <div className="flex items-center gap-2">
-                <div className="w-8 h-8 rounded-xl bg-cyan-500/20 border border-cyan-500/40 flex items-center justify-center text-cyan-400 font-bold text-sm print:hidden">
-                  BK
-                </div>
-                <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-white print:text-black">
-                  BK NITHILESHVAR
-                </h1>
-              </div>
-              <p className="text-xs text-slate-400 mt-1 print:text-gray-600">
-                Personal Study History & Daily Registry · <span className="text-cyan-400 font-mono print:text-black">nithileshvarbk@gmail.com</span>
-              </p>
-            </div>
-
-            {/* Print & Export Actions */}
-            <div className="flex items-center gap-2 print:hidden">
-              <button
-                onClick={() => window.print()}
-                className="flex items-center gap-1.5 px-3 py-2 text-xs font-semibold rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-white/10 transition shadow-sm"
-                title="Print Study History"
-              >
-                <Printer className="w-4 h-4 text-cyan-400" />
-                <span>Print</span>
-              </button>
-              <button
-                onClick={() => exportStudyHistoryToPDF({ sessions: userFocusSessions, userName: 'BK NITHILESHVAR' })}
-                className="flex items-center gap-1.5 px-3 py-2 text-xs font-semibold rounded-xl bg-cyan-600 hover:bg-cyan-500 text-white transition shadow-sm"
-                title="Export History as PDF Document"
-              >
-                <FileText className="w-4 h-4" />
-                <span>PDF</span>
-              </button>
-              <button
-                onClick={handleExportCSV}
-                className="flex items-center gap-1.5 px-3 py-2 text-xs font-semibold rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white transition shadow-sm"
-                title="Export History as CSV Spreadsheet"
-              >
-                <Download className="w-4 h-4" />
-                <span>CSV</span>
-              </button>
-            </div>
-          </div>
-
-          {/* Quick Metrics Cards */}
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-            <div className="p-3.5 rounded-2xl bg-slate-900/80 border border-white/10 print:border-gray-300 print:bg-gray-50">
-              <div className="text-[11px] text-slate-400 font-medium print:text-gray-600">Total Focus Time</div>
-              <div className="text-lg font-bold text-cyan-400 mt-1 tabular-nums print:text-black">
-                {formatDurationMinutes(userFocusSessions.reduce((acc, s) => acc + (s.actualElapsedMinutes || 0), 0))}
-              </div>
-            </div>
-            <div className="p-3.5 rounded-2xl bg-slate-900/80 border border-white/10 print:border-gray-300 print:bg-gray-50">
-              <div className="text-[11px] text-slate-400 font-medium print:text-gray-600">Total Sessions</div>
-              <div className="text-lg font-bold text-emerald-400 mt-1 tabular-nums print:text-black">
-                {userFocusSessions.length} <span className="text-xs font-normal text-slate-400 print:text-gray-500">recorded</span>
-              </div>
-            </div>
-            <div className="p-3.5 rounded-2xl bg-slate-900/80 border border-white/10 print:border-gray-300 print:bg-gray-50">
-              <div className="text-[11px] text-slate-400 font-medium print:text-gray-600">Subjects Studied</div>
-              <div className="text-lg font-bold text-indigo-400 mt-1 tabular-nums print:text-black">
-                {new Set(userFocusSessions.map(s => s.subject || 'General Study')).size}
-              </div>
-            </div>
-            <div className="p-3.5 rounded-2xl bg-slate-900/80 border border-white/10 print:border-gray-300 print:bg-gray-50">
-              <div className="text-[11px] text-slate-400 font-medium print:text-gray-600">Registry Days</div>
-              <div className="text-lg font-bold text-amber-400 mt-1 tabular-nums print:text-black">
-                {Object.keys(dailyRegistryHistory || {}).length} <span className="text-xs font-normal text-slate-400 print:text-gray-500">days</span>
-              </div>
-            </div>
-          </div>
-
-          {/* Search & Subject Filter Bar (Hidden on Print) */}
-          <div className="space-y-3 print:hidden">
-            <div className="flex items-center gap-2">
-              <div className="relative flex-1">
-                <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-                <input
-                  type="text"
-                  placeholder="Search subject, topic, or task..."
-                  value={mobileSearchQuery}
-                  onChange={e => setMobileSearchQuery(e.target.value)}
-                  className="w-full pl-9 pr-8 py-2 text-xs rounded-xl bg-slate-900 border border-white/10 text-white placeholder-slate-500 focus:outline-none focus:border-cyan-500"
-                />
-                {mobileSearchQuery && (
-                  <button
-                    onClick={() => setMobileSearchQuery('')}
-                    className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white text-xs"
-                  >
-                    ×
-                  </button>
-                )}
-              </div>
-            </div>
-
-            {/* Subject Tabs */}
-            <div className="flex items-center gap-1.5 overflow-x-auto pb-1 no-scrollbar text-xs">
-              {['all', 'Mathematics', 'Science', 'Computer Science', 'Languages', 'History', 'General'].map(sub => (
-                <button
-                  key={sub}
-                  onClick={() => setMobileSubjectFilter(sub)}
-                  className={`px-3 py-1.5 rounded-lg whitespace-nowrap font-medium transition ${
-                    mobileSubjectFilter === sub
-                      ? 'bg-cyan-500 text-black font-semibold shadow-sm'
-                      : 'bg-slate-900/90 text-slate-300 hover:bg-slate-800 border border-white/5'
-                  }`}
-                >
-                  {sub === 'all' ? 'All Subjects' : sub}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {/* Study History Session Feed */}
-          <div className="space-y-3">
-            <div className="flex items-center justify-between">
-              <h2 className="text-sm font-semibold text-slate-200 flex items-center gap-2 print:text-black">
-                <ClockIcon className="w-4 h-4 text-cyan-400 print:hidden" />
-                <span>Recorded Study Sessions ({filteredMobileSessions.length})</span>
-              </h2>
-              <span className="text-xs text-slate-500 print:text-gray-600">Firebase Cloud Synced</span>
-            </div>
-
-            {filteredMobileSessions.length === 0 ? (
-              <div className="p-8 rounded-2xl bg-slate-900/50 border border-white/10 text-center space-y-2 print:border-gray-300 print:bg-white">
-                <p className="text-sm text-slate-400 print:text-gray-600">No study sessions found for BK NITHILESHVAR matching your query.</p>
-                <p className="text-xs text-slate-500">Study sessions saved on any device will appear here automatically.</p>
-              </div>
-            ) : (
-              <div className="space-y-2.5">
-                {filteredMobileSessions.map(session => {
-                  const startDate = new Date(session.startTimestamp || Date.now());
-                  return (
-                    <div
-                      key={session.sessionId}
-                      className="p-4 rounded-2xl bg-slate-900/80 border border-white/10 space-y-2 transition hover:border-cyan-500/30 print:border-gray-300 print:bg-white print:p-3"
-                    >
-                      <div className="flex items-start justify-between gap-2">
-                        <div>
-                          <span className="text-[11px] font-semibold text-cyan-400 uppercase tracking-wider print:text-black">
-                            {session.subject || 'General Study'}
-                          </span>
-                          <h3 className="text-sm font-bold text-white mt-0.5 print:text-black">
-                            {session.task || session.goal || 'Focused Study Session'}
-                          </h3>
-                        </div>
-                        <span className="px-2.5 py-1 rounded-lg text-xs font-bold bg-cyan-950 text-cyan-300 border border-cyan-800/40 tabular-nums print:bg-gray-100 print:text-black print:border-gray-300">
-                          {session.actualElapsedMinutes || 0} mins
-                        </span>
-                      </div>
-
-                      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-400 print:text-gray-600">
-                        <span>{startDate.toLocaleDateString()}</span>
-                        <span className="text-slate-600 print:text-gray-400">·</span>
-                        <span>{startDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
-                        {session.status && (
-                          <>
-                            <span className="text-slate-600 print:text-gray-400">·</span>
-                            <span className="capitalize text-emerald-400 print:text-gray-700">{session.status}</span>
-                          </>
-                        )}
-                      </div>
-
-                      {session.goal && session.goal !== session.task && (
-                        <p className="text-xs text-slate-300 bg-slate-950/60 p-2.5 rounded-xl border border-white/5 print:bg-gray-50 print:border-gray-200 print:text-black">
-                          <span className="text-slate-400 font-medium">Notes / Goal:</span> {session.goal}
-                        </p>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-
-          {/* Daily Registry Section */}
-          <div className="pt-4 space-y-3 border-t border-white/10 print:border-gray-300">
-            <h2 className="text-sm font-semibold text-slate-200 flex items-center gap-2 print:text-black">
-              <BookOpen className="w-4 h-4 text-emerald-400 print:hidden" />
-              <span>Daily Study Registry Log</span>
-            </h2>
-
-            {Object.keys(dailyRegistryHistory || {}).length === 0 ? (
-              <div className="p-6 rounded-2xl bg-slate-900/50 border border-white/10 text-center text-xs text-slate-400 print:border-gray-300 print:bg-white">
-                No daily registry days saved yet. Tasks logged in the registry will sync here.
-              </div>
-            ) : (
-              <div className="space-y-3">
-                {Object.entries(dailyRegistryHistory)
-                  .sort(([dateA], [dateB]) => dateB.localeCompare(dateA))
-                  .map(([dateKey, dayRecord]) => {
-                    const entriesList = dayRecord.entries ? Object.values(dayRecord.entries) : [];
-                    return (
-                      <div key={dateKey} className="p-4 rounded-2xl bg-slate-900/80 border border-white/10 space-y-2 print:border-gray-300 print:bg-white">
-                        <div className="flex items-center justify-between pb-2 border-b border-white/5 print:border-gray-200">
-                          <span className="text-xs font-bold text-emerald-400 print:text-black">{dateKey}</span>
-                          <span className="text-[11px] text-slate-400 print:text-gray-600">
-                            {entriesList.length} registry items
-                          </span>
-                        </div>
-                        
-                        {entriesList.length > 0 && (
-                          <div className="space-y-1.5 pt-1">
-                            {entriesList.map((item, idx) => {
-                              const isDone = item.status === 'completed';
-                              return (
-                                <div key={item.id || idx} className="flex items-center justify-between text-xs text-slate-300 print:text-black">
-                                  <span className="flex items-center gap-1.5">
-                                    <span className={isDone ? 'text-emerald-400' : 'text-slate-500'}>
-                                      {isDone ? '✓' : '○'}
-                                    </span>
-                                    <span>{item.subject ? `[${item.subject}] ` : ''}{item.topic || item.notes || 'Activity Item'}</span>
-                                  </span>
-                                  <span className="text-[11px] text-slate-500 tabular-nums print:text-gray-600">
-                                    {item.durationMinutes ? `${item.durationMinutes}m` : ''}
-                                  </span>
-                                </div>
-                              );
-                            })}
-                          </div>
-                        )}
-
-                        {dayRecord.dailySummaryNotes && (
-                          <div className="text-xs text-slate-400 italic pt-1 border-t border-white/5 print:border-gray-200 print:text-gray-700">
-                            "{dayRecord.dailySummaryNotes}"
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })}
-              </div>
-            )}
-          </div>
-        </div>
-      </div>
-
-      
       {/* ================= CINEMATIC ANIMATED BACKDROP & WALLPAPER LAYER ================= */}
       <AnimatedCharacterBackdrop
         canvasTheme={config.canvasTheme}
@@ -5286,6 +5121,17 @@ export default function App() {
           {Object.keys(dailyRegistryHistory).length > 0 && (
             <span className="absolute -top-1 -right-1 w-2 h-2 rounded-full bg-cyan-400" />
           )}
+        </button>
+
+        {/* Study Command Center Navigation Button */}
+        <button
+          onClick={() => setStudyCommandCenterOpen(true)}
+          title="Study Command Center (Chronos Dual-Sync & 18 Widgets) [Press S]"
+          aria-label="Open Study Command Center"
+          className="px-3 py-2 min-h-[44px] sm:min-h-[48px] rounded-2xl hud-btn cursor-pointer flex items-center gap-2 bg-gradient-to-r from-cyan-500/20 to-amber-500/20 hover:from-cyan-500/35 hover:to-amber-500/35 border border-cyan-400/40 text-cyan-200 transition shadow-[0_0_16px_rgba(6,182,212,0.25)] font-semibold text-xs"
+        >
+          <Timer className="w-4 h-4 text-cyan-300" />
+          <span className="hidden md:inline font-sans font-bold tracking-wide text-white">Study Command Center</span>
         </button>
 
 
@@ -6701,26 +6547,23 @@ export default function App() {
         </div>
       )}
 
-      {/* ================= STUDY TIME TRACKER WIDGET ================= */}
-      {config.studyTracker?.visible !== false && !isFocusModeActive && (
+      {/* ================= WIDGET: STUDY COMMAND CENTER (CHRONOS DUAL-SYNC) ================= */}
+      {config.studyCommandCenter?.visible !== false && (
         <div
-          ref={studyTrackerRef}
-          id="study-tracker-widget"
-          data-widget-id="studyTracker"
-          onPointerDown={e => handlePointerDown(e, 'studyTracker')}
-          onWheel={e => handleWheelZoom(e, 'studyTracker')}
-          className={`dashboard-widget z-20 p-0 flex flex-col justify-between ${
+          ref={studyCommandCenterRef}
+          id="studyCommandCenter-widget"
+          data-widget-id="studyCommandCenter"
+          onPointerDown={e => handlePointerDown(e, 'studyCommandCenter')}
+          onWheel={e => handleWheelZoom(e, 'studyCommandCenter')}
+          className={`dashboard-widget z-20 px-3.5 py-3 flex flex-col justify-between ${
             config.optionalFeatures.widgetCustomization ? 'cursor-grab active:cursor-grabbing' : 'cursor-default'
-          } ${focusedWidget === 'studyTracker' ? 'widget-focused' : ''} ${radiusClass}`}
+          } ${getWidgetMaterialClass(config.studyCommandCenter?.glassBg ?? true)} ${focusedWidget === 'studyCommandCenter' ? 'widget-focused' : ''} ${radiusClass}`}
           style={{
-            width: config.studyTracker?.width || 380,
-            height: config.studyTracker?.height || 260,
-            left: config.studyTracker?.x ?? 540,
-            top: config.studyTracker?.y ?? 520,
-            backgroundColor: 'transparent',
-            borderColor: 'transparent',
-            boxShadow: 'none',
-            ...getWidgetComputedStyle('studyTracker'),
+            width: config.studyCommandCenter?.width || 380,
+            height: config.studyCommandCenter?.height || 260,
+            left: config.studyCommandCenter?.x ?? 50,
+            top: config.studyCommandCenter?.y ?? 550,
+            ...getWidgetComputedStyle('studyCommandCenter'),
           }}
         >
           {showHandles && (
@@ -6730,54 +6573,33 @@ export default function App() {
                 type="button"
                 onClick={e => {
                   e.stopPropagation();
-                  toggleWidgetTransparency('studyTracker');
+                  toggleWidgetTransparency('studyCommandCenter');
                 }}
-                title={config.studyTracker?.glassBg ? 'Switch Study Tracker to Transparent' : 'Switch Study Tracker to Glass Card'}
+                title={config.studyCommandCenter?.glassBg ? 'Switch Study Command Center to Transparent' : 'Switch to Glass Card'}
                 className="no-drag absolute top-2 right-2 px-2 py-0.5 rounded-md bg-black/60 hover:bg-black/90 text-[9px] font-mono text-white/80 hover:text-white border border-white/20 transition cursor-pointer z-30 flex items-center gap-1 shadow-sm"
               >
-                <span className={`w-1.5 h-1.5 rounded-full ${config.studyTracker?.glassBg ? 'bg-cyan-400' : 'bg-amber-400'}`} />
-                <span>{config.studyTracker?.glassBg ? 'Glass' : 'Transp.'}</span>
+                <span className={`w-1.5 h-1.5 rounded-full ${config.studyCommandCenter?.glassBg ? 'bg-cyan-400' : 'bg-amber-400'}`} />
+                <span>{config.studyCommandCenter?.glassBg ? 'Glass' : 'Transp.'}</span>
               </button>
             </>
           )}
 
-          <div className="w-full h-full no-drag">
-            <StudyTimeTracker
+          <div className="flex-1 overflow-hidden flex flex-col">
+            <StudyCommandCenterWidget
               uid={currentUser?.uid || null}
               activeSubject={activeSubject}
               activeTask={activeTask}
-              existingSessions={userFocusSessions}
-              onOpenHistory={() => setStudyHistoryModalOpen(true)}
-              onSessionCompleted={rec => {
-                setUserFocusSessions(prev => {
-                  const next = [rec, ...prev.filter(s => s.sessionId !== rec.sessionId)];
-                  try {
-                    localStorage.setItem('flocus_user_focus_sessions', JSON.stringify(next));
-                  } catch {}
-                  return next;
-                });
-                const today = getLocalDateString();
-                recordDailyRegistryActivity({
-                  timestamp: new Date().toISOString(),
-                  time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-                  eventType: 'study_session',
-                  description: `Study Session: ${rec.subject} (${rec.actualElapsedMinutes}m)`,
-                  durationMinutes: rec.actualElapsedMinutes,
-                  status: 'completed',
-                  rating: 5,
-                  topic: rec.task,
-                  subject: rec.subject,
-                }, today);
-              }}
+              onOpenCommandCenter={() => setStudyCommandCenterOpen(true)}
+              glassBg={config.studyCommandCenter?.glassBg ?? true}
             />
           </div>
 
           {showHandles && (
             <>
-              <div className="resize-handle resize-se text-amber-400" data-handle="se" />
-              <div className="resize-handle resize-sw text-amber-400" data-handle="sw" />
-              <div className="resize-handle resize-ne text-amber-400" data-handle="ne" />
-              <div className="resize-handle resize-nw text-amber-400" data-handle="nw" />
+              <div className="resize-handle resize-se text-cyan-400" data-handle="se" />
+              <div className="resize-handle resize-sw text-cyan-400" data-handle="sw" />
+              <div className="resize-handle resize-ne text-cyan-400" data-handle="ne" />
+              <div className="resize-handle resize-nw text-cyan-400" data-handle="nw" />
             </>
           )}
         </div>
@@ -8081,6 +7903,28 @@ export default function App() {
               <div className="truncate">
                 <div className="font-semibold text-white text-xs">Studio</div>
                 <div className="text-[10px] text-cyan-300/80">Themes & Fonts (V)</div>
+              </div>
+            </button>
+
+            {/* Study Command Center Full Suite Button */}
+            <button
+              type="button"
+              onClick={() => { setStudyCommandCenterOpen(true); setDrawerOpen(false); }}
+              className="flex items-center gap-2 p-2.5 rounded-xl bg-gradient-to-r from-cyan-500/20 to-amber-500/20 hover:from-cyan-500/35 hover:to-amber-500/35 border border-cyan-400/40 text-cyan-200 text-xs font-medium transition cursor-pointer text-left col-span-2 sm:col-span-3 min-h-[48px] shadow-[0_0_15px_rgba(6,182,212,0.2)]"
+              title="Study Command Center (Chronos Dual-Sync & 18 Widgets) [Press S]"
+            >
+              <div className="w-8 h-8 rounded-lg bg-cyan-500/25 border border-cyan-400/40 flex items-center justify-center text-cyan-300 shrink-0">
+                <Timer className="w-4 h-4 animate-pulse" />
+              </div>
+              <div className="flex-1 flex items-center justify-between">
+                <div>
+                  <span className="font-bold text-white text-xs flex items-center gap-1.5">
+                    <span>Study Command Center</span>
+                    <span className="px-1.5 py-0.2 rounded bg-amber-400/20 text-amber-300 text-[9px] font-mono border border-amber-400/30">18 WIDGETS</span>
+                  </span>
+                  <span className="text-[10px] text-cyan-300/80 block">Chronos Study Dual-Sync • Timers • Analytics • PDF</span>
+                </div>
+                <kbd className="px-1.5 py-0.5 rounded bg-white/10 text-[10px] font-mono text-white/70">S</kbd>
               </div>
             </button>
 
@@ -9914,24 +9758,6 @@ export default function App() {
                 </div>
               </div>
 
-              {/* Study Time Tracker */}
-              <div className="flex items-center justify-between text-xs text-white/80 py-1">
-                <span>Study Time Tracker (Real Duration & PDF)</span>
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={() => updateConfig(p => ({ ...p, studyTracker: { ...DEFAULT_CONFIG.studyTracker, ...(p.studyTracker || {}), glassBg: !(p.studyTracker?.glassBg ?? true) } }))}
-                    className="text-[10px] text-white/50 hover:text-white underline cursor-pointer"
-                  >
-                    {(config.studyTracker?.glassBg ?? true) ? 'Glass' : 'Transparent'}
-                  </button>
-                  <input
-                    type="checkbox"
-                    checked={config.studyTracker?.visible !== false}
-                    onChange={e => updateConfig(p => ({ ...p, studyTracker: { ...DEFAULT_CONFIG.studyTracker, ...(p.studyTracker || {}), visible: e.target.checked } }))}
-                    className="w-4 h-4 rounded text-cyan-500"
-                  />
-                </div>
-              </div>
             </div>
 
             <div className="p-4 rounded-2xl bg-white/[0.03] border border-white/10 space-y-3">
@@ -9974,7 +9800,6 @@ export default function App() {
       </div>
 
       {/* ================= CLICK-TO-ADD WIDGET PLACEMENT MODAL & TARGET PREVIEW ================= */}
-      <StatusBar history={dailyRegistryHistory} />
       {placementModal && placementModal.isOpen && (
         <>
           {/* Transparent Backdrop Dismiss Overlay: Clicking anywhere outside smoothly closes the modal */}
@@ -10281,7 +10106,6 @@ export default function App() {
               { id: 'motivation', label: 'Daily Motivation', visible: config.motivation.visible, glass: config.motivation.glassBg },
               { id: 'nameWidget', label: 'Centum Badge', visible: config.nameWidget.visible, glass: config.nameWidget.glassBg },
               { id: 'pomodoro', label: 'Deep Focus Timer', visible: config.pomodoro?.visible ?? true, glass: config.pomodoro?.glassBg ?? true },
-              { id: 'studyTracker', label: 'Study Time Tracker', visible: config.studyTracker?.visible ?? true, glass: config.studyTracker?.glassBg ?? true },
             ].map(item => (
               <div key={item.id} className="flex items-center justify-between p-1.5 rounded-lg bg-white/[0.02] hover:bg-white/[0.05] text-[11px]">
                 <label className="flex items-center gap-2 cursor-pointer flex-1">
@@ -10417,7 +10241,22 @@ export default function App() {
           isOpen={studyHistoryModalOpen}
           onClose={() => setStudyHistoryModalOpen(false)}
           sessions={userFocusSessions}
-          userName={currentUser?.displayName || currentUser?.email || 'APES AI Student'}
+          userName={currentUser?.displayName || currentUser?.email || 'BK NITHILESHVAR'}
+          uid={currentUser?.uid || null}
+          isLoading={isHistoryLoading}
+          onRefresh={refreshStudyHistory}
+          error={historyError}
+        />
+      )}
+
+      {/* ================= STUDY COMMAND CENTER FULL SUITE MODAL (18 WIDGETS) ================= */}
+      {studyCommandCenterOpen && (
+        <StudyCommandCenterModal
+          isOpen={studyCommandCenterOpen}
+          onClose={() => setStudyCommandCenterOpen(false)}
+          uid={currentUser?.uid || null}
+          activeSubject={activeSubject}
+          activeTask={activeTask}
         />
       )}
 

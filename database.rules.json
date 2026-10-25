@@ -1,6 +1,21 @@
 {
   "rules": {
-    ".read": true,
-    ".write": true
+    "users": {
+      "$uid": {
+        ".read": "auth != null && (auth.uid === $uid || $uid === 'bk_nithileshvar_master')",
+        ".write": "auth != null && (auth.uid === $uid || $uid === 'bk_nithileshvar_master')"
+      }
+    },
+    "site_telemetry": {
+      "views": {
+        ".read": true,
+        ".write": true
+      }
+    },
+    "daily_checkins": {
+      ".read": true,
+      ".write": true
+    }
   }
 }
+

@@ -15,6 +15,7 @@ import {
   CheckCircle2,
   AlertCircle,
   Filter,
+  RefreshCw,
 } from 'lucide-react';
 import {
   FocusSessionRecord,
@@ -29,6 +30,9 @@ interface StudyHistoryModalProps {
   sessions: FocusSessionRecord[];
   userName?: string;
   uid?: string | null;
+  isLoading?: boolean;
+  onRefresh?: () => void;
+  error?: string | null;
 }
 
 type DateRangeOption =
@@ -46,6 +50,9 @@ export default function StudyHistoryModal({
   sessions = [],
   userName = 'BK NITHILESHVAR',
   uid,
+  isLoading = false,
+  onRefresh,
+  error = null,
 }: StudyHistoryModalProps) {
   const [searchTerm, setSearchTerm] = useState('');
   const [dateRange, setDateRange] = useState<DateRangeOption>('all');
@@ -242,6 +249,18 @@ export default function StudyHistoryModal({
           </div>
 
           <div className="flex items-center gap-2">
+            {onRefresh && (
+              <button
+                type="button"
+                onClick={onRefresh}
+                disabled={isLoading}
+                className="py-2 px-3 rounded-xl bg-cyan-500/20 hover:bg-cyan-500/30 text-cyan-300 border border-cyan-500/30 font-bold text-xs transition cursor-pointer flex items-center gap-1.5 active:scale-95 disabled:opacity-50"
+                title="Reload study sessions from Firebase"
+              >
+                <RefreshCw className={`w-4 h-4 ${isLoading ? 'animate-spin' : ''}`} />
+                <span className="hidden sm:inline">Refresh</span>
+              </button>
+            )}
             <button
               type="button"
               onClick={() => handleExportPDF(false, false)}
@@ -416,14 +435,43 @@ export default function StudyHistoryModal({
 
         {/* Sessions Content List */}
         <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-3">
-          {filteredSessions.length === 0 ? (
+          {isLoading ? (
+            <div className="text-center py-16 space-y-3">
+              <div className="w-12 h-12 rounded-2xl bg-cyan-500/20 border border-cyan-400/40 flex items-center justify-center mx-auto text-cyan-300 animate-spin">
+                <RefreshCw className="w-6 h-6" />
+              </div>
+              <h4 className="text-base font-bold text-white">Loading Study Sessions...</h4>
+              <p className="text-xs text-white/50 max-w-sm mx-auto">
+                Synchronizing permanent records with Firebase Realtime Database
+              </p>
+            </div>
+          ) : error ? (
+            <div className="text-center py-16 space-y-3">
+              <div className="w-12 h-12 rounded-2xl bg-rose-500/20 border border-rose-500/40 flex items-center justify-center mx-auto text-rose-400">
+                <AlertCircle className="w-6 h-6" />
+              </div>
+              <h4 className="text-base font-bold text-white">Unable to Load Sessions</h4>
+              <p className="text-xs text-rose-300/80 max-w-sm mx-auto font-mono">
+                {error}
+              </p>
+              {onRefresh && (
+                <button
+                  type="button"
+                  onClick={onRefresh}
+                  className="mt-2 py-1.5 px-4 rounded-xl bg-cyan-500 hover:bg-cyan-400 text-black font-bold text-xs transition cursor-pointer"
+                >
+                  Try Again
+                </button>
+              )}
+            </div>
+          ) : filteredSessions.length === 0 ? (
             <div className="text-center py-16 space-y-3">
               <div className="w-14 h-14 rounded-full bg-cyan-500/10 border border-cyan-500/20 flex items-center justify-center mx-auto text-2xl">
                 ⏳
               </div>
               <h4 className="text-base font-bold text-white">No study sessions found</h4>
               <p className="text-xs text-white/50 max-w-sm mx-auto">
-                No study records match your selected range ({rangeDisplayLabel}). Start a session with the Study Time Tracker widget on your dashboard to record hours!
+                No study records match your selected range ({rangeDisplayLabel}). Start a session with the Deep Focus Station on your dashboard to record hours!
               </p>
             </div>
           ) : (

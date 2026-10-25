@@ -14,7 +14,7 @@ export type DashboardWidgetKey =
   | 'pomodoro'
   | 'scratchpad'
   | 'breakStats'
-  | 'studyTracker';
+  | 'studyCommandCenter';
 
 export interface GridCellSlot {
   widgetKey: DashboardWidgetKey;
@@ -1080,7 +1080,7 @@ export function computeLaptopFitCoordinates(
     notification: { x: Math.round(notifX), y: Math.round(notifY), width: Math.round(notifW), height: Math.round(notifH) },
     calendar: { x: Math.round(calX), y: Math.round(calY), width: Math.round(calW), height: Math.round(calH) },
     breakStats: { x: Math.round(taskX), y: Math.round(taskY + taskH + 12), width: Math.round(taskW), height: 180 },
-    studyTracker: { x: Math.round(regX), y: Math.round(regY + regH + 16), width: Math.round(regW), height: 240 },
+    studyCommandCenter: { x: Math.round(regX), y: Math.round(regY + regH + 16), width: Math.round(regW), height: 240 },
   };
 }
 
