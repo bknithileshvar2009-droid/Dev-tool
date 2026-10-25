@@ -908,15 +908,26 @@ export default function App() {
 
   // Offline detection state
   const [isOffline, setIsOffline] = useState(!navigator.onLine);
-  useEffect(() => {
-    const handleOnline = () => setIsOffline(false);
-    const handleOffline = () => setIsOffline(true);
-    window.addEventListener('online', handleOnline);
-    window.addEventListener('offline', handleOffline);
-    return () => {
-      window.removeEventListener('online', handleOnline);
-      window.removeEventListener('offline', handleOffline);
-    };
+
+  const userEditedAtRef = useRef<number>(0);
+  const lastLocalUpdateTimeRef = useRef<number>(
+    (() => {
+      try {
+        const saved = localStorage.getItem('flocus_dashboard_updated_at');
+        if (saved) return new Date(saved).getTime();
+      } catch {}
+      return Date.now();
+    })()
+  );
+
+  // Central helper to mark a local state change and update the timestamp for Firebase sync logic
+  const markLocalUpdate = useCallback(() => {
+    const now = Date.now();
+    lastLocalUpdateTimeRef.current = now;
+    userEditedAtRef.current = now;
+    try {
+      localStorage.setItem('flocus_dashboard_updated_at', new Date(now).toISOString());
+    } catch {}
   }, []);
 
   const [focusStreak, setFocusStreak] = useState<number>(() => {
@@ -1117,43 +1128,19 @@ export default function App() {
   const restoredUserUidRef = useRef<string | null>(null);
   const lastSyncedPayloadRef = useRef<string | null>(null);
   const pendingSavePromiseRef = useRef<Promise<any> | null>(null);
-  const userEditedAtRef = useRef<number>(0);
-  const lastLocalUpdateTimeRef = useRef<number>(
-    (() => {
-      try {
-        const saved = localStorage.getItem('flocus_dashboard_updated_at');
-        if (saved) return new Date(saved).getTime();
-      } catch {}
-      return Date.now();
-    })()
-  );
 
-  // Helper ref to always hold the latest state for background sync operations to prevent stale closures
-  const latestStateRef = useRef({
-    config,
-    tasks,
-    dailyRegisterEntries,
-    scratchpadText,
-    savedPresets,
-    favouriteQuotes,
-    focusStreak,
-    favoriteWallpaperIds,
-    recentWallpaperIds,
-  });
+
 
   useEffect(() => {
-    latestStateRef.current = {
-      config,
-      tasks,
-      dailyRegisterEntries,
-      scratchpadText,
-      savedPresets,
-      favouriteQuotes,
-      focusStreak,
-      favoriteWallpaperIds,
-      recentWallpaperIds,
+    const handleOnline = () => setIsOffline(false);
+    const handleOffline = () => setIsOffline(true);
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
     };
-  }, [config, tasks, dailyRegisterEntries, scratchpadText, savedPresets, favouriteQuotes, focusStreak, favoriteWallpaperIds, recentWallpaperIds]);
+  }, []);
 
   const [recentWallpaperIds, setRecentWallpaperIds] = useState<string[]>(() => {
     try {
@@ -1380,16 +1367,6 @@ export default function App() {
     clickX: 0,
     clickY: 0,
   });
-
-  // Central helper to mark a local state change and update the timestamp for Firebase sync logic
-  const markLocalUpdate = useCallback(() => {
-    const now = Date.now();
-    lastLocalUpdateTimeRef.current = now;
-    userEditedAtRef.current = now;
-    try {
-      localStorage.setItem('flocus_dashboard_updated_at', new Date(now).toISOString());
-    } catch {}
-  }, []);
 
   // Interaction tracking (drag/resize)
   const dragResizeState = useRef<{
