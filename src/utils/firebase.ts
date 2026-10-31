@@ -290,19 +290,20 @@ export async function uploadGoogleDriveFile(
   let mimeType: string = 'text/plain';
   let parentFolderId: string | undefined = undefined;
 
-  if (typeof arg3 === 'string' && (arg3.startsWith('ya29.') || arg3.length > 30)) {
-    // Signature: (fileName, content, accessToken)
-    fileName = arg1;
-    content = arg2;
-    accessToken = arg3;
-    mimeType = 'application/json';
-  } else {
-    // Signature: (accessToken, fileName, content, mimeType, parentFolderId)
+  // Accurately determine signature based on token format (tokens start with 'ya29.')
+  if (typeof arg1 === 'string' && (arg1.startsWith('ya29.') || typeof arg3 !== 'string' || !arg3.startsWith('ya29.'))) {
+    // Standard Signature: (accessToken, fileName, content, mimeType, parentFolderId)
     accessToken = arg1;
     fileName = arg2;
     content = arg3;
     if (arg4) mimeType = arg4;
     if (arg5) parentFolderId = arg5;
+  } else {
+    // Alternative Signature: (fileName, content, accessToken)
+    fileName = arg1;
+    content = arg2;
+    accessToken = arg3;
+    mimeType = 'application/json';
   }
 
   const metadata: any = {
@@ -313,18 +314,22 @@ export async function uploadGoogleDriveFile(
     metadata.parents = [parentFolderId];
   }
 
-  const form = new FormData();
-  form.append(
-    'metadata',
-    new Blob([JSON.stringify(metadata)], { type: 'application/json' })
-  );
-
   const bodyContent = typeof content === 'object' && !(content instanceof Blob)
     ? JSON.stringify(content, null, 2)
-    : content;
+    : String(content ?? '');
 
-  const fileBlob = typeof bodyContent === 'string' ? new Blob([bodyContent], { type: mimeType }) : bodyContent;
-  form.append('file', fileBlob);
+  const boundary = '-------APESFLOW_DRIVE_' + Math.random().toString(36).substring(2);
+  const delimiter = `\r\n--${boundary}\r\n`;
+  const closeDelim = `\r\n--${boundary}--`;
+
+  const multipartRequestBody =
+    delimiter +
+    'Content-Type: application/json; charset=UTF-8\r\n\r\n' +
+    JSON.stringify(metadata) +
+    delimiter +
+    `Content-Type: ${mimeType}; charset=UTF-8\r\n\r\n` +
+    bodyContent +
+    closeDelim;
 
   const response = await fetch(
     'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,name,mimeType,size,webViewLink,createdTime,modifiedTime',
@@ -332,14 +337,15 @@ export async function uploadGoogleDriveFile(
       method: 'POST',
       headers: {
         Authorization: `Bearer ${accessToken}`,
+        'Content-Type': `multipart/related; boundary=${boundary}`,
       },
-      body: form,
+      body: multipartRequestBody,
     }
   );
 
   if (!response.ok) {
     const errData = await response.json().catch(() => ({}));
-    throw new Error(errData.error?.message || `Failed to upload file: ${response.statusText}`);
+    throw new Error(errData.error?.message || `Failed to upload file to Google Drive: ${response.statusText}`);
   }
 
   return response.json();
@@ -352,12 +358,12 @@ export async function deleteGoogleDriveFile(
   let accessToken: string;
   let fileId: string;
 
-  if (arg2.startsWith('ya29.') || arg2.length > 30) {
-    fileId = arg1;
-    accessToken = arg2;
-  } else {
+  if (typeof arg1 === 'string' && arg1.startsWith('ya29.')) {
     accessToken = arg1;
     fileId = arg2;
+  } else {
+    fileId = arg1;
+    accessToken = arg2;
   }
 
   const response = await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}`, {
@@ -369,7 +375,7 @@ export async function deleteGoogleDriveFile(
 
   if (!response.ok && response.status !== 204) {
     const errData = await response.json().catch(() => ({}));
-    throw new Error(errData.error?.message || `Failed to delete file: ${response.statusText}`);
+    throw new Error(errData.error?.message || `Failed to delete file from Google Drive: ${response.statusText}`);
   }
 
   return true;
@@ -382,12 +388,12 @@ export async function fetchGoogleDriveFileContent(
   let accessToken: string;
   let fileId: string;
 
-  if (arg2.startsWith('ya29.') || arg2.length > 30) {
-    fileId = arg1;
-    accessToken = arg2;
-  } else {
+  if (typeof arg1 === 'string' && arg1.startsWith('ya29.')) {
     accessToken = arg1;
     fileId = arg2;
+  } else {
+    fileId = arg1;
+    accessToken = arg2;
   }
 
   const response = await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`, {
@@ -397,7 +403,7 @@ export async function fetchGoogleDriveFileContent(
   });
 
   if (!response.ok) {
-    throw new Error(`Failed to fetch file content: ${response.statusText}`);
+    throw new Error(`Failed to fetch file content from Google Drive: ${response.statusText}`);
   }
 
   return response.text();
@@ -411,7 +417,7 @@ export async function findGoogleDriveBackupFile(
     const safeName = fileName.replace(/'/g, "\\'");
     const q = `name = '${safeName}' and trashed = false`;
     const fields = "files(id, name, mimeType, size, createdTime, modifiedTime, webViewLink)";
-    const url = `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(q)}&fields=${encodeURIComponent(fields)}&pageSize=5`;
+    const url = `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(q)}&fields=${encodeURIComponent(fields)}&spaces=drive&pageSize=5`;
 
     const response = await fetch(url, {
       headers: {
@@ -420,7 +426,11 @@ export async function findGoogleDriveBackupFile(
       },
     });
 
-    if (!response.ok) return null;
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({}));
+      console.warn('Google Drive search failed:', err);
+      return null;
+    }
     const data = await response.json().catch(() => ({}));
     if (data.files && data.files.length > 0) {
       return data.files[0];
@@ -445,13 +455,19 @@ export async function updateGoogleDriveFile(
   let content: any;
   let mimeType: string = 'application/json';
 
-  if (typeof arg3 === 'string' && (arg3.startsWith('ya29.') || arg3.length > 30)) {
-    // Signature: (fileId, content, accessToken)
+  if (typeof arg1 === 'string' && arg1.startsWith('ya29.')) {
+    // Standard Signature: (accessToken, fileId, fileName, content, mimeType)
+    accessToken = arg1;
+    fileId = arg2;
+    if (typeof arg3 === 'string') fileName = arg3;
+    content = arg4;
+    if (arg5) mimeType = arg5;
+  } else if (typeof arg3 === 'string' && arg3.startsWith('ya29.')) {
+    // Alternative Signature: (fileId, content, accessToken)
     fileId = arg1;
     content = arg2;
     accessToken = arg3;
   } else {
-    // Signature: (accessToken, fileId, fileName, content, mimeType)
     accessToken = arg1;
     fileId = arg2;
     if (typeof arg3 === 'string') fileName = arg3;
@@ -464,18 +480,22 @@ export async function updateGoogleDriveFile(
     mimeType: mimeType,
   };
 
-  const form = new FormData();
-  form.append(
-    'metadata',
-    new Blob([JSON.stringify(metadata)], { type: 'application/json' })
-  );
-
   const bodyContent = typeof content === 'object' && !(content instanceof Blob)
     ? JSON.stringify(content, null, 2)
-    : content;
+    : String(content ?? '');
 
-  const fileBlob = typeof bodyContent === 'string' ? new Blob([bodyContent], { type: mimeType }) : bodyContent;
-  form.append('file', fileBlob);
+  const boundary = '-------APESFLOW_DRIVE_' + Math.random().toString(36).substring(2);
+  const delimiter = `\r\n--${boundary}\r\n`;
+  const closeDelim = `\r\n--${boundary}--`;
+
+  const multipartRequestBody =
+    delimiter +
+    'Content-Type: application/json; charset=UTF-8\r\n\r\n' +
+    JSON.stringify(metadata) +
+    delimiter +
+    `Content-Type: ${mimeType}; charset=UTF-8\r\n\r\n` +
+    bodyContent +
+    closeDelim;
 
   const response = await fetch(
     `https://www.googleapis.com/upload/drive/v3/files/${fileId}?uploadType=multipart&fields=id,name,mimeType,size,webViewLink,createdTime,modifiedTime`,
@@ -483,8 +503,9 @@ export async function updateGoogleDriveFile(
       method: 'PATCH',
       headers: {
         Authorization: `Bearer ${accessToken}`,
+        'Content-Type': `multipart/related; boundary=${boundary}`,
       },
-      body: form,
+      body: multipartRequestBody,
     }
   );
 

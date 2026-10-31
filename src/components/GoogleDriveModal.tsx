@@ -147,14 +147,18 @@ export default function GoogleDriveModal({
   };
 
   const handleManualBackup = async () => {
-    if (!accessToken) return;
+    if (!accessToken) {
+      setAuthError('Please connect your Google Drive account first before backing up.');
+      return;
+    }
     setManualBackupInProgress(true);
     try {
       await onBackupNow();
-      setStatusMessage('Manual backup completed successfully!');
-      setTimeout(() => setStatusMessage(null), 3500);
+      setStatusMessage('Manual backup completed successfully! Stored in APES_AI_Master_Backup.json on Google Drive.');
+      setTimeout(() => setStatusMessage(null), 4000);
     } catch (err: any) {
-      alert(`Backup failed: ${err.message}`);
+      console.error('Manual backup error:', err);
+      alert(`Backup failed: ${err.message || 'Unable to store backup in Google Drive'}`);
     } finally {
       setManualBackupInProgress(false);
     }

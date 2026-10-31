@@ -1401,12 +1401,12 @@ export default function App() {
     const token = getGoogleAccessToken();
     if (!token) {
       setDriveBackupStatus('idle');
-      return;
+      throw new Error('Google Drive is not connected. Please click "Connect Google Drive" first.');
     }
 
     if (!navigator.onLine) {
       setDriveBackupStatus('offline');
-      return;
+      throw new Error('You are currently offline. Please check your internet connection.');
     }
 
     setDriveBackupStatus('backing_up');
@@ -1454,6 +1454,7 @@ export default function App() {
     } catch (err: any) {
       console.error('[Google Drive Backup Failed]:', err);
       setDriveBackupStatus('error');
+      throw err;
     }
   }, [currentUser, buildCurrentDashboardPayload]);
 
@@ -1473,7 +1474,9 @@ export default function App() {
         clearTimeout(driveBackupDebounceTimerRef.current);
       }
       driveBackupDebounceTimerRef.current = setTimeout(() => {
-        executeGoogleDriveBackup();
+        executeGoogleDriveBackup().catch(err => {
+          console.warn('[Auto Drive Backup Notice]:', err);
+        });
       }, 5000);
     }
   }, [autoDriveBackupEnabled, executeGoogleDriveBackup]);
@@ -1493,7 +1496,9 @@ export default function App() {
         driveBackupStatus !== 'backing_up'
       ) {
         console.log('[Google Drive Auto-Backup] Periodic 60s check triggered update.');
-        executeGoogleDriveBackup();
+        executeGoogleDriveBackup().catch(err => {
+          console.warn('[Periodic Drive Backup Notice]:', err);
+        });
       }
     }, 60000);
 
